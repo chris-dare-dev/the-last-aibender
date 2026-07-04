@@ -660,3 +660,128 @@ describe('SessionKernel — pid-liveness guard (dead-broker running rows)', () =
     await outcome.waitForExit();
   });
 });
+
+// ---------------------------------------------------------------------------
+// ICR-0009 — the transcript-tee message tap (M3 seam decision)
+// ---------------------------------------------------------------------------
+
+describe('SessionKernel — message tap (ICR-0009 transcript-tee seam)', () => {
+  // -- positive ---------------------------------------------------------------
+
+  it('observes every message, per session, in stream order, with raw retention', async () => {
+    const seen: { sessionId: string; message: import('./queryRunner.js').RunnerMessage }[] = [];
+    const { runner, kernel } = await harness({
+      runner: { mode: 'manual' },
+      kernel: { messageTap: (sessionId, message) => seen.push({ sessionId, message }) },
+    });
+    const session = await kernel.launch(launchParams());
+    const fake = runner.session(session.sessionId);
+    const rawAssistant = { type: 'assistant', uuid: 'synthmsg-1', message: { content: [] } };
+    const rawResult = { type: 'result', subtype: 'success', usage: { input_tokens: 5 } };
+    fake.emit({ type: 'other', raw: rawAssistant });
+    fake.complete({ raw: rawResult });
+    await session.waitForExit();
+
+    expect(seen.map((entry) => entry.sessionId)).toEqual([
+      session.sessionId,
+      session.sessionId,
+      session.sessionId,
+    ]);
+    expect(seen[0]?.message.type).toBe('init');
+    expect(seen[1]?.message).toEqual({ type: 'other', raw: rawAssistant });
+    expect(seen[2]?.message).toEqual({
+      type: 'result',
+      ok: true,
+      detail: 'success',
+      raw: rawResult,
+    });
+  });
+
+  it('tags concurrent sessions with their own ids (the tee is per-session)', async () => {
+    const bySession = new Map<string, number>();
+    const { kernel } = await harness({
+      kernel: {
+        messageTap: (sessionId) => bySession.set(sessionId, (bySession.get(sessionId) ?? 0) + 1),
+      },
+    });
+    const a = await kernel.launch(launchParams({ accountLabel: 'MAX_A' }));
+    const b = await kernel.launch(launchParams({ accountLabel: 'MAX_B' }));
+    await Promise.all([a.waitForExit(), b.waitForExit()]);
+    // auto mode: init + result per session.
+    expect(bySession.get(a.sessionId)).toBe(2);
+    expect(bySession.get(b.sessionId)).toBe(2);
+  });
+
+  // -- negative ---------------------------------------------------------------
+
+  it('a THROWING tap is logged and ignored — pump, backfills, and settlement unaffected', async () => {
+    const warnings: string[] = [];
+    const { store, kernel } = await harness({
+      kernel: {
+        messageTap: () => {
+          throw new Error('synthetic tap failure');
+        },
+        logger: {
+          debug: () => {},
+          info: () => {},
+          warn: (message) => warnings.push(message),
+          error: () => {},
+        },
+      },
+    });
+    const session = await kernel.launch(launchParams());
+    const exit = await session.waitForExit();
+    expect(exit.finalState).toBe('exited');
+    const row = store.resumeLedger.get(session.sessionId);
+    expect(row?.state).toBe('exited');
+    expect(row?.nativeSessionId).not.toBeNull(); // init handling still ran
+    expect(warnings.some((m) => m.includes('tap threw'))).toBe(true);
+  });
+
+  it('absent tap = M1/M2 behavior exactly (no observer, sessions settle)', async () => {
+    const { kernel } = await harness();
+    const session = await kernel.launch(launchParams());
+    const exit = await session.waitForExit();
+    expect(exit.result?.ok).toBe(true);
+  });
+
+  // -- edge -------------------------------------------------------------------
+
+  it('the tap observes fork and dead-resume pumps too (every startAndPump path)', async () => {
+    const seen: string[] = [];
+    const { store, kernel } = await harness({
+      kernel: {
+        messageTap: (sessionId, message) => seen.push(`${sessionId}:${message.type}`),
+        transcriptLocator: () => undefined,
+      },
+    });
+    const parent = await kernel.launch(launchParams());
+    await parent.waitForExit();
+    // exited → fork (continuation child).
+    const forked = await kernel.resume(parent.sessionId, { prompt: 'continue', fork: true });
+    await forked.waitForExit();
+    // fabricate a dead running row → un-forked dead resume.
+    const deadId = fabricateDeadSession(store);
+    const resumed = await kernel.resume(deadId, { prompt: 'continue' });
+    await resumed.waitForExit();
+
+    expect(seen).toContain(`${parent.sessionId}:init`);
+    expect(seen).toContain(`${forked.sessionId}:init`);
+    expect(seen).toContain(`${deadId}:result`);
+  });
+
+  it('rawOfRunnerMessage unwraps other/raw-retained messages and falls back for bare fakes', async () => {
+    const { rawOfRunnerMessage } = await import('./queryRunner.js');
+    const rawObj = { type: 'assistant' };
+    expect(rawOfRunnerMessage({ type: 'other', raw: rawObj })).toBe(rawObj);
+    const rawResult = { type: 'result', subtype: 'success' };
+    expect(
+      rawOfRunnerMessage({ type: 'result', ok: true, detail: 'success', raw: rawResult }),
+    ).toBe(rawResult);
+    // Fakes without retention: fall back to the narrowed message itself.
+    const bare = { type: 'result', ok: true, detail: 'success' } as const;
+    expect(rawOfRunnerMessage(bare)).toBe(bare);
+    const init = { type: 'init', nativeSessionId: 'synth-native' } as const;
+    expect(rawOfRunnerMessage(init)).toBe(init);
+  });
+});

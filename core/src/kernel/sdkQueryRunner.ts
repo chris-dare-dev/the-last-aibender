@@ -93,11 +93,13 @@ function toRunnerMessage(raw: unknown): RunnerMessage {
       record['subtype'] === 'init' &&
       typeof record['session_id'] === 'string'
     ) {
-      return { type: 'init', nativeSessionId: record['session_id'] };
+      // Raw-message retention (ICR-0009): the tee consumers get the verbatim
+      // SDK message; the kernel itself still reads only the narrow fields.
+      return { type: 'init', nativeSessionId: record['session_id'], raw };
     }
     if (record['type'] === 'result') {
       const subtype = typeof record['subtype'] === 'string' ? record['subtype'] : 'unknown';
-      return { type: 'result', ok: subtype === 'success', detail: subtype };
+      return { type: 'result', ok: subtype === 'success', detail: subtype, raw };
     }
   }
   return { type: 'other', raw };

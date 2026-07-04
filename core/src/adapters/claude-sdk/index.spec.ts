@@ -45,9 +45,19 @@ describe('claude-sdk adapter — THIN wrapper over the M1 kernel seam (BE-4)', (
     });
     const messages = [];
     for await (const message of handle.messages()) messages.push(message);
+    // ICR-0009: init/result retain the verbatim SDK message for the tee.
     expect(messages).toEqual([
-      { type: 'init', nativeSessionId: 'synth-native-1' },
-      { type: 'result', ok: true, detail: 'success' },
+      {
+        type: 'init',
+        nativeSessionId: 'synth-native-1',
+        raw: { type: 'system', subtype: 'init', session_id: 'synth-native-1' },
+      },
+      {
+        type: 'result',
+        ok: true,
+        detail: 'success',
+        raw: { type: 'result', subtype: 'success' },
+      },
     ]);
   });
 });

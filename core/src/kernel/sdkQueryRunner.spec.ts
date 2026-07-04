@@ -9,6 +9,7 @@ import {
   type SdkQueryLike,
 } from './sdkQueryRunner.js';
 import { LiveSpawnDisabledError, TokenMixingError } from './errors.js';
+import { rawOfRunnerMessage } from './queryRunner.js';
 import type { QuerySpec, RunnerMessage } from './queryRunner.js';
 
 // ---------------------------------------------------------------------------
@@ -82,12 +83,16 @@ describe('SdkQueryRunner — the real spawn path (BE-1)', () => {
     expect(options).not.toHaveProperty('forkSession');
   });
 
-  it('maps SDK messages to the narrow runner union (init / result / other)', async () => {
-    const { fn } = fakeQueryFn([
-      { type: 'system', subtype: 'init', session_id: 'native-uuid-synth', model: 'synth' },
-      { type: 'assistant', message: { content: [] } },
-      { type: 'result', subtype: 'success', total_cost_usd: 0 },
-    ]);
+  it('maps SDK messages to the narrow runner union, RETAINING the raw message (ICR-0009)', async () => {
+    const rawInit = { type: 'system', subtype: 'init', session_id: 'native-uuid-synth', model: 'synth' };
+    const rawAssistant = { type: 'assistant', message: { content: [] } };
+    const rawResult = {
+      type: 'result',
+      subtype: 'success',
+      total_cost_usd: 0.01,
+      usage: { input_tokens: 5, output_tokens: 2 },
+    };
+    const { fn } = fakeQueryFn([rawInit, rawAssistant, rawResult]);
     const runner = createSdkQueryRunner({
       liveSpawnOptIn: true,
       pathToClaudeCodeExecutable: EXEC_OVERRIDE,
@@ -97,9 +102,16 @@ describe('SdkQueryRunner — the real spawn path (BE-1)', () => {
     const received: RunnerMessage[] = [];
     for await (const message of handle.messages()) received.push(message);
 
-    expect(received[0]).toEqual({ type: 'init', nativeSessionId: 'native-uuid-synth' });
-    expect(received[1]?.type).toBe('other');
-    expect(received[2]).toEqual({ type: 'result', ok: true, detail: 'success' });
+    expect(received[0]).toEqual({
+      type: 'init',
+      nativeSessionId: 'native-uuid-synth',
+      raw: rawInit,
+    });
+    expect(received[1]).toEqual({ type: 'other', raw: rawAssistant });
+    // Raw retention is the tee's usage/cost source — the narrow fields alone
+    // would drop them (the exact gap that blocked the M2 composition).
+    expect(received[2]).toEqual({ type: 'result', ok: true, detail: 'success', raw: rawResult });
+    expect(received.map(rawOfRunnerMessage)).toEqual([rawInit, rawAssistant, rawResult]);
   });
 
   it('propagates resume / forkSession / resumeSessionAt for the repair-fork path', async () => {
@@ -165,9 +177,8 @@ describe('SdkQueryRunner — the real spawn path (BE-1)', () => {
   // -- edge -------------------------------------------------------------------
 
   it('error-subtype results map to ok:false with the subtype as detail', async () => {
-    const { fn } = fakeQueryFn([
-      { type: 'result', subtype: 'error_during_execution', is_error: true },
-    ]);
+    const rawError = { type: 'result', subtype: 'error_during_execution', is_error: true };
+    const { fn } = fakeQueryFn([rawError]);
     const runner = createSdkQueryRunner({
       liveSpawnOptIn: true,
       pathToClaudeCodeExecutable: EXEC_OVERRIDE,
@@ -180,6 +191,7 @@ describe('SdkQueryRunner — the real spawn path (BE-1)', () => {
       type: 'result',
       ok: false,
       detail: 'error_during_execution',
+      raw: rawError,
     });
   });
 

@@ -102,6 +102,13 @@ export interface QuerySpec {
 export interface RunnerInitMessage {
   readonly type: 'init';
   readonly nativeSessionId: string;
+  /**
+   * RAW-MESSAGE RETENTION (ICR-0009, M3): the verbatim SDK message this was
+   * narrowed from, kept so the composition root's transcript tee can feed
+   * the gateway's projector full-fidelity messages (usage/cost live only on
+   * the raw result). Optional — fakes that don't script it stay valid.
+   */
+  readonly raw?: unknown;
 }
 
 /** Terminal message: the query finished (successfully or not). */
@@ -110,6 +117,8 @@ export interface RunnerResultMessage {
   readonly ok: boolean;
   /** SDK result subtype (e.g. `success`, `error_during_execution`). */
   readonly detail: string;
+  /** Raw-message retention (ICR-0009) — see {@link RunnerInitMessage.raw}. */
+  readonly raw?: unknown;
 }
 
 /** Anything else the SDK streams — opaque to the kernel. */
@@ -119,6 +128,31 @@ export interface RunnerOtherMessage {
 }
 
 export type RunnerMessage = RunnerInitMessage | RunnerResultMessage | RunnerOtherMessage;
+
+/**
+ * THE TRANSCRIPT-TEE SEAM (ICR-0009, M3 — the BE-ORCH decision that unblocks
+ * composeBroker's transcript wiring, deferred watch item 1): an observer the
+ * kernel invokes for EVERY message its pump consumes, per session, in stream
+ * order. This is a TAP, not a second consumer — QueryHandle.messages() stays
+ * single-consumer (the pump), so no fan-out/backpressure semantics leak into
+ * the runner seam. The composition root adapts this onto the gateway's
+ * TranscriptSource port with {@link rawOfRunnerMessage}; the gateway's
+ * projector owns all wire shaping (core/src/gateway/transcriptProjector.ts).
+ *
+ * Taps MUST NOT throw; a throwing tap is logged and ignored — it can never
+ * stall or kill the session pump (the kernel enforces this).
+ */
+export type RunnerMessageTap = (sessionId: string, message: RunnerMessage) => void;
+
+/**
+ * The raw SDK message behind a RunnerMessage, for tee consumers: `other`
+ * wrappers unwrap; init/result prefer their retained raw and fall back to
+ * the narrowed message itself (fakes without raw retention still project —
+ * minus the usage fields only the raw result carries).
+ */
+export function rawOfRunnerMessage(message: RunnerMessage): unknown {
+  return message.type === 'other' ? message.raw : (message.raw ?? message);
+}
 
 // ---------------------------------------------------------------------------
 // Handle + runner

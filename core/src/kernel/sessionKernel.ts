@@ -53,7 +53,13 @@ import {
 } from './errors.js';
 import { defaultPidLivenessProbe, type PidLivenessProbe } from './pidLiveness.js';
 import type { ClaudeProfile, ProfileRegistry } from './profiles.js';
-import type { QueryHandle, QueryRunner, QuerySpec, RunnerResultMessage } from './queryRunner.js';
+import type {
+  QueryHandle,
+  QueryRunner,
+  QuerySpec,
+  RunnerMessageTap,
+  RunnerResultMessage,
+} from './queryRunner.js';
 import { validateTranscriptTailFile, type TranscriptTailVerdict } from './transcriptTail.js';
 
 // ---------------------------------------------------------------------------
@@ -139,6 +145,15 @@ export interface SessionKernelOptions {
    * blueprint §4.1 in-loop permission relay). Absent → M1 behavior exactly.
    */
   readonly approvals?: KernelApprovalRelay;
+  /**
+   * THE TRANSCRIPT-TEE SEAM (ICR-0009, M3): observes every RunnerMessage the
+   * pump consumes, per session, in stream order — the composition root
+   * adapts it onto the gateway's TranscriptSource port (rawOfRunnerMessage).
+   * A tap that throws is logged and ignored: it can never stall or kill the
+   * pump, and FSM settlement (native-id backfill, ledger transitions,
+   * approval supersession) is unaffected. Absent → M1/M2 behavior exactly.
+   */
+  readonly messageTap?: RunnerMessageTap;
   readonly logger?: Logger;
   /**
    * Test seams for race proofs (SPIKE-D `--crash-after-ledger` analogue).
@@ -236,6 +251,19 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
       let result: RunnerResultMessage | undefined;
       try {
         for await (const message of handle.messages()) {
+          // ICR-0009 transcript tee: observe BEFORE the kernel's own
+          // handling, inside the single pump (messages() stays
+          // single-consumer). A throwing tap is logged, never propagated.
+          if (options.messageTap !== undefined) {
+            try {
+              options.messageTap(row.id, message);
+            } catch (cause) {
+              logger?.warn('message tap threw; ignoring (taps must not throw)', {
+                sessionId: row.id,
+                error: (cause as Error).message,
+              });
+            }
+          }
           if (message.type === 'init') {
             const current = ledger.get(row.id);
             if (current?.nativeSessionId == null) {

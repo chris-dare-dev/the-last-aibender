@@ -5,11 +5,14 @@
  * bytes); typing echo p95 <100 ms locally"; §9.3 BE↔FE #2; SPIKE-D
  * mechanics re-proven on the composed M2 chain).
  *
- * The ONLY synthetic piece is the TUI itself (flood.cjs / quiet.cjs — real
+ * The ONLY synthetic pieces are the TUI itself (flood.cjs / quiet.cjs — real
  * node children on real PTYs; a real `claude` TUI is T3 owner-gated,
- * docs/runbooks/pty-attended-live.md). Everything else is the production
- * path: createNodePtySpawner -> createPtyHost -> toGatewayPtyHostPort ->
- * startGateway -> WebSocket clients speaking the FROZEN wire protocol.
+ * docs/runbooks/pty-attended-live.md) and the SDK QueryRunner (testkit
+ * FakeQueryRunner — no SDK sessions are exercised here). Everything else is
+ * the production path IN COMPOSED MODE (BE-MAIN, M3): composeBroker() itself
+ * wires createNodePtySpawner -> ptyHost -> gateway port -> WS gateway — the
+ * exact wiring the daemon boots, not a hand-assembled replica -> WebSocket
+ * clients speaking the FROZEN wire protocol.
  *
  * Phases:
  *  1. SOAK — 6 attended sessions flood ~4 MiB each. Every session has a
@@ -41,19 +44,15 @@ import {
   type ChannelName,
   type PtyFrame,
 } from '@aibender/protocol';
-import { openKernelStore } from '@aibender/schema';
+import { FakeQueryRunner } from '@aibender/testkit';
 import { WebSocket as WsClient } from 'ws';
 
-import { startGateway } from '../../src/gateway/index.js';
-import { FakeKernel, FakeQueryRunner } from '../../src/gateway/fakeKernel.js';
 import {
   createNodePtySpawner,
-  createPtyHost,
-  createProfileRegistry,
-  toGatewayPtyHostPort,
   type AttendedPtySession,
   type ClaudeProfileLabel,
 } from '../../src/kernel/index.js';
+import { composeBroker } from '../../src/main/index.js';
 
 // ---------------------------------------------------------------------------
 // Parameters
@@ -202,28 +201,31 @@ const EXPECTED_WIRE_BYTES = expectedFloodText(0).length;
 async function main(): Promise<number> {
   const home = mkdtempSync(join(tmpdir(), 'aibender-m2-soak-'));
   const cwd = mkdtempSync(join(tmpdir(), 'aibender-m2-soak-cwd-'));
-  const store = await openKernelStore({ path: ':memory:' });
+  const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 
+  // COMPOSED MODE (M3): the ONE composeBroker call the daemon makes — the
+  // ptyHost is created inside the composition over the same ledger/profiles
+  // as the kernel, and the gateway consumes it through the composed port.
   let nextArgv: readonly string[] = [];
-  const host = createPtyHost({
-    ledger: store.resumeLedger,
-    profiles: createProfileRegistry({ aibenderHome: home }),
-    backend: createNodePtySpawner({
-      liveSpawnOptIn: true,
-      // Synthetic TUIs: node running flood.cjs / quiet.cjs — NEVER `claude`.
-      pathToClaudeCodeExecutable: process.execPath,
-    }),
-    argv: () => nextArgv,
-    logger: { debug() {}, info() {}, warn() {}, error() {} },
+  const broker = await composeBroker({
+    storePath: ':memory:',
+    profiles: { aibenderHome: home },
+    runner: new FakeQueryRunner(), // no SDK sessions in this soak
+    logger: quiet,
+    gateway: { aibenderHome: home, writeBootstrap: false, logger: quiet },
+    pty: {
+      backend: createNodePtySpawner({
+        liveSpawnOptIn: true,
+        // Synthetic TUIs: node running flood.cjs / quiet.cjs — NEVER `claude`.
+        pathToClaudeCodeExecutable: process.execPath,
+      }),
+      argv: () => nextArgv,
+      logger: quiet,
+    },
   });
-
-  const gateway = await startGateway({
-    kernel: new FakeKernel(new FakeQueryRunner()),
-    ptyHost: toGatewayPtyHostPort(host),
-    aibenderHome: home,
-    writeBootstrap: false,
-    logger: { debug() {}, info() {}, warn() {}, error() {} },
-  });
+  const host = broker.ptyHost;
+  if (host === undefined) throw new Error('composed broker did not wire the ptyHost');
+  const gateway = broker.gateway;
 
   const rssBaseline = process.memoryUsage().rss;
   let rssPeak = rssBaseline;
@@ -397,9 +399,9 @@ async function main(): Promise<number> {
   } finally {
     clearInterval(rssTimer);
     for (const client of clients) client.close();
-    await host.shutdown(); // reaps every synthetic child (process-group kill)
-    await gateway.close();
-    store.close();
+    // Composed shutdown: gateway first, then the host reaps every synthetic
+    // child (process-group kill), then the kernel drains and the store closes.
+    await broker.close();
     rmSync(home, { recursive: true, force: true });
     rmSync(cwd, { recursive: true, force: true });
   }

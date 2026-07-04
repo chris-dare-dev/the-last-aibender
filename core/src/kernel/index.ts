@@ -45,11 +45,13 @@ export {
 } from './env.js';
 
 export {
+  rawOfRunnerMessage,
   type QueryHandle,
   type QueryRunner,
   type QuerySpec,
   type RunnerInitMessage,
   type RunnerMessage,
+  type RunnerMessageTap,
   type RunnerOtherMessage,
   type RunnerResultMessage,
 } from './queryRunner.js';

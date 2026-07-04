@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { ERROR_CODES, decodePtyFrame, encodePtyFrame } from '@aibender/protocol';
+import { ERROR_CODES, PROTOCOL_FREEZE, decodePtyFrame, encodePtyFrame } from '@aibender/protocol';
 
 import { assertSynthesizedSafeText } from './jsonl.js';
 import {
+  GOLDEN_WS_CORPUS_FREEZE,
   GOLDEN_WS_FIXTURES,
   goldenFrameBytes,
   replayGoldenWsFixture,
@@ -13,8 +14,13 @@ import {
 const TEXT = GOLDEN_WS_FIXTURES.filter((f) => f.kind === 'text');
 const BINARY = GOLDEN_WS_FIXTURES.filter((f): f is GoldenWsBinaryFixture => f.kind === 'binary');
 
-describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003)', () => {
+describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M2 freeze)', () => {
   // -- positive ---------------------------------------------------------------
+
+  it('pins the same freeze the protocol package self-identifies as', () => {
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M2');
+  });
 
   it('every fixture replays to its pinned verdict at its pinned stage', () => {
     for (const fixture of GOLDEN_WS_FIXTURES) {
@@ -113,7 +119,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003)', 
     expect(GOLDEN_WS_FIXTURES.some((f) => f.direction === 'broker-to-client')).toBe(true);
     expect(TEXT.length).toBeGreaterThan(0);
     expect(BINARY.length).toBeGreaterThan(0);
-    // Every stage of the routing order is represented.
+    // Every stage of the routing order is represented (M1 + M2 stages).
     const stages = new Set(GOLDEN_WS_FIXTURES.map((f) => f.stage));
     expect([...stages].sort()).toEqual(
       [
@@ -125,7 +131,29 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003)', 
         'json-parse',
         'pty-client-message',
         'pty-frame-codec',
+        // M2 freeze stages
+        'approvals-client-message',
+        'approvals-server-message',
+        'context-graph-payload',
+        'quota-payload',
+        'replay-request',
+        'transcript-payload',
       ].sort(),
     );
+  });
+
+  it('M2 surfaces have both valid and invalid coverage (valid + every invalid class)', () => {
+    for (const stage of [
+      'transcript-payload',
+      'approvals-client-message',
+      'approvals-server-message',
+      'quota-payload',
+      'context-graph-payload',
+      'replay-request',
+    ] as const) {
+      const ofStage = GOLDEN_WS_FIXTURES.filter((f) => f.stage === stage);
+      expect(ofStage.some((f) => f.expect.valid), `${stage} valid`).toBe(true);
+      expect(ofStage.some((f) => !f.expect.valid), `${stage} invalid`).toBe(true);
+    }
   });
 });

@@ -1,10 +1,18 @@
 /**
  * Golden WS-protocol fixture corpus (plan §3 testkit row; §9.3 BE↔FE #1;
- * ICR-0003). One set of EXACT wire frames — text envelopes and binary PTY
- * frames — replayed by BOTH departments' CI: the BE-3 gateway must produce
- * these verdicts for inbound frames, and the FE-2 client must produce them
- * for broker-pushed frames. A fixture change requires both orchestrators'
- * sign-off (docs/contracts/icr/).
+ * ICR-0003; extended at the M2 full freeze). One set of EXACT wire frames —
+ * text envelopes and binary PTY frames — replayed by BOTH departments' CI:
+ * the BE-3 gateway must produce these verdicts for inbound frames, and the
+ * FE-2 client must produce them for broker-pushed frames. A fixture change
+ * requires both orchestrators' sign-off (docs/contracts/icr/).
+ *
+ * VERSIONING: {@link GOLDEN_WS_CORPUS_FREEZE} names the protocol freeze this
+ * corpus pins (must equal @aibender/protocol's PROTOCOL_FREEZE — asserted in
+ * the suite). The M2 extension adds fixtures for every surface promoted at
+ * the M2 freeze: transcript/approvals/quota/context-graph payloads and the
+ * JSON `replay-request`. The `events` payload union is still DRAFT (M3) —
+ * the corpus pins only its channel POLICY (client payloads rejected;
+ * broker pushes treated as opaque until M3).
  *
  * Every fixture pins:
  *   - the exact frame bytes (text: the UTF-8 string sent as one WS text
@@ -25,15 +33,26 @@
  */
 
 import {
+  PROTOCOL_FREEZE,
   decodePtyFrame,
+  isReplayableChannel,
   sessionIdOfChannel,
+  validateApprovalsClientMessage,
+  validateApprovalsServerMessage,
+  validateContextGraphTouch,
   validateControlRequest,
   validateControlResponse,
   validateEnvelope,
   validateErrorPayload,
+  validateJsonReplayRequest,
   validatePtyClientMessage,
+  validateQuotaSnapshot,
+  validateTranscriptPayload,
   type ErrorCode,
 } from '@aibender/protocol';
+
+/** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M2';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -49,9 +68,20 @@ export type GoldenWsStage =
   | 'control-response'
   | 'error-payload'
   | 'pty-client-message'
-  /** M1 gateway policy: the channel accepts no client payloads yet. */
+  /**
+   * Verdict comes from channel POLICY, not a payload validator: channels
+   * whose payload union is still draft (events until M3) accept no client
+   * payloads and their broker pushes pass as opaque envelopes.
+   */
   | 'channel-policy'
-  | 'pty-frame-codec';
+  | 'pty-frame-codec'
+  // M2 freeze stages ---------------------------------------------------------
+  | 'transcript-payload'
+  | 'approvals-client-message'
+  | 'approvals-server-message'
+  | 'quota-payload'
+  | 'context-graph-payload'
+  | 'replay-request';
 
 export type GoldenWsExpectation =
   | { readonly valid: true }
@@ -112,6 +142,23 @@ function controlFrame(seq: number, payload: unknown): string {
 
 function ptyJsonFrame(sessionId: string, seq: number, payload: unknown): string {
   return JSON.stringify({ stream: 'pty', channel: `pty.${sessionId}`, seq, payload });
+}
+
+function transcriptFrame(sessionId: string, seq: number, payload: unknown): string {
+  return JSON.stringify({
+    stream: 'transcript',
+    channel: `transcript.${sessionId}`,
+    seq,
+    payload,
+  });
+}
+
+function staticFrame(
+  channel: 'events' | 'quota' | 'approvals' | 'context-graph',
+  seq: number,
+  payload: unknown,
+): string {
+  return JSON.stringify({ stream: channel, channel, seq, payload });
 }
 
 const FULL_STATUS = {
@@ -779,6 +826,515 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     expect: { valid: false, code: 'bad-request' },
   },
 
+  // ==== M2 freeze: transcript.<sid> (broker → client) ===========================
+  {
+    name: 'transcript-delta-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 0, {
+      kind: 'transcript-delta',
+      sessionId: 'ses_fake_1',
+      messageUuid: 'synthmsg-0',
+      text: 'synthesized streamed text',
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'transcript-tool-start-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 1, {
+      kind: 'transcript-tool',
+      sessionId: 'ses_fake_1',
+      toolUseId: 'synthtool-0',
+      toolName: 'Read',
+      phase: 'start',
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'transcript-tool-result-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 2, {
+      kind: 'transcript-tool',
+      sessionId: 'ses_fake_1',
+      toolUseId: 'synthtool-0',
+      toolName: 'Read',
+      phase: 'result',
+      ok: true,
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'transcript-result-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 3, {
+      kind: 'transcript-result',
+      sessionId: 'ses_fake_1',
+      ok: true,
+      detail: 'success',
+      usage: { inputTokens: 120, outputTokens: 340, cacheReadTokens: 64, cacheCreationTokens: 8 },
+      costUsd: 0.0421,
+      durationMs: 5400,
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: true },
+    notes: 'four ground-truth token classes (blueprint §6.2); costUsd is an ESTIMATE',
+  },
+  {
+    name: 'transcript-unknown-kind',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 4, {
+      kind: 'transcript-thought',
+      sessionId: 'ses_fake_1',
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'transcript-session-channel-mismatch',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 5, {
+      kind: 'transcript-delta',
+      sessionId: 'ses_fake_2',
+      messageUuid: 'synthmsg-1',
+      text: 'synthesized mismatched delta',
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'transcript-tool-ok-on-start',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 6, {
+      kind: 'transcript-tool',
+      sessionId: 'ses_fake_1',
+      toolUseId: 'synthtool-1',
+      toolName: 'Bash',
+      phase: 'start',
+      ok: true,
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'phase/ok matrix: a start has no outcome; ok is REQUIRED on result only',
+  },
+  {
+    name: 'transcript-result-negative-tokens',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: transcriptFrame('ses_fake_1', 7, {
+      kind: 'transcript-result',
+      sessionId: 'ses_fake_1',
+      ok: false,
+      detail: 'error_during_execution',
+      usage: { inputTokens: -1, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+    }),
+    stage: 'transcript-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+
+  // ==== M2 freeze: approvals (broker → client) ===================================
+  {
+    name: 'approval-request-can-use-tool',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('approvals', 0, {
+      kind: 'approval-request',
+      approvalId: 'apr_fake_1',
+      source: 'can-use-tool',
+      summary: 'synthesized tool escalation',
+      accountLabel: 'MAX_A',
+      sessionId: 'ses_fake_1',
+      toolName: 'Bash',
+      toolUseId: 'synthtool-2',
+      expiresAt: 90061000,
+    }),
+    stage: 'approvals-server-message',
+    expect: { valid: true },
+  },
+  {
+    name: 'approval-request-hook-floor',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('approvals', 1, {
+      kind: 'approval-request',
+      approvalId: 'apr_fake_2',
+      source: 'hook-floor',
+      summary: 'synthesized policy-floor escalation',
+      accountLabel: 'ENT',
+      sessionId: 'ses_fake_2',
+      toolName: 'Write',
+    }),
+    stage: 'approvals-server-message',
+    expect: { valid: true },
+    notes: 'hook-floor covers ALL sessions incl. external ones (hooks-contract.md)',
+  },
+  {
+    name: 'approval-request-workflow-gate',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('approvals', 2, {
+      kind: 'approval-request',
+      approvalId: 'apr_fake_3',
+      source: 'workflow-gate',
+      summary: 'synthesized pipeline gate',
+      accountLabel: 'AWS_DEV',
+      runId: 'run_fake_1',
+      stepId: 'step_fake_2',
+    }),
+    stage: 'approvals-server-message',
+    expect: { valid: true },
+    notes: 'designed at M2 for the M5 pipeline slice — no wire change needed later',
+  },
+  {
+    name: 'approval-resolved-expired',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('approvals', 3, {
+      kind: 'approval-resolved',
+      approvalId: 'apr_fake_1',
+      outcome: 'expired',
+    }),
+    stage: 'approvals-server-message',
+    expect: { valid: true },
+  },
+  {
+    name: 'approval-request-unknown-source',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('approvals', 4, {
+      kind: 'approval-request',
+      approvalId: 'apr_fake_4',
+      source: 'vibes',
+      summary: 'synthesized unknown source',
+      accountLabel: 'MAX_A',
+      sessionId: 'ses_fake_1',
+      toolName: 'Bash',
+    }),
+    stage: 'approvals-server-message',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'approval-request-matrix-violation',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('approvals', 5, {
+      kind: 'approval-request',
+      approvalId: 'apr_fake_5',
+      source: 'workflow-gate',
+      summary: 'synthesized matrix violation',
+      accountLabel: 'AWS_DEV',
+      runId: 'run_fake_1',
+      stepId: 'step_fake_2',
+      toolName: 'Bash',
+    }),
+    stage: 'approvals-server-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'per-source field matrix: workflow-gate must not carry tool refs',
+  },
+
+  // ==== M2 freeze: approvals (client → broker) ===================================
+  {
+    name: 'approval-decision-allow',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('approvals', 0, {
+      kind: 'approval-decision',
+      approvalId: 'apr_fake_1',
+      verdict: 'allow',
+      updatedInput: { command: 'ls -la' },
+    }),
+    stage: 'approvals-client-message',
+    expect: { valid: true },
+    notes: 'updatedInput relays the canUseTool replacement input (allow only)',
+  },
+  {
+    name: 'approval-decision-deny-note',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('approvals', 1, {
+      kind: 'approval-decision',
+      approvalId: 'apr_fake_2',
+      verdict: 'deny',
+      note: 'synthesized denial rationale',
+    }),
+    stage: 'approvals-client-message',
+    expect: { valid: true },
+  },
+  {
+    name: 'approval-decision-unknown-verdict',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('approvals', 2, {
+      kind: 'approval-decision',
+      approvalId: 'apr_fake_1',
+      verdict: 'maybe',
+    }),
+    stage: 'approvals-client-message',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'approval-decision-updated-input-on-deny',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('approvals', 3, {
+      kind: 'approval-decision',
+      approvalId: 'apr_fake_1',
+      verdict: 'deny',
+      updatedInput: { command: 'rm -rf /synthetic' },
+    }),
+    stage: 'approvals-client-message',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'approval-request-from-client-rejected',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('approvals', 4, {
+      kind: 'approval-request',
+      approvalId: 'apr_fake_9',
+      source: 'can-use-tool',
+      summary: 'synthesized spoofed request',
+      accountLabel: 'MAX_A',
+      sessionId: 'ses_fake_1',
+      toolName: 'Bash',
+    }),
+    stage: 'approvals-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'clients send decisions only — a client-minted approval-request is rejected',
+  },
+
+  // ==== M2 freeze: quota (broker → client) =======================================
+  {
+    name: 'quota-snapshot-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('quota', 0, {
+      kind: 'quota-snapshot',
+      account: 'MAX_A',
+      window: '5h',
+      usedPct: 41.5,
+      resetsAt: 90200000,
+      capturedAt: 90100000,
+      source: 'statusline',
+    }),
+    stage: 'quota-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'quota-snapshot-7d-sonnet-oauth',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('quota', 1, {
+      kind: 'quota-snapshot',
+      account: 'MAX_B',
+      window: '7d_sonnet',
+      usedPct: 100,
+      resetsAt: 89900000,
+      capturedAt: 90100000,
+      source: 'oauth-poll',
+    }),
+    stage: 'quota-payload',
+    expect: { valid: true },
+    notes: '100% with resetsAt in the past is LEGAL — reset-due rendering is FE-5 concern',
+  },
+  {
+    name: 'quota-snapshot-unknown-window',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('quota', 2, {
+      kind: 'quota-snapshot',
+      account: 'MAX_A',
+      window: '24h',
+      usedPct: 10,
+      resetsAt: 90200000,
+      capturedAt: 90100000,
+      source: 'statusline',
+    }),
+    stage: 'quota-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'quota-snapshot-pct-overflow',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('quota', 3, {
+      kind: 'quota-snapshot',
+      account: 'MAX_A',
+      window: '5h',
+      usedPct: 108.2,
+      resetsAt: 90200000,
+      capturedAt: 90100000,
+      source: 'statusline',
+    }),
+    stage: 'quota-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'usedPct is 0..100 inclusive — the collector clamps upstream noise',
+  },
+
+  // ==== M2 freeze: context-graph (broker → client) ===============================
+  {
+    name: 'context-touch-read-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('context-graph', 0, {
+      kind: 'context-touch',
+      sessionId: 'ses_fake_1',
+      path: '/synthetic/workspace/src/main.ts',
+      relation: 'read',
+      ts: 90100000,
+    }),
+    stage: 'context-graph-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'context-touch-instructions-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('context-graph', 1, {
+      kind: 'context-touch',
+      sessionId: 'ses_fake_1',
+      path: '/synthetic/workspace/CLAUDE.md',
+      relation: 'instructions',
+      ts: 90100500,
+    }),
+    stage: 'context-graph-payload',
+    expect: { valid: true },
+    notes: 'InstructionsLoaded hook → instructions relation (hooks-contract.md)',
+  },
+  {
+    name: 'context-touch-relative-path',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('context-graph', 2, {
+      kind: 'context-touch',
+      sessionId: 'ses_fake_1',
+      path: 'relative/file.ts',
+      relation: 'read',
+      ts: 90100000,
+    }),
+    stage: 'context-graph-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'context-touch-account-key-rejected',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('context-graph', 3, {
+      kind: 'context-touch',
+      sessionId: 'ses_fake_1',
+      path: '/synthetic/workspace/src/main.ts',
+      relation: 'read',
+      ts: 90100000,
+      account: 'MAX_A',
+    }),
+    stage: 'context-graph-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: '[X2] design pin: the graph feed is identity-free — account keys REJECTED, not sanitized',
+  },
+
+  // ==== M2 freeze: JSON reconnect-replay (client → broker) =======================
+  {
+    name: 'replay-request-transcript-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: transcriptFrame('ses_fake_1', 0, {
+      kind: 'replay-request',
+      channel: 'transcript.ses_fake_1',
+      fromSeq: 42,
+    }),
+    stage: 'replay-request',
+    expect: { valid: true },
+  },
+  {
+    name: 'replay-request-events-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('events', 0, {
+      kind: 'replay-request',
+      channel: 'events',
+      fromSeq: 0,
+    }),
+    stage: 'replay-request',
+    expect: { valid: true },
+    notes: 'fromSeq 0 = full retained history; below-floor answers watermark-out-of-range at runtime',
+  },
+  {
+    name: 'replay-request-channel-mismatch',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('quota', 0, {
+      kind: 'replay-request',
+      channel: 'events',
+      fromSeq: 0,
+    }),
+    stage: 'replay-request',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'embedded channel must equal the envelope channel (same rule as pty sessionIds)',
+  },
+  {
+    name: 'replay-request-negative-seq',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('events', 1, {
+      kind: 'replay-request',
+      channel: 'events',
+      fromSeq: -1,
+    }),
+    stage: 'replay-request',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'replay-request-on-control-unknown-verb',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(20, {
+      kind: 'replay-request',
+      channel: 'control',
+      fromSeq: 0,
+    }),
+    stage: 'control-request',
+    expect: { valid: false, code: 'unknown-verb' },
+    notes: 'control is NOT replayable — a replay-request there is just an unknown verb',
+  },
+
+  // ==== M2 freeze: events channel policy (payload union DRAFT until M3) ==========
+  {
+    name: 'events-broker-payload-draft-opaque',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 0, { kind: 'synthesized-draft-event' }),
+    stage: 'channel-policy',
+    expect: { valid: true },
+    notes:
+      'events payload union is DRAFT until M3 — clients accept broker pushes as opaque envelopes',
+  },
+
+  // ==== M2 freeze: pushed errors for the new code ================================
+  {
+    name: 'pushed-error-approval-not-pending',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: controlFrame(4, {
+      kind: 'error',
+      code: 'approval-not-pending',
+      message: 'approval is not pending (already resolved or expired)',
+      retryable: false,
+      channel: 'approvals',
+    }),
+    stage: 'error-payload',
+    expect: { valid: true },
+    notes: 'the expiry-vs-click race is NORMAL — never conflated with malformed traffic',
+  },
+
   // ---- binary PTY frames ---------------------------------------------------------
   {
     name: 'pty-frame-output-valid',
@@ -883,6 +1439,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Route one fixture through the frozen protocol validators exactly the way
  * the gateway's routeTextFrame/routeBinaryFrame (and the FE client's inbound
  * path) do: json-parse → envelope → channel/direction-specific validator.
+ * M2 routing order on non-control JSON channels:
+ *   1. `pty.<sid>` → pty flow-control validator (M1, unchanged);
+ *   2. client → broker `replay-request` on a replayable channel → replay
+ *      validator;
+ *   3. client → broker on `approvals` → decision validator; any other
+ *      client payload on a broker→client channel → channel policy reject;
+ *   4. broker → client → the channel's payload validator (`events` excepted:
+ *      its union is DRAFT until M3 — opaque passthrough by policy).
  */
 export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayResult {
   if (fixture.kind === 'binary') {
@@ -930,6 +1494,51 @@ export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayR
       : { valid: false, code: message.code, stage: 'pty-client-message' };
   }
 
-  // M1 gateway policy: every other channel accepts no client payloads.
-  return { valid: false, code: 'bad-request', stage: 'channel-policy' };
+  if (fixture.direction === 'client-to-broker') {
+    // M2: reconnect-replay rides the replayable channel itself.
+    if (isRecord(payload) && payload['kind'] === 'replay-request' && isReplayableChannel(channel)) {
+      const replay = validateJsonReplayRequest(payload, channel);
+      return replay.ok
+        ? { valid: true, stage: 'replay-request' }
+        : { valid: false, code: replay.code, stage: 'replay-request' };
+    }
+    // M2: approvals is the one bidirectional fan-out channel (decisions).
+    if (channel === 'approvals') {
+      const decision = validateApprovalsClientMessage(payload);
+      return decision.ok
+        ? { valid: true, stage: 'approvals-client-message' }
+        : { valid: false, code: decision.code, stage: 'approvals-client-message' };
+    }
+    // Everything else stays broker→client only.
+    return { valid: false, code: 'bad-request', stage: 'channel-policy' };
+  }
+
+  // broker → client (FE-2 inbound path)
+  if (channel === 'approvals') {
+    const message = validateApprovalsServerMessage(payload);
+    return message.ok
+      ? { valid: true, stage: 'approvals-server-message' }
+      : { valid: false, code: message.code, stage: 'approvals-server-message' };
+  }
+  if (channel === 'quota') {
+    const snapshot = validateQuotaSnapshot(payload);
+    return snapshot.ok
+      ? { valid: true, stage: 'quota-payload' }
+      : { valid: false, code: snapshot.code, stage: 'quota-payload' };
+  }
+  if (channel === 'context-graph') {
+    const touch = validateContextGraphTouch(payload);
+    return touch.ok
+      ? { valid: true, stage: 'context-graph-payload' }
+      : { valid: false, code: touch.code, stage: 'context-graph-payload' };
+  }
+  if (sid !== undefined && channel.startsWith('transcript.')) {
+    const transcript = validateTranscriptPayload(payload, sid);
+    return transcript.ok
+      ? { valid: true, stage: 'transcript-payload' }
+      : { valid: false, code: transcript.code, stage: 'transcript-payload' };
+  }
+
+  // events: payload union DRAFT until M3 — opaque passthrough by policy.
+  return { valid: true, stage: 'channel-policy' };
 }

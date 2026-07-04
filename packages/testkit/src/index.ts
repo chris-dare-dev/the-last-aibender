@@ -12,10 +12,13 @@
  *   - transcriptFixtures.ts  transcript-tail fixtures (ICR-0001, from BE-1)
  *   - fakeQueryRunner.ts     the canonical QueryRunner double (ICR-0001)
  *   - fakeKernel.ts          gateway-facing kernel double (ICR-0002)
- *   - wsGolden.ts            golden WS-protocol fixture corpus (ICR-0003)
+ *   - wsGolden.ts            golden WS-protocol fixture corpus (ICR-0003;
+ *                            extended at the M2 full freeze — corpus pins
+ *                            GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M2')
  *
  * Still to come per plan §3: fake statusline stdin feed, fake OTLP emitter,
- * mock OpenCode SSE server, fake opencode.db builder, fake LM Studio.
+ * mock OpenCode SSE server, fake opencode.db builder, fake LM Studio,
+ * synthesized hook-POST fixtures (hooks-contract.md §6, lands with BE-5 M3).
  */
 
 export {
@@ -64,6 +67,7 @@ export {
 } from './fakeKernel.js';
 
 export {
+  GOLDEN_WS_CORPUS_FREEZE,
   GOLDEN_WS_FIXTURES,
   goldenFrameBytes,
   replayGoldenWsFixture,

@@ -1,24 +1,29 @@
 # WS protocol contract — envelope, channels, PTY frames, flow control
 
-> ## 🔒 FROZEN-M1-CORE — 2026-07-04
-> **Owner: BE-ORCH · Co-sign: FE-ORCH.** After this banner, the sections marked
-> **FROZEN** change **only** through an interface change request
-> ([docs/contracts/icr/](icr/README.md)): an implementer files `icr-NNNN-<slug>.md`,
-> BE-ORCH lands the change, FE-ORCH co-signs. Sections marked **DRAFT (M2)**
-> freeze at M2 and may still move until then.
+> ## 🔒 FROZEN-M2 (full) — 2026-07-04
+> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M2 FULL freeze (plan §3: "M1
+> core, M2 full"). After this banner, every section below is **FROZEN** and
+> changes **only** through an interface change request
+> ([docs/contracts/icr/](icr/README.md)): an implementer files
+> `icr-NNNN-<slug>.md`, BE-ORCH lands the change, FE-ORCH co-signs.
+> **One deliberate exception:** the `events` channel **payload union** is
+> DEFERRED TO M3 (§8) — the channel itself (name, direction, seq/replay
+> semantics) is frozen now.
 >
 > The machine-checkable half of this contract is `packages/protocol`
-> (`PROTOCOL_VERSION = '1.0.0-m1-core'`). **This document is the prose of
-> record when the two disagree — file an ICR, never a silent divergence.**
+> (`PROTOCOL_VERSION = '1.0.0'`, `PROTOCOL_FREEZE = 'FROZEN-M2'`). **This
+> document is the prose of record when the two disagree — file an ICR, never
+> a silent divergence.**
 
-Blueprint anchors: §2 (topology), §4.1 (session substrates), plan §3 (freeze
+Blueprint anchors: §2 (topology), §4.1 (session substrates + permission
+relay), §6.1 (collection matrix), §8 (context-graph feed), plan §3 (freeze
 schedule), plan BE-3 (gateway). Flow-control mechanics were proven by SPIKE-D
 (vi): 6 PTYs × 5 MB/s, one slow consumer, bounded memory, zero byte loss
 ([docs/spikes/spike-d-pty-supervision.md](../spikes/spike-d-pty-supervision.md)).
 
 ---
 
-## 1. Transport — FROZEN (M1-CORE)
+## 1. Transport & auth — FROZEN (M1-CORE; auth transport codified at M2)
 
 - **One multiplexed WebSocket** at `ws://127.0.0.1:<port>`. The frontend never
   talks to Claude/OpenCode/LM Studio directly (blueprint §2).
@@ -27,11 +32,17 @@ schedule), plan BE-3 (gateway). Flow-control mechanics were proven by SPIKE-D
   - **Binary frames**: PTY bytes in the binary frame format (§5). Never
     JSON-wrapped, never base64.
 - Port + per-boot auth token are discovered via the bootstrap file
-  (`docs/contracts/bootstrap-file.md`, freezes M2). The auth **handshake
-  message** is DRAFT (§8); the *requirement* that an unauthenticated
-  connection is rejected with `bad-auth` and closed is frozen now.
+  ([bootstrap-file.md](bootstrap-file.md), FROZEN-M2).
+- **Auth transport (M2 resolution of the M1 draft):** the client presents the
+  bootstrap token **at connect time** — either as `?token=<token>` on the
+  connection URL (the browser WebSocket API cannot set headers; the server is
+  loopback-only and the token per-boot) or as an `Authorization: Bearer
+  <token>` header. There is **no separate handshake message** — the M1
+  placeholder was resolved as not needed; the M1 gateway implementation is
+  the codified behavior. A missing/incorrect token answers a pushed
+  `bad-auth` error (§7) and the connection is closed (code 1008).
 
-## 2. Envelope — FROZEN (M1-CORE)
+## 2. Envelope — FROZEN (M1-CORE; seq scoping refined at M2)
 
 ```jsonc
 { "stream": "control",          // stream family, MUST equal streamForChannel(channel)
@@ -41,29 +52,38 @@ schedule), plan BE-3 (gateway). Flow-control mechanics were proven by SPIKE-D
 ```
 
 - `seq` is assigned by the **sender** per channel and is monotonically
-  increasing. It feeds reconnect bookkeeping on JSON channels. PTY **byte**
-  flow control does *not* use `seq` — it uses the binary frame's
+  increasing. **Scoping (M2):**
+  - on the broker→client fan-out channels (`events`, `quota`, `approvals`,
+    `transcript.<sid>`, `context-graph`) the broker's seq is scoped to
+    **(broker boot, channel)** and continues across connections — this is the
+    watermark axis for JSON reconnect-replay (§8);
+  - on `control` and on client→broker traffic, seq is per-connection (control
+    correlates by request id and is never replayed).
+- PTY **byte** flow control does *not* use `seq` — it uses the binary frame's
   `streamOffset` axis (§6).
 - Envelope validation failures answer `bad-envelope`; unknown/malformed
   channels answer `unknown-channel` (§7).
 - Validators: `validateEnvelope` / `isEnvelope`.
 
-## 3. Channel registry — FROZEN (M1-CORE)
+## 3. Channel registry — FROZEN (M1-CORE; directions concretized at M2)
 
 | Channel | Stream | Direction | Payloads |
 |---|---|---|---|
 | `control` | `control` | bidirectional | control requests/responses (§4), pushed `error` payloads (§7) |
-| `events` | `events` | broker → client | DRAFT (M2) |
-| `quota` | `quota` | broker → client | DRAFT (M2) |
-| `approvals` | `approvals` | bidirectional | DRAFT (M2; pairs with reserved `approve` verb) |
+| `events` | `events` | broker → client (+ client `replay-request` §8) | **payload union DRAFT until M3** (§8) |
+| `quota` | `quota` | broker → client (+ client `replay-request` §8) | `quota-snapshot` (§11) |
+| `approvals` | `approvals` | bidirectional | `approval-request` / `approval-decision` / `approval-resolved` (§10) + client `replay-request` (§8) |
 | `pty.<sid>` | `pty` | bidirectional | binary PTY frames (§5) + JSON flow-control messages (§6) |
-| `transcript.<sid>` | `transcript` | broker → client | DRAFT (M2) |
-| `context-graph` | `context-graph` | broker → client | DRAFT (M2) |
+| `transcript.<sid>` | `transcript` | broker → client (+ client `replay-request` §8) | `transcript-delta` / `transcript-tool` / `transcript-result` (§9) |
+| `context-graph` | `context-graph` | broker → client (+ client `replay-request` §8) | `context-touch` (§12) |
 
 `<sid>` is a **harness** session id (never a native id), charset
 `[A-Za-z0-9_-]`, 1–64 chars (`SESSION_ID_SEGMENT_RE`, `MAX_SESSION_ID_BYTES`).
 
-## 4. Control verbs — FROZEN (M1-CORE)
+Any client payload not registered for a channel answers `bad-request` (the
+"channel-policy" verdict in the golden corpus).
+
+## 4. Control verbs — FROZEN (M1-CORE; `approve` retired-as-reserved at M2)
 
 Requests are client → broker on `control`; each carries a client-generated
 `id` (`[A-Za-z0-9_-]{1,128}`) and is answered by exactly one response with the
@@ -71,8 +91,12 @@ same `id`. Validator: `validateControlRequest` (broker inbound),
 `validateControlResponse` (client inbound).
 
 **Frozen verbs:** `launch` · `resume` · `kill` · `status`.
-**Reserved verb:** `approve` — the name is registered, the shape is
-deliberately unfrozen until M2; sending it now answers `verb-reserved`.
+**Permanently reserved verb:** `approve` — **M2 decision**: the approvals
+slice landed on the `approvals` channel (§10); decisions ride that channel,
+not a control verb (session-scoped fan-out beats a point-to-point verb for a
+multi-window inbox). The verb name stays registered-and-rejected
+(`verb-reserved`) so no other meaning can squat on it; promoting it later is
+an ICR.
 
 ### 4.1 launch
 
@@ -142,7 +166,7 @@ purpose, workstreamHint?, nativeSessionId?, pid? }`. `state` ∈
 (the resume-ledger state machine — DDL contract §4 of
 [sqlite-ddl.md](sqlite-ddl.md)).
 
-## 5. Binary PTY frame format — FROZEN (M1-CORE)
+## 5. Binary PTY frame format — FROZEN (M1-CORE, unchanged at M2)
 
 Constants and codec: `PTY_FRAME_MAGIC`, `PTY_FRAME_VERSION`,
 `PTY_FRAME_HEADER_BYTES`, `PTY_FRAME_MAX_PAYLOAD_BYTES`, `encodePtyFrame`,
@@ -170,7 +194,7 @@ Rules:
 - Larger output is **split** by the sender; frames are never merged across the
   cap.
 
-## 6. Ack-watermark flow control — FROZEN (M1-CORE)
+## 6. Ack-watermark flow control — FROZEN (M1-CORE, unchanged at M2)
 
 JSON messages on the session's `pty.<sid>` channel. Validator:
 `validatePtyClientMessage(value, expectedSessionId)` — the gateway always
@@ -190,11 +214,11 @@ highWater → `pty.pause()` (kernel PTY buffer fills → child's TTY write block
 Bytes are **never dropped**; a cap breach is a broker bug (assertion), not a
 wire condition.
 
-## 7. Error envelope — FROZEN (M1-CORE)
+## 7. Error envelope — FROZEN (M1-CORE; one code added at M2)
 
 Failed control requests answer `{ kind:"result", id, ok:false, error: ErrorDetail }`.
 Failures with no request to answer (bad envelope, bad auth, unknown channel,
-oversized frame) are pushed on `control` as:
+oversized frame, non-pending approval decision) are pushed on `control` as:
 
 ```jsonc
 { "kind": "error", "code": "bad-auth", "message": "…", "retryable": false,
@@ -206,25 +230,165 @@ oversized frame) are pushed on `control` as:
 
 `bad-envelope` · `bad-auth` · `unknown-channel` · `unknown-verb` ·
 `verb-reserved` · `bad-request` · `session-not-found` ·
-`session-not-resumable` · `double-resume-blocked` · `oversized-frame` ·
-`watermark-out-of-range` · `internal`
+`session-not-resumable` · `double-resume-blocked` · `approval-not-pending` ·
+`oversized-frame` · `watermark-out-of-range` · `internal`
+
+`approval-not-pending` (M2, amendment-recorded): a decision referenced an
+approval that is not pending — unknown id, already resolved, or expired. This
+race is **normal** (two windows; expiry vs. click) and is deliberately
+distinct from `bad-request`. `watermark-out-of-range` now covers both the PTY
+byte axis (§6) and the JSON seq axis (§8).
 
 Adding a code after freeze is an ICR.
 
-## 8. DRAFT (M2) — do not build against as frozen
+## 8. JSON reconnect-replay — FROZEN (M2)
 
-- **Auth handshake message** (per-boot token from the bootstrap file). Frozen
-  requirement already in force: unauthenticated traffic answers `bad-auth` and
-  the connection closes.
-- **Payload unions** for `events`, `quota`, `approvals`, `transcript.<sid>`,
-  `context-graph` (placeholders: `draft.ts`).
-- **`approve` verb** request/response shape (approvals slice, plan BE-3/FE-2).
-- Reconnect **replay watermark** semantics for JSON channels (per-channel
-  `seq` replay); PTY replay is already frozen (§6).
+Promoted from the M1 draft. Mechanism (mirrors the PTY path, with `seq` as
+the axis):
 
-## 9. Amendment record
+- The broker journals a **bounded** window of outbound envelopes per
+  replayable channel, scoped to the broker boot. Replayable channels =
+  the broker→client fan-out set: `events`, `quota`, `approvals`,
+  `transcript.<sid>`, `context-graph` (`isReplayableChannel`). NOT `control`
+  (correlates by id, dies with the connection) and NOT `pty.<sid>` (bytes
+  replay on the `streamOffset` axis, §6).
+- On (re)connect a client MAY send one `replay-request` per channel — **on
+  that channel**:
+
+```jsonc
+{ "kind": "replay-request", "channel": "transcript.ses_01", "fromSeq": 42 }
+```
+
+- The embedded `channel` MUST equal the envelope's channel (cross-checked,
+  like pty sessionIds). `fromSeq` = the first seq the client has NOT
+  processed; the broker re-sends every retained envelope with
+  `seq >= fromSeq`, in order, with their **original** seq values, then live
+  flow continues. `fromSeq === lastSeq + 1` is a legal no-op.
+- `fromSeq` beyond `lastSeq + 1`, or below the journal's retention floor,
+  answers `watermark-out-of-range`. Below-floor history is unrecoverable from
+  the wire **by design** (bounded memory) — the client rebuilds from read
+  models / the store.
+- A broker **restart** invalidates every watermark. The client detects it via
+  the bootstrap file's boot identity (token/pid/startedAt —
+  [bootstrap-file.md](bootstrap-file.md)) and starts fresh.
+- Validator: `validateJsonReplayRequest(value, expectedChannel)`.
+
+**Still DRAFT after this freeze (the only open surface):** the `events`
+channel **payload union** — deferred to M3, when BE-5's normalized events
+store defines what actually fans out (recorded in the amendment table).
+Until then: client payloads on `events` (other than `replay-request`) answer
+`bad-request`; broker pushes on `events` are treated by clients as opaque
+envelopes (golden fixture `events-broker-payload-draft-opaque`).
+
+## 9. `transcript.<sid>` payloads — FROZEN (M2)
+
+The SDK message-stream projection (blueprint §4.1). Broker → client. The
+projection is deliberately narrow — full message bodies and tool
+inputs/outputs stay off this channel (transcripts of record live in the
+per-account JSONL files; tool/file semantics flow through
+[hooks-contract.md](hooks-contract.md)). Validator:
+`validateTranscriptPayload(value, expectedSessionId)` — sessionId is
+cross-checked against the channel name.
+
+| Kind | Fields | Semantics |
+|---|---|---|
+| `transcript-delta` | `sessionId`, `messageUuid`, `text` | streamed assistant text; grouped client-side on `messageUuid`; `text` non-empty (empty deltas are never sent) |
+| `transcript-tool` | `sessionId`, `toolUseId`, `toolName`, `phase`, `ok?` | tool lifecycle; `phase` ∈ `start · result`; `ok` REQUIRED on `result`, FORBIDDEN on `start` |
+| `transcript-result` | `sessionId`, `ok`, `detail`, `usage`, `costUsd?`, `durationMs?` | terminal result; `detail` = SDK result subtype; `usage` = the four ground-truth token classes `{ inputTokens, outputTokens, cacheReadTokens, cacheCreationTokens }` (blueprint §6.2 — cache-TTL split lives in the events store, not on this wire); `costUsd` is an ESTIMATE |
+
+## 10. `approvals` payloads — FROZEN (M2)
+
+One approval inbox for every escalation source (blueprint §4.1 two-layer
+permission relay; §9.3 BE↔FE #4). The union covers all three sources now, so
+M3–M5 slot in without wire changes. Validators:
+`validateApprovalsClientMessage` (broker inbound) /
+`validateApprovalsServerMessage` (client inbound).
+
+**Flow:** broker pushes `approval-request` → a client answers
+`approval-decision` → broker fans out `approval-resolved` to every connected
+client (including the decider). Requests and resolutions replay on reconnect
+(§8); a decision for a non-pending approval answers the pushed error
+`approval-not-pending` (§7).
+
+### 10.1 `approval-request` (broker → client)
+
+Common fields: `approvalId` (`[A-Za-z0-9_-]{1,128}`), `source`, `summary`
+(identifier-free [X2]), `accountLabel` (placeholder labels only [X2]),
+`expiresAt?` (epoch ms; on expiry the broker resolves `expired`).
+
+Per-source field matrix (validated):
+
+| `source` | `sessionId` | `toolName` | `toolUseId` | `runId`/`stepId` |
+|---|---|---|---|---|
+| `can-use-tool` (SDK in-loop relay) | REQUIRED | REQUIRED | optional | forbidden |
+| `hook-floor` (account-wide http hooks — the policy floor for ALL sessions incl. external) | REQUIRED | REQUIRED | optional | forbidden |
+| `workflow-gate` (pipeline `approval` gates, M5) | optional | forbidden | forbidden | REQUIRED |
+
+### 10.2 `approval-decision` (client → broker)
+
+`{ kind, approvalId, verdict, updatedInput?, note? }` — `verdict` ∈
+`allow · deny`; `updatedInput` (opaque object) relays the canUseTool
+replacement input and is **only legal with `allow`**; `note` (identifier-free
+[X2]) relays the deny message.
+
+### 10.3 `approval-resolved` (broker → client)
+
+`{ kind, approvalId, outcome }` — `outcome` ∈ `allowed · denied · expired ·
+superseded` (`superseded` = the underlying wait vanished: session died,
+workflow run aborted).
+
+## 11. `quota` payload — FROZEN (M2)
+
+Broker → client. Mirrors the `quota_snapshots` DDL row (blueprint §6.1/§6.2).
+Validator: `validateQuotaSnapshot`.
+
+```jsonc
+{ "kind": "quota-snapshot",
+  "account": "MAX_A",          // placeholder labels only [X2]
+  "window": "5h",              // 5h | 7d | 7d_sonnet
+  "usedPct": 41.5,             // 0..100 inclusive (collector clamps upstream noise)
+  "resetsAt": 90200000,        // epoch ms — authoritative from the feed; past values legal
+  "capturedAt": 90100000,      // epoch ms, broker-side capture instant
+  "source": "statusline" }     // statusline (primary) | oauth-poll (idle fallback)
+```
+
+Missing-source freshness is a read-model state (NO SIGNAL) — the broker never
+fabricates a snapshot (plan §9.2 BE-6 negative row).
+
+## 12. `context-graph` payload — FROZEN (M2)
+
+Broker → client — the live graph feed (feature 6). Validator:
+`validateContextGraphTouch`.
+
+```jsonc
+{ "kind": "context-touch",
+  "sessionId": "ses_01",                       // harness session id
+  "path": "/abs/path/to/artifact",             // absolute file path
+  "relation": "read",                          // read | write | instructions | watched
+  "ts": 90100000 }                             // epoch ms
+```
+
+**[X2] design pin — identity-free by construction:** payloads carry file
+paths and session ids ONLY. There is no account field, and the validator
+**rejects** payloads carrying `account`/`accountLabel` keys outright (golden
+fixture `context-touch-account-key-rejected`). Relations map from the hook
+vocabulary ([hooks-contract.md](hooks-contract.md)): `PostToolUse` on
+read/write-shaped tools → `read`/`write`; `InstructionsLoaded` →
+`instructions`; `FileChanged` → `watched`.
+
+## 13. Golden corpus — the BE↔FE contract device
+
+`GOLDEN_WS_FIXTURES` in `packages/testkit` (ICR-0003, extended at this
+freeze; `GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M2'` must equal the protocol
+package's `PROTOCOL_FREEZE`). Every frozen payload family has valid + every
+invalid class pinned as exact wire bytes; both departments' CI replays the
+same frames (plan §9.3 BE↔FE #1). A fixture change requires both
+orchestrators' sign-off.
+
+## 14. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
 | 2026-07-04 | Initial M1-CORE freeze | — (the freeze itself) |
 | 2026-07-04 | §4.2: optional `prompt` on resume params (sdk substrate requires it at M1); §4.1: launch `state` = ledger state at response time (M1 composition note). Additive, backward-compatible — old resume frames stay valid. | [ICR-0004](icr/icr-0004-resume-prompt.md) |
+| 2026-07-04 | **M2 FULL FREEZE.** Promoted: transcript (§9), approvals (§10), quota (§11), context-graph (§12) payload unions; JSON reconnect-replay + per-(boot, channel) seq scoping (§2/§8); auth transport codified as connect-time token, handshake-message draft resolved as not needed (§1). Amended frozen surfaces (recorded here, landed by the freeze agent): error code `approval-not-pending` added (§7); `approve` verb retired-as-reserved — decisions ride the approvals channel (§4); §3 directions concretized (broker→client fan-out channels accept the client `replay-request`). Deferred: `events` payload union → M3 (§8). Protocol `1.0.0-m1-core` → `1.0.0`. FE-ORCH co-sign: **pending** (validator-derived, additive except the recorded amendments). | — (M2 freeze) |

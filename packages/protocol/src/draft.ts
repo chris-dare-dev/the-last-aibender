@@ -1,31 +1,32 @@
 /**
  * ============================================================================
- * DRAFT — NOT FROZEN. Everything in this file freezes at M2 (plan §3:
- * "M1 core, M2 full"). Placeholder shapes only: departments MUST NOT build
- * against these as stable. Changing this file before M2 needs no ICR;
- * promoting any of it into the frozen surface does.
+ * DRAFT — NOT FROZEN. Departments MUST NOT build against this file as stable.
  * ============================================================================
  *
- * Reserved payload families for the channels whose message unions land at M2:
- *   - events        (collector fan-out, BE-5/BE-6)
- *   - quota         (statusline rate_limits snapshots, BE-5)
- *   - approvals     (permission relay + workflow gates; pairs with the
- *                    reserved `approve` control verb)
- *   - transcript.<sid> (SDK message stream projection, BE-3/FE-3)
- *   - context-graph (graph feed envelopes, BE-6/FE-4)
- * Also reserved for M2: the WS auth handshake message (per-boot token,
- *   bootstrap-file contract) — until then auth is specified in prose only
- *   (docs/contracts/ws-protocol.md §DRAFT).
+ * What remains draft after the M2 full freeze (2026-07-04):
+ *
+ *   - `events` channel payload union — DEFERRED TO M3, explicitly recorded in
+ *     the M2 freeze (ws-protocol.md §8 / amendment record). The union is the
+ *     collector fan-out shape and cannot be designed honestly before BE-5's
+ *     normalized events store lands (plan §4/BE-5, M3); freezing a guess at
+ *     M2 would guarantee an ICR at M3. The CHANNEL itself (name, stream,
+ *     broker→client direction, seq/replay semantics per replay.ts) IS frozen —
+ *     only the payload union is open.
+ *
+ * Promoted OUT of this file at the M2 freeze (now frozen surfaces):
+ *   quota.ts · approvals.ts · transcript.ts · contextGraph.ts · replay.ts,
+ *   and the WS auth transport (connect-time token; ws-protocol.md §1 — the
+ *   separate "handshake message" placeholder was resolved as NOT NEEDED).
+ *
+ * Changing this file before M3 needs no ICR; promoting any of it into the
+ * frozen surface does.
  */
 
 /** Common shape every draft payload will refine. */
 export interface DraftPayloadBase {
-  /** Discriminant; concrete kinds land with the M2 freeze. */
+  /** Discriminant; concrete kinds land with the M3 events freeze. */
   readonly kind: string;
 }
 
+/** `events` channel payloads (collector fan-out, BE-5/BE-6) — freezes M3. */
 export interface EventsPayloadDraft extends DraftPayloadBase {}
-export interface QuotaPayloadDraft extends DraftPayloadBase {}
-export interface ApprovalsPayloadDraft extends DraftPayloadBase {}
-export interface TranscriptPayloadDraft extends DraftPayloadBase {}
-export interface ContextGraphPayloadDraft extends DraftPayloadBase {}

@@ -47,6 +47,15 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
 
 ## Deferred watch items (BE-ORCH)
 
+- **`events` payload union (M3)**: the one surface left open by the M2 full
+  freeze (ws-protocol.md §8 + amendment record). Freezes with BE-5's
+  normalized events store; until then client payloads on `events` (other than
+  `replay-request`) answer `bad-request` and broker pushes are opaque.
+- **hooks-contract gating response (T3)**: the CLI-side interpretation of
+  http-hook `200` bodies (`permissionDecision`) must be verified on the real
+  host at SI-3 install before the hook floor turns enforcing
+  (hooks-contract.md §4).
+
 - **`extraArgs` on the wire**: protocol `LaunchParams` deliberately has NO
   `extraArgs` field. The kernel/runner already refuse `--bare` and screen
   extra argv defensively (`assertNoForbiddenArgs`); if extraArgs are ever

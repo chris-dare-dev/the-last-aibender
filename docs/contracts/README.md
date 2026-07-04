@@ -17,7 +17,12 @@ silent divergence.
 | `bootstrap-file.md` | Gateway port/token discovery file format | BE-ORCH + FE-ORCH | M2 |
 | `dag-schema.md` | Pipeline JSON DAG v1 | BE-ORCH | M5 |
 
-Status: **M1 — `ws-protocol.md` and `sqlite-ddl.md` are FROZEN-M1-CORE**
-(2026-07-04); the machine-checkable halves are `packages/protocol@1.0.0-m1-core`
-and `packages/schema`. Later-milestone docs do not exist yet. Landed ICRs and
-the deferred watch list live in [icr/](icr/README.md).
+Status: **M2 — `ws-protocol.md` is FROZEN-M2 (full)**, `bootstrap-file.md`
+and `hooks-contract.md` are written and FROZEN-M2 (FE-ORCH / SI-ORCH co-signs
+pending), `sqlite-ddl.md` remains FROZEN-M1 (kernel slice) — all 2026-07-04.
+The machine-checkable half of the WS contract is `packages/protocol@1.0.0`
+(`PROTOCOL_FREEZE = 'FROZEN-M2'`) plus the golden corpus in
+`packages/testkit` (`GOLDEN_WS_CORPUS_FREEZE`). One recorded deferral: the
+`events` channel **payload union** freezes at M3 with BE-5 (ws-protocol.md
+§8). `dag-schema.md` does not exist yet (M5). Landed ICRs and the deferred
+watch list live in [icr/](icr/README.md).

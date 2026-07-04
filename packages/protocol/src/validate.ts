@@ -8,10 +8,11 @@
  *     at once — the exact drift the freeze exists to prevent. The M0 stub also
  *     shipped dependency-free; staying that way keeps the surface auditable.
  *  2. The inbound surface is small and closed (4 control verbs, 3 pty
- *     messages, 1 error payload, 1 envelope, 1 binary codec). Hand-rolled
- *     checks under `strict` + `exactOptionalPropertyTypes` are shorter than
- *     the equivalent zod schemas and produce exactly the ErrorCode taxonomy
- *     the gateway answers with (zod errors would need mapping anyway).
+ *     messages, the M2 channel payload unions, 1 error payload, 1 envelope,
+ *     1 binary codec). Hand-rolled checks under `strict` +
+ *     `exactOptionalPropertyTypes` are shorter than the equivalent zod
+ *     schemas and produce exactly the ErrorCode taxonomy the gateway answers
+ *     with (zod errors would need mapping anyway).
  *  3. Golden-fixture protocol tests (plan §9.3 BE↔FE #1) pin behavior; a
  *     validation-library swap later is an internal change, not an ICR.
  *
@@ -20,13 +21,26 @@
  * dropped, never echoed — [X2]-friendly).
  *
  * ============================================================================
- * FROZEN-M1-CORE (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
- * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
+ * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04). Amendments only via
+ * ICR (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of
+ * record: docs/contracts/ws-protocol.md.
+ * M2 additions: transcript / approvals / quota / context-graph payload
+ * validators + the JSON replay-request validator.
  * ============================================================================
  */
 
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalResolved,
+  ApprovalsClientPayload,
+  ApprovalsServerPayload,
+} from './approvals.js';
+import { APPROVAL_ID_RE, APPROVAL_OUTCOMES, APPROVAL_SOURCES, APPROVAL_VERDICTS } from './approvals.js';
 import { isSessionIdSegment } from './channels.js';
 import { isChannelName } from './channels.js';
+import type { ContextGraphTouch } from './contextGraph.js';
+import { CONTEXT_GRAPH_RELATIONS } from './contextGraph.js';
 import type {
   ControlRequest,
   ControlResponse,
@@ -43,8 +57,19 @@ import type { ErrorDetail, ErrorPayload } from './errors.js';
 import { isErrorCode } from './errors.js';
 import type { PtyAck, PtyClientMessage, PtyReplayRequest, PtyResize } from './pty.js';
 import { PTY_MAX_COLS, PTY_MAX_ROWS } from './pty.js';
+import type { QuotaSnapshot } from './quota.js';
+import { QUOTA_SOURCES, QUOTA_WINDOWS } from './quota.js';
+import type { JsonReplayRequest } from './replay.js';
+import { isReplayableChannel } from './replay.js';
 import type { ValidationResult } from './result.js';
 import { invalid, valid } from './result.js';
+import type {
+  TranscriptDelta,
+  TranscriptPayload,
+  TranscriptResult,
+  TranscriptToolEvent,
+  TranscriptUsage,
+} from './transcript.js';
 import {
   LABEL_BACKENDS,
   isAccountLabel,
@@ -71,6 +96,19 @@ function isNonNegativeSafeInteger(value: unknown): value is number {
 
 function isRequestId(value: unknown): value is string {
   return typeof value === 'string' && REQUEST_ID_RE.test(value);
+}
+
+function isApprovalId(value: unknown): value is string {
+  return typeof value === 'string' && APPROVAL_ID_RE.test(value);
+}
+
+/** Epoch milliseconds on the wire: non-negative safe integer. */
+function isEpochMs(value: unknown): value is number {
+  return isNonNegativeSafeInteger(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 // ---------------------------------------------------------------------------
@@ -425,4 +463,394 @@ export function validateErrorPayload(value: unknown): ValidationResult<ErrorPayl
     ...(correlatesTo !== undefined ? { correlatesTo } : {}),
     ...(channel !== undefined ? { channel } : {}),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Transcript payloads (inbound to the frontend client) — FROZEN-M2
+// ---------------------------------------------------------------------------
+
+function validateTranscriptUsage(value: unknown): ValidationResult<TranscriptUsage> {
+  if (!isRecord(value)) return invalid('bad-request', 'transcript usage must be an object');
+  const fields = ['inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheCreationTokens'] as const;
+  for (const field of fields) {
+    if (!isNonNegativeSafeInteger(value[field])) {
+      return invalid('bad-request', `transcript usage ${field} must be a non-negative safe integer`);
+    }
+  }
+  return valid({
+    inputTokens: value['inputTokens'] as number,
+    outputTokens: value['outputTokens'] as number,
+    cacheReadTokens: value['cacheReadTokens'] as number,
+    cacheCreationTokens: value['cacheCreationTokens'] as number,
+  });
+}
+
+/**
+ * Validate an inbound payload on a `transcript.<sid>` channel (client side).
+ * When `expectedSessionId` is given (from the channel name), the payload's
+ * sessionId must agree — the client always passes it.
+ */
+export function validateTranscriptPayload(
+  value: unknown,
+  expectedSessionId?: string,
+): ValidationResult<TranscriptPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'transcript payload must be an object');
+  const kind = value['kind'];
+  const sessionId = value['sessionId'];
+  if (!isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', `transcript payload sessionId ${JSON.stringify(sessionId)} is malformed`);
+  }
+  if (expectedSessionId !== undefined && sessionId !== expectedSessionId) {
+    return invalid(
+      'bad-request',
+      `transcript payload sessionId ${sessionId} does not match channel session ${expectedSessionId}`,
+    );
+  }
+  switch (kind) {
+    case 'transcript-delta': {
+      const messageUuid = value['messageUuid'];
+      if (!isNonEmptyString(messageUuid)) {
+        return invalid('bad-request', 'transcript-delta messageUuid must be a non-empty string');
+      }
+      const text = value['text'];
+      if (!isNonEmptyString(text)) {
+        return invalid('bad-request', 'transcript-delta text must be a non-empty string (empty deltas are never sent)');
+      }
+      const payload: TranscriptDelta = { kind: 'transcript-delta', sessionId, messageUuid, text };
+      return valid(payload);
+    }
+    case 'transcript-tool': {
+      const toolUseId = value['toolUseId'];
+      if (!isNonEmptyString(toolUseId)) {
+        return invalid('bad-request', 'transcript-tool toolUseId must be a non-empty string');
+      }
+      const toolName = value['toolName'];
+      if (!isNonEmptyString(toolName)) {
+        return invalid('bad-request', 'transcript-tool toolName must be a non-empty string');
+      }
+      const phase = value['phase'];
+      if (phase !== 'start' && phase !== 'result') {
+        return invalid('bad-request', `transcript-tool phase must be start|result, got ${JSON.stringify(phase)}`);
+      }
+      const ok = value['ok'];
+      if (phase === 'start' && ok !== undefined) {
+        return invalid('bad-request', 'transcript-tool ok must be absent on phase start (a start has no outcome)');
+      }
+      if (phase === 'result' && typeof ok !== 'boolean') {
+        return invalid('bad-request', 'transcript-tool ok is required (boolean) on phase result');
+      }
+      const payload: TranscriptToolEvent = {
+        kind: 'transcript-tool',
+        sessionId,
+        toolUseId,
+        toolName,
+        phase,
+        ...(phase === 'result' ? { ok: ok as boolean } : {}),
+      };
+      return valid(payload);
+    }
+    case 'transcript-result': {
+      const ok = value['ok'];
+      if (typeof ok !== 'boolean') {
+        return invalid('bad-request', 'transcript-result ok must be a boolean');
+      }
+      const detail = value['detail'];
+      if (!isNonEmptyString(detail)) {
+        return invalid('bad-request', 'transcript-result detail must be a non-empty string');
+      }
+      const usage = validateTranscriptUsage(value['usage']);
+      if (!usage.ok) return usage;
+      const costUsd = value['costUsd'];
+      if (costUsd !== undefined && (!isFiniteNumber(costUsd) || costUsd < 0)) {
+        return invalid('bad-request', 'transcript-result costUsd, when present, must be a non-negative finite number');
+      }
+      const durationMs = value['durationMs'];
+      if (durationMs !== undefined && !isNonNegativeSafeInteger(durationMs)) {
+        return invalid('bad-request', 'transcript-result durationMs, when present, must be a non-negative safe integer');
+      }
+      const payload: TranscriptResult = {
+        kind: 'transcript-result',
+        sessionId,
+        ok,
+        detail,
+        usage: usage.value,
+        ...(costUsd !== undefined ? { costUsd } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
+      };
+      return valid(payload);
+    }
+    default:
+      return invalid('bad-request', `unknown transcript payload kind ${JSON.stringify(kind)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Approvals payloads — FROZEN-M2
+// ---------------------------------------------------------------------------
+
+/** Validate an inbound `approvals` payload on the BROKER side (decisions). */
+export function validateApprovalsClientMessage(
+  value: unknown,
+): ValidationResult<ApprovalsClientPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'approvals message must be an object');
+  const kind = value['kind'];
+  if (kind !== 'approval-decision') {
+    return invalid('bad-request', `unknown approvals client kind ${JSON.stringify(kind)} (clients send approval-decision)`);
+  }
+  const approvalId = value['approvalId'];
+  if (!isApprovalId(approvalId)) {
+    return invalid('bad-request', `approval-decision approvalId must match ${APPROVAL_ID_RE.source}`);
+  }
+  const verdict = value['verdict'];
+  if (!(APPROVAL_VERDICTS as readonly string[]).includes(verdict as string)) {
+    return invalid('bad-request', `approval-decision verdict must be allow|deny, got ${JSON.stringify(verdict)}`);
+  }
+  const updatedInput = value['updatedInput'];
+  if (updatedInput !== undefined) {
+    if (verdict !== 'allow') {
+      return invalid('bad-request', 'approval-decision updatedInput is only legal with verdict allow');
+    }
+    if (!isRecord(updatedInput)) {
+      return invalid('bad-request', 'approval-decision updatedInput, when present, must be an object');
+    }
+  }
+  const note = value['note'];
+  if (note !== undefined && !isNonEmptyString(note)) {
+    return invalid('bad-request', 'approval-decision note, when present, must be a non-empty string');
+  }
+  const decision: ApprovalDecision = {
+    kind: 'approval-decision',
+    approvalId,
+    verdict: verdict as ApprovalDecision['verdict'],
+    ...(updatedInput !== undefined ? { updatedInput: updatedInput as Record<string, unknown> } : {}),
+    ...(note !== undefined ? { note } : {}),
+  };
+  return valid(decision);
+}
+
+/**
+ * Validate an inbound `approvals` payload on the CLIENT side (requests +
+ * resolutions pushed by the broker).
+ */
+export function validateApprovalsServerMessage(
+  value: unknown,
+): ValidationResult<ApprovalsServerPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'approvals message must be an object');
+  const kind = value['kind'];
+  switch (kind) {
+    case 'approval-request': {
+      const approvalId = value['approvalId'];
+      if (!isApprovalId(approvalId)) {
+        return invalid('bad-request', `approval-request approvalId must match ${APPROVAL_ID_RE.source}`);
+      }
+      const source = value['source'];
+      if (!(APPROVAL_SOURCES as readonly string[]).includes(source as string)) {
+        return invalid('bad-request', `unknown approval source ${JSON.stringify(source)}`);
+      }
+      const summary = value['summary'];
+      if (!isNonEmptyString(summary)) {
+        return invalid('bad-request', 'approval-request summary must be a non-empty string');
+      }
+      const accountLabel = value['accountLabel'];
+      if (!isAccountLabel(accountLabel)) {
+        return invalid('bad-request', `approval-request accountLabel unknown ${JSON.stringify(accountLabel)}`);
+      }
+      const sessionId = value['sessionId'];
+      if (sessionId !== undefined && !isSessionIdSegment(sessionId)) {
+        return invalid('bad-request', 'approval-request sessionId malformed');
+      }
+      const toolName = value['toolName'];
+      if (toolName !== undefined && !isNonEmptyString(toolName)) {
+        return invalid('bad-request', 'approval-request toolName, when present, must be a non-empty string');
+      }
+      const toolUseId = value['toolUseId'];
+      if (toolUseId !== undefined && !isNonEmptyString(toolUseId)) {
+        return invalid('bad-request', 'approval-request toolUseId, when present, must be a non-empty string');
+      }
+      const runId = value['runId'];
+      if (runId !== undefined && !isNonEmptyString(runId)) {
+        return invalid('bad-request', 'approval-request runId, when present, must be a non-empty string');
+      }
+      const stepId = value['stepId'];
+      if (stepId !== undefined && !isNonEmptyString(stepId)) {
+        return invalid('bad-request', 'approval-request stepId, when present, must be a non-empty string');
+      }
+      const expiresAt = value['expiresAt'];
+      if (expiresAt !== undefined && !isEpochMs(expiresAt)) {
+        return invalid('bad-request', 'approval-request expiresAt, when present, must be epoch ms (non-negative safe integer)');
+      }
+      // Per-source field matrix (ws-protocol.md §10.1).
+      if (source === 'can-use-tool' || source === 'hook-floor') {
+        if (sessionId === undefined) {
+          return invalid('bad-request', `approval-request source ${source} requires sessionId`);
+        }
+        if (toolName === undefined) {
+          return invalid('bad-request', `approval-request source ${source} requires toolName`);
+        }
+        if (runId !== undefined || stepId !== undefined) {
+          return invalid('bad-request', `approval-request source ${source} must not carry runId/stepId`);
+        }
+      } else {
+        // workflow-gate
+        if (runId === undefined || stepId === undefined) {
+          return invalid('bad-request', 'approval-request source workflow-gate requires runId and stepId');
+        }
+        if (toolName !== undefined || toolUseId !== undefined) {
+          return invalid('bad-request', 'approval-request source workflow-gate must not carry toolName/toolUseId');
+        }
+      }
+      const request: ApprovalRequest = {
+        kind: 'approval-request',
+        approvalId,
+        source: source as ApprovalRequest['source'],
+        summary,
+        accountLabel,
+        ...(sessionId !== undefined ? { sessionId } : {}),
+        ...(toolName !== undefined ? { toolName } : {}),
+        ...(toolUseId !== undefined ? { toolUseId } : {}),
+        ...(runId !== undefined ? { runId } : {}),
+        ...(stepId !== undefined ? { stepId } : {}),
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+      };
+      return valid(request);
+    }
+    case 'approval-resolved': {
+      const approvalId = value['approvalId'];
+      if (!isApprovalId(approvalId)) {
+        return invalid('bad-request', `approval-resolved approvalId must match ${APPROVAL_ID_RE.source}`);
+      }
+      const outcome = value['outcome'];
+      if (!(APPROVAL_OUTCOMES as readonly string[]).includes(outcome as string)) {
+        return invalid('bad-request', `unknown approval outcome ${JSON.stringify(outcome)}`);
+      }
+      const resolved: ApprovalResolved = {
+        kind: 'approval-resolved',
+        approvalId,
+        outcome: outcome as ApprovalResolved['outcome'],
+      };
+      return valid(resolved);
+    }
+    default:
+      return invalid('bad-request', `unknown approvals server kind ${JSON.stringify(kind)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Quota snapshots (inbound to the frontend client) — FROZEN-M2
+// ---------------------------------------------------------------------------
+
+export function validateQuotaSnapshot(value: unknown): ValidationResult<QuotaSnapshot> {
+  if (!isRecord(value)) return invalid('bad-request', 'quota payload must be an object');
+  if (value['kind'] !== 'quota-snapshot') {
+    return invalid('bad-request', `unknown quota payload kind ${JSON.stringify(value['kind'])}`);
+  }
+  const account = value['account'];
+  if (!isAccountLabel(account)) {
+    return invalid('bad-request', `quota-snapshot account unknown ${JSON.stringify(account)}`);
+  }
+  const window = value['window'];
+  if (!(QUOTA_WINDOWS as readonly string[]).includes(window as string)) {
+    return invalid('bad-request', `quota-snapshot window must be 5h|7d|7d_sonnet, got ${JSON.stringify(window)}`);
+  }
+  const usedPct = value['usedPct'];
+  if (!isFiniteNumber(usedPct) || usedPct < 0 || usedPct > 100) {
+    return invalid('bad-request', 'quota-snapshot usedPct must be a finite number in 0..100');
+  }
+  const resetsAt = value['resetsAt'];
+  if (!isEpochMs(resetsAt)) {
+    return invalid('bad-request', 'quota-snapshot resetsAt must be epoch ms (non-negative safe integer)');
+  }
+  const capturedAt = value['capturedAt'];
+  if (!isEpochMs(capturedAt)) {
+    return invalid('bad-request', 'quota-snapshot capturedAt must be epoch ms (non-negative safe integer)');
+  }
+  const source = value['source'];
+  if (!(QUOTA_SOURCES as readonly string[]).includes(source as string)) {
+    return invalid('bad-request', `quota-snapshot source must be statusline|oauth-poll, got ${JSON.stringify(source)}`);
+  }
+  return valid({
+    kind: 'quota-snapshot',
+    account,
+    window: window as QuotaSnapshot['window'],
+    usedPct,
+    resetsAt,
+    capturedAt,
+    source: source as QuotaSnapshot['source'],
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Context-graph touches (inbound to the frontend client) — FROZEN-M2
+// ---------------------------------------------------------------------------
+
+export function validateContextGraphTouch(value: unknown): ValidationResult<ContextGraphTouch> {
+  if (!isRecord(value)) return invalid('bad-request', 'context-graph payload must be an object');
+  if (value['kind'] !== 'context-touch') {
+    return invalid('bad-request', `unknown context-graph payload kind ${JSON.stringify(value['kind'])}`);
+  }
+  // [X2] design pin: the feed is identity-free by construction — a payload
+  // that even CARRIES an account key is rejected, not silently sanitized.
+  if ('account' in value || 'accountLabel' in value) {
+    return invalid('bad-request', 'context-touch must not carry account keys (identity-free feed by design [X2])');
+  }
+  const sessionId = value['sessionId'];
+  if (!isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', `context-touch sessionId ${JSON.stringify(sessionId)} is malformed`);
+  }
+  const path = value['path'];
+  if (!isNonEmptyString(path) || !path.startsWith('/')) {
+    return invalid('bad-request', 'context-touch path must be an absolute file path');
+  }
+  const relation = value['relation'];
+  if (!(CONTEXT_GRAPH_RELATIONS as readonly string[]).includes(relation as string)) {
+    return invalid('bad-request', `context-touch relation must be read|write|instructions|watched, got ${JSON.stringify(relation)}`);
+  }
+  const ts = value['ts'];
+  if (!isEpochMs(ts)) {
+    return invalid('bad-request', 'context-touch ts must be epoch ms (non-negative safe integer)');
+  }
+  return valid({
+    kind: 'context-touch',
+    sessionId,
+    path,
+    relation: relation as ContextGraphTouch['relation'],
+    ts,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// JSON channel replay-request (inbound to the broker) — FROZEN-M2
+// ---------------------------------------------------------------------------
+
+/**
+ * Validate a `replay-request` sent ON a replayable channel. When
+ * `expectedChannel` is given (from the envelope), the payload's channel must
+ * agree — the gateway always passes it.
+ */
+export function validateJsonReplayRequest(
+  value: unknown,
+  expectedChannel?: string,
+): ValidationResult<JsonReplayRequest> {
+  if (!isRecord(value)) return invalid('bad-request', 'replay-request must be an object');
+  if (value['kind'] !== 'replay-request') {
+    return invalid('bad-request', `unknown replay payload kind ${JSON.stringify(value['kind'])}`);
+  }
+  const channel = value['channel'];
+  if (!isChannelName(channel)) {
+    return invalid('bad-request', `replay-request channel ${JSON.stringify(channel)} is malformed`);
+  }
+  if (!isReplayableChannel(channel)) {
+    return invalid('bad-request', `channel ${channel} is not replayable (control correlates by id; pty replays on the byte axis)`);
+  }
+  if (expectedChannel !== undefined && channel !== expectedChannel) {
+    return invalid(
+      'bad-request',
+      `replay-request channel ${channel} does not match envelope channel ${expectedChannel}`,
+    );
+  }
+  const fromSeq = value['fromSeq'];
+  if (!isNonNegativeSafeInteger(fromSeq)) {
+    return invalid('bad-request', 'replay-request fromSeq must be a non-negative safe integer');
+  }
+  return valid({ kind: 'replay-request', channel, fromSeq });
 }

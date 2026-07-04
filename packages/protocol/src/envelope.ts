@@ -4,18 +4,24 @@
  * pty.ts and are NOT wrapped in this envelope.
  *
  * ============================================================================
- * FROZEN-M1-CORE (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
- * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
+ * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04). Amendments only via
+ * ICR (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of
+ * record: docs/contracts/ws-protocol.md.
  * ============================================================================
  */
 
+import type { ApprovalsPayload } from './approvals.js';
 import type { ChannelName } from './channels.js';
 import { isChannelName, streamForChannel } from './channels.js';
+import type { ContextGraphTouch } from './contextGraph.js';
 import type { ControlRequest, ControlResponse } from './control.js';
 import type { ErrorPayload } from './errors.js';
 import type { PtyClientMessage } from './pty.js';
+import type { QuotaSnapshot } from './quota.js';
+import type { JsonReplayRequest } from './replay.js';
 import type { ValidationResult } from './result.js';
 import { invalid, valid } from './result.js';
+import type { TranscriptPayload } from './transcript.js';
 
 export interface Envelope<TPayload = unknown> {
   /** Logical stream family — MUST equal `streamForChannel(channel)`. */
@@ -33,12 +39,21 @@ export interface Envelope<TPayload = unknown> {
   payload: TPayload;
 }
 
-/**
- * Payload kinds frozen at M1-CORE. The full cross-channel union (events,
- * quota, approvals, transcript, context-graph) freezes at M2 — their DRAFT
- * placeholders live in draft.ts and MUST NOT be built against as stable.
- */
+/** Payload kinds frozen at M1-CORE (kept as a named alias post-M2). */
 export type FrozenM1Payload = ControlRequest | ControlResponse | ErrorPayload | PtyClientMessage;
+
+/**
+ * The full frozen cross-channel JSON payload union as of the M2 freeze.
+ * Still open: the `events` channel payload union (freezes M3 with BE-5 —
+ * draft.ts).
+ */
+export type FrozenPayload =
+  | FrozenM1Payload
+  | TranscriptPayload
+  | ApprovalsPayload
+  | QuotaSnapshot
+  | ContextGraphTouch
+  | JsonReplayRequest;
 
 /**
  * Structural + consistency validation of a decoded JSON envelope. Enforces

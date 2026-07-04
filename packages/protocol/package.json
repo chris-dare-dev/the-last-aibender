@@ -1,8 +1,8 @@
 {
   "name": "@aibender/protocol",
-  "version": "1.0.0-m1-core",
+  "version": "1.0.0",
   "private": true,
-  "description": "WS envelope, channel, and message types shared by the aibender-core gateway and every frontend client. FROZEN-M1-CORE (full freeze at M2; amend via ICR). Zero runtime deps by design — consumed by Node broker AND WKWebView bundle.",
+  "description": "WS envelope, channel, and message types shared by the aibender-core gateway and every frontend client. FROZEN-M2 full freeze (events payload union deferred to M3; amend via ICR). Zero runtime deps by design — consumed by Node broker AND WKWebView bundle.",
   "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",

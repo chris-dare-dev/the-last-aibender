@@ -9,8 +9,11 @@
  *     {@link ErrorPayload} on the `control` channel.
  *
  * ============================================================================
- * FROZEN-M1-CORE (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
- * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
+ * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04). Amendments only via
+ * ICR (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of
+ * record: docs/contracts/ws-protocol.md.
+ * Amendments: M2 freeze — `approval-not-pending` added (approvals slice);
+ * `watermark-out-of-range` doc widened to cover JSON channel replay.
  * ============================================================================
  */
 
@@ -41,9 +44,17 @@ export const ERROR_CODES = Object.freeze([
   'session-not-resumable',
   /** Un-forked double-resume of a running session (blueprint §5 guardrail). */
   'double-resume-blocked',
+  /**
+   * Decision for an approval that is not pending (unknown id, already
+   * resolved, expired). A NORMAL race, not malformed traffic (M2 freeze).
+   */
+  'approval-not-pending',
   /** Binary PTY frame exceeds PTY_FRAME_MAX_PAYLOAD_BYTES or is malformed. */
   'oversized-frame',
-  /** Ack/replay watermark outside the retained range (see flow control). */
+  /**
+   * Ack/replay watermark outside the retained range — PTY byte axis (§6) or
+   * JSON channel seq axis (replay.ts, M2).
+   */
   'watermark-out-of-range',
   /** Broker-side failure not attributable to the request. */
   'internal',

@@ -1,29 +1,36 @@
 /**
- * Control-channel verbs for M1: launch · resume · kill · status.
- * `approve` is RESERVED — the verb name is registered so no other meaning can
- * squat on it, but its request/response shape is deliberately unfrozen until
- * the M2 approvals slice; validators reject it with `verb-reserved`.
+ * Control-channel verbs: launch · resume · kill · status.
+ * `approve` is PERMANENTLY RESERVED (M2 freeze decision): the approvals slice
+ * landed on the `approvals` channel (approvals.ts) — decisions ride that
+ * channel, not a control verb. The verb name stays registered-and-rejected
+ * (`verb-reserved`) so no other meaning can squat on it; promoting it later
+ * is an ICR.
  *
  * Requests are client → broker on the `control` channel; each carries a
  * client-generated request id and is answered by exactly one
  * {@link ControlResponse} correlated on that id.
  *
  * ============================================================================
- * FROZEN-M1-CORE (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
- * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
- * Amendments: ICR-0004 (2026-07-04) — optional `prompt` on resume params.
+ * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04). Amendments only via
+ * ICR (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of
+ * record: docs/contracts/ws-protocol.md.
+ * Amendments: ICR-0004 (2026-07-04) — optional `prompt` on resume params;
+ * M2 freeze — `approve` retired-as-reserved (see above).
  * ============================================================================
  */
 
 import type { AccountLabel, Backend, SessionState, Substrate } from './vocab.js';
 import type { ErrorDetail } from './errors.js';
 
-/** Frozen M1 control verbs. */
+/** Frozen control verbs (unchanged by the M2 freeze). */
 export const CONTROL_VERBS = Object.freeze(['launch', 'resume', 'kill', 'status'] as const);
 
 export type ControlVerb = (typeof CONTROL_VERBS)[number];
 
-/** Registered-but-unfrozen verbs. Shape lands at M2 via ICR. */
+/**
+ * Registered-and-rejected verb names (answered `verb-reserved`). `approve`
+ * is permanently parked here — see the module header for the M2 decision.
+ */
 export const RESERVED_CONTROL_VERBS = Object.freeze(['approve'] as const);
 
 /** Client-generated request id: 1–128 chars of [A-Za-z0-9_-]. */

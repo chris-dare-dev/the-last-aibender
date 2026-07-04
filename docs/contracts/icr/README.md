@@ -44,6 +44,15 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
 | [ICR-0003](icr-0003-ws-golden-corpus.md) | Golden WS-protocol fixture corpus (`GOLDEN_WS_FIXTURES`) in testkit | 2026-07-04 |
 | [ICR-0004](icr-0004-resume-prompt.md) | Optional `prompt` on the frozen resume verb (+ launch-state M1 note); FE-ORCH co-sign **pending** | 2026-07-04 |
 | [ICR-0005](icr-0005-pid-liveness-guard.md) | sqlite-ddl §4 prose: kernel pid-liveness guard proving child death before un-forked dead-resume of `running` rows | 2026-07-04 |
+| [ICR-0006](icr-0006-pty-test-doubles.md) | BE-2 pty doubles (FakePtyBackend + synthetic login TUI) promoted into `@aibender/testkit` | 2026-07-04 |
+| [ICR-0007](icr-0007-gateway-port-doubles.md) | Gateway M2 port doubles (FakePtyHost/FakePtySession/FakeApprovalBroker/FakeTranscriptSource) promoted into `@aibender/testkit` | 2026-07-04 |
+| [ICR-0008](icr-0008-adapter-fakes.md) | BE-4 adapter fakes (mock OpenCode SSE server, fake LM Studio, fake opencode.db builder) promoted into `@aibender/testkit` | 2026-07-04 |
+
+Post-M2 stewarding also landed (no new ICR numbers): the ICR-0001 drift-rule
+sync (`canUseTool` on testkit's QuerySpec mirror — recorded in ICR-0001's
+landing record), the ws-protocol §6 attach-semantics prose pin (recorded in
+that doc's amendment table), and the `--port 0 = default 4096` correction on
+`docs/research/findings/opencode-serve-event-probe.md` §1.
 
 ## Deferred watch items (BE-ORCH)
 
@@ -65,3 +74,26 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
   guard is `instanceof`; loosening it to the structural shape lets testkit's
   `FakeKernel` drive the real gateway server without injecting core's error
   class.
+- **M2 composition integration (core/src/main, BE-ORCH — from the BE-3 M2
+  return):** wire `startGateway`'s M2 ports at the composition root. The
+  pty/approvals halves are ready-made (BE-2's `toGatewayPtyHostPort` /
+  `toApprovalBrokerGatewayPort` in `core/src/kernel/pty/gatewayPort.ts`).
+  The transcript tee is BLOCKED on a BE-1 seam decision first: BE-1's
+  `QueryHandle.messages()` is single-consumer (the kernel pump) AND the SDK
+  runner narrows the terminal result (usage/cost dropped from
+  `RunnerResultMessage`), so a composition-root wrapping QueryRunner cannot
+  feed `transcript-result` its usage fields. Either a BE-1 kernel tap on the
+  RAW SDK stream or raw-result retention on the seam (an ICR — the testkit
+  mirror syncs in the same change per the ICR-0001 drift rule) is required
+  before the tee can be composed.
+- **BE-8 session-create body (from the BE-4 M2 return):**
+  `@opencode-ai/sdk@1.17.13`'s typed `SessionCreateData` body carries only
+  `{parentID, title}` — the probe's `{agent, model, metadata, permission}`
+  claim is not represented in this SDK generation. BE-4's session client
+  stays on the typed surface; per-session model selection at create time
+  needs an SDK bump or a widened body cast when BE-8's account routing lands.
+- **SPIKE-A telemetry sink (FE, when the FE telemetry surface exists):**
+  `attachRenderer` emits one `{mode, reason, detail?}` event per renderer
+  selection/fallback via `onTelemetry` (spike-a clause 7) — route these to
+  the collector as env telemetry (identifier-free [X2]); currently only
+  captured by tests.

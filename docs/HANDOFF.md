@@ -9,7 +9,7 @@
 > — the reusable multi-agent *Workflow* pattern that has driven every milestone. You will re-use it
 > verbatim to build the remaining milestones. Read it second.
 >
-> **Last updated:** 2026-07-04, at commit `533cfb8` (end of M2 "freeze" phase).
+> **Last updated:** 2026-07-04, at commit `096c6b1` (M2 complete: freeze + impl + gate + post-gate hygiene).
 > **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
 > **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo
 > `chris-dare-dev/the-last-aibender`. **Everything is committed LOCAL-ONLY. Nothing has been pushed.
@@ -19,17 +19,18 @@
 
 ## 0. TL;DR — your first five minutes
 
-1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -14 && git status` — confirm you
-   are at `533cfb8` (or later) with a **clean tree**. If the tree is dirty, someone left work
+1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -25 && git status` — confirm you
+   are at `096c6b1` (or later) with a **clean tree**. If the tree is dirty, someone left work
    uncommitted; investigate before proceeding.
-2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **374 tests pass**, typecheck
-   clean. This is your green baseline. (If `pnpm` is missing: `npm i -g pnpm`.)
+2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **1012 tests pass / 1 skipped**,
+   typecheck clean. Also green: `pnpm run test:infra` (58 bats), `pnpm -F aibender-app lint:tokens`.
+   This is your green baseline. (If `pnpm` is missing: `npm i -g pnpm`.)
 3. Read the two **normative** specs (they are the source of truth, not this doc):
    `docs/research/summaries/01-architecture-blueprint.md` and
    `docs/research/summaries/02-stage2-implementation-plan.md`.
 4. Read §6 (**hard gates**) and §7 (**secret hygiene**) of this file. These are non-negotiable and
    the auto-mode classifier *will* stop you if you cross them.
-5. Your immediate job is **§9.1 — finish M2**. Go there.
+5. Your immediate job is **§9.1 — build M3 (instruments live)**. Go there.
 
 ---
 
@@ -87,7 +88,7 @@ This handoff summarizes; **these files decide.** If this doc and a spec disagree
 | `DESIGN.md` | **LOCKED** "Instrument Grade" design token system + a 20-item FORBIDDEN anti-slop list. All UI must pass `pnpm -F aibender-app lint:tokens`. Changing it requires an ADR + FE-ORCH sign-off. |
 | `docs/contracts/*.md` | **FROZEN** interface contracts: `ws-protocol.md` (FROZEN-M2), `sqlite-ddl.md`, `bootstrap-file.md`, `hooks-contract.md`. Amend only via the freeze phase of a milestone or an ICR. |
 | `SECURITY.md` | The [X2] doctrine, the tier model, the remediation playbook, and the **pending-owner ledger** (incl. the history rewrite in §5.1). |
-| `docs/runbooks/*.md` | Operator procedures + per-milestone DoD records (`m0-dod.md`, `m1-dod.md`, login-bootstrap, version-gate). |
+| `docs/runbooks/*.md` | Operator procedures + per-milestone DoD records (`m0-dod.md`, `m1-dod.md`, `m2-dod.md`, login-bootstrap, version-gate, launchd, hooks-telemetry, pty-attended-live). |
 
 ---
 
@@ -102,7 +103,7 @@ rendered frontend). You are inside **Stage 2**.
 | **Stage 1 — Discovery** | ✅ committed (`e978cee`) | 14 findings docs + 3 summaries from a 17-agent research fan-out. No code. |
 | **M0 — Clean slate & risk burn-down** | ✅ committed (`98673ac`→`5804dca`) | [X2] hygiene stack (two-tier gitleaks, fail-closed pre-commit hook, CI), pnpm monorepo + 4 `@aibender/*` contract stubs, **DESIGN.md locked**, all **ten** risk spikes executed with verdicts. |
 | **M1 — [X1] proven (synthetic)** | ✅ committed (`96b6872`→`04c395f`) | FROZEN-M1 protocol core + kernel SQLite schema; **BE-1 session kernel** (per-account env injection + scrub, resume ledger with row-before-spawn, transcript-tail validator, double-resume block, FakeQueryRunner seam); **BE-3 gateway control skeleton** + bootstrap discovery; **SI-2** account provisioning + keychain-probe + version-gate scripts. Synthetic 3-account concurrency demo passes (13/13 assertions). |
-| **M2 — Attended cockpit** | ⏳ **IN PROGRESS — freeze only** (`533cfb8`) | **Only the freeze phase landed:** protocol → FROZEN-M2 (transcript/approvals/quota/context-graph payloads, reconnect-replay), `bootstrap-file.md` + `hooks-contract.md`, +32 golden fixtures. **The 8 implementers, 3 reviews, and the gate DID NOT RUN** (the driving session ran out of usage credits mid-flight). **This is your starting point.** |
+| **M2 — Attended cockpit** | ✅ committed (`533cfb8` freeze; `a04a1ab`→`20cb4f8` impl+gate; `096c6b1` hygiene follow-up) | Freeze: protocol → FROZEN-M2 + `bootstrap-file.md`/`hooks-contract.md` + 32 golden fixtures. Impl (8 packages, 3 orchestrator reviews w/ 9 material fixes applied, serial gate): **BE-2** ptyHost (node-pty attended sessions through the M1 spawn layer, SPIKE-D ack-ring flow control, liveSpawn-gated login bootstrap, recycle v0, ApprovalBroker + canUseTool wiring); **BE-3** gateway full (binary PTY streaming w/ backpressure, transcript.<sid> projection, approvals bridge, reconnect-replay journals, multi-client fan-out); **BE-4** adapters (supervised `opencode serve` + SSE dedupe + gated SecretFetcher, LM Studio down-as-state + JIT/TTL residency, [X2] credential-table read guard); **FE-2** Tauri v2 shell + `--smoke-test` + WS client + zustand/rAF state + cockpit chrome + single approval inbox; **FE-3** xterm/transcript islands (spike-A/C contracts, Playwright Chromium+WebKit); **FE-5** launchers (5-label picker + identifier-audit test); **SI-3** launchd/hook templates + merge-never-overwrite installer; **SI-6** full CI + `live-check.sh` T3 runner. Gate evidence: 1012 tests, 58 bats, 6-PTY soak (zero byte loss/dup, bounded memory), echo p95 0.14 ms, Tauri smoke exit 0, both gitleaks tiers clean. Record: `docs/runbooks/m2-dod.md` (deviations D1–D4; live items T3 pending-owner). |
 | **M3 — Instruments live** | ⬜ not started | Observability collection + dashboards (feature 1). |
 | **M4 — Lineage** | ⬜ not started | [X4] workstreams + the live context graph (feature 6). |
 | **M5 — Pipelines** | ⬜ not started | Catalog scanner + DAG engine (features 4 & 5). |
@@ -120,21 +121,31 @@ rendered frontend). You are inside **Stage 2**.
 
 ## 4. Exact repo state right now
 
-- **HEAD:** `533cfb8 feat: freeze M2 protocol full and hooks/bootstrap contracts`. Tree **clean**.
-- **Baseline health:** `pnpm -r typecheck` clean; **374 tests pass** (protocol 72, app 32, shared 36,
-  testkit 48, schema 40, core 146); `pnpm -F aibender-app lint:tokens` clean; gitleaks tier-1 **and**
-  tier-2 clean on the working tree.
+- **HEAD:** `096c6b1 chore: tier-1 path allowlist for cargo target dir`. Tree **clean**.
+- **Baseline health:** `pnpm -r typecheck` clean; **1012 tests pass / 1 skipped** (protocol 72, shared 36,
+  testkit 68, schema 40, app 309, core 487+1 — the skip is the double-gated live-opencode placeholder);
+  `pnpm run test:infra` 58/58 bats; `pnpm -F aibender-app lint:tokens` clean (96 files); `cargo test` in
+  `app/src-tauri` 5/5; the 6-PTY soak is runnable on demand via `pnpm -F aibender-core soak:m2`.
+  gitleaks tier-1 clean on a full-dir scan (incl. a built `app/src-tauri/target/`, path-allowlisted —
+  SECURITY.md §2 tuning log); tier-2 clean except the known 12 `.git/logs` reflog echoes (see wart below).
 - **Layout** (see plan §2 for the full intended tree):
-  - `packages/{protocol,schema,shared,testkit}` — shared, orchestrator-stewarded contract packages.
-  - `core/src/{kernel,gateway,main}` — the `aibender-core` broker daemon (BACKEND dept). `kernel/pty/`,
-    `adapters/`, `collector/`, `readmodels/`, `workstreams/`, `pipelines/`, `supervision/` are
-    **not yet built** (they land M2–M6).
-  - `app/` — the Tauri v2 frontend (FRONTEND dept). Currently only `DESIGN.md`-gated theme scaffold;
-    `src-tauri/`, `chrome/`, `lib/`, `islands/`, `features/` land M2–M5.
+  - `packages/{protocol,schema,shared,testkit}` — shared, orchestrator-stewarded contract packages
+    (testkit now carries the 32-fixture golden corpus + the promoted pty/gateway/adapter test doubles,
+    ICR-0006/7/8).
+  - `core/src/{kernel,gateway,adapters,main}` — the `aibender-core` broker daemon (BACKEND dept).
+    `kernel/pty/`, `gateway/` (full), and `adapters/{opencode,lmstudio,claude-sdk}` are **built** (M2).
+    `collector/`, `readmodels/`, `workstreams/`, `pipelines/`, `supervision/` are **not yet built**
+    (they land M3–M6).
+  - `app/` — the Tauri v2 frontend (FRONTEND dept). Built (M2): `src-tauri/` (shell + `--smoke-test`),
+    `src/chrome/`, `src/lib/`, `src/islands/{terminal,transcript}/`, `src/features/launch/`, plus the
+    locked theme. Dashboards, context-graph island, workstream UI, and the builder land M3–M5.
   - `infra/{profiles,scripts,launchd,hooks,aws,colima,ci}` — SERVER-SIDE dept. `profiles/`+`scripts/`
-    populated by SI-2; the rest land M2–M5.
+    (SI-2), `launchd/`+`hooks/` (SI-3), `ci/` + full `.github/workflows/` (SI-6) populated; `aws/`
+    (SI-4, hard-gated) and `colima/` (SI-5) land M3+.
   - `spikes/` — the 5 quarantined M0 spike harnesses (real, runnable, **never imported by prod code**).
-  - `docs/{research,contracts,adr,runbooks,spikes}`.
+  - `docs/{research,contracts,adr,runbooks,spikes}` — runbooks now include `m2-dod.md`,
+    `pty-attended-live.md`, `launchd.md`, `hooks-telemetry.md`; `docs/contracts/icr/README.md` tracks
+    the deferred watch items.
 - **Known non-blocking wart:** `.git/logs/` reflogs still echo the pre-history author identity of the
   root commit `62d11d0`. Tier-2 gitleaks flags these 12 reflog lines. They are **not** a working-tree
   leak and cannot be cleared without the owner-gated history rewrite (see §6). Report them as
@@ -256,51 +267,39 @@ it is never the reviewer or authority. See the owner's global policy. Not requir
 
 ## 9. HOW TO PROCEED
 
-### 9.1 IMMEDIATE NEXT ACTION — finish M2 (attended cockpit)
+### 9.1 IMMEDIATE NEXT ACTION — build M3 (instruments live, feature 1)
 
-The M2 freeze is committed (`533cfb8`). What remains is the **Build → Review → Fix → Gate** phases for
-the eight implementer packages that never ran. **Do not re-run the freeze** — it is done and frozen.
+**M2 is DONE** (see §3): freeze `533cfb8`, impl+gate `a04a1ab`→`20cb4f8`, post-gate hygiene `096c6b1`.
+The `stage2-m2-impl` workflow script that built it (a good structural reference alongside the runbook
+skeleton) is saved at
+`~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/894bbe44-c473-4c8b-b7e4-633d58bc246b/workflows/scripts/stage2-m2-impl-wf_53ddc79a-b5c.js`.
 
-Launch a Workflow named `stage2-m2-impl` containing exactly these 8 implementers (full briefs are in
-plan §4–§6; the ready-to-adapt script skeleton is in the orchestration runbook §"M2-remaining script"):
+Author a fresh Workflow named `stage2-m3` (Freeze→Build→Review→Fix→Gate) from the runbook skeleton,
+using the plan §4–§6 package briefs and the plan §8.2 M3 DoD. Headlines:
 
-| Pkg | Owns | Builds (one-line; see plan for full brief) |
-|---|---|---|
-| **BE-2** ptyHost | `core/src/kernel/pty/` (+ApprovalBroker/canUseTool wiring) | node-pty attended sessions through the M1 spawn layer; PTY frame streaming w/ ack-watermark flow control (per spike-D); detach/reattach; login-bootstrap (liveSpawn-gated); recycle-loop v0; approval broker. PTY bytes never parsed. |
-| **BE-3** gateway-full | `core/src/gateway/` | Extend M1 skeleton: binary PTY streaming + backpressure, transcript.<sid> projection, approvals bridge, reconnect-replay across all channels, multi-client fan-out. |
-| **BE-4** adapters | `core/src/adapters/` | Supervised `opencode serve` child (random port/password, argv-`serve` match); injectable SecretFetcher (opt-in-gated, never serialized); `@opencode-ai/sdk` client + SSE (`/global/event` dedupe on `evt_`); LM Studio `/v1`+`/api/v0`+`lms` behind interface, down-as-state, JIT+TTL residency; credential-table read guard. |
-| **FE-2** chrome/shell | `app/src-tauri/`, `app/src/chrome/`, `app/src/lib/` | Tauri v2 shell (tray/notify/window; `--smoke-test` headless mode); WS client (reconnect-replay, golden-corpus tested); zustand+ring-buffer/rAF projection (never per-token React state); cockpit chrome per DESIGN.md; **single approval inbox**. |
-| **FE-3** islands | `app/src/islands/{terminal,transcript}/` | xterm 6 island implementing the spike-A `attachRenderer()` contract verbatim (WebGL→DOM fallback, 3s grace); react-virtual transcript island porting the spike-C **follow-guard**. Playwright component tests (Chromium+WebKit). |
-| **FE-5** launchers | `app/src/features/launch/` | One-off prompt launcher (picker offers exactly 5 labels; audit test: no raw identifier can render); skill launcher (`/skill-name` composition); ENT feature-detect degrade. |
-| **SI-3** hooks/launchd | `infra/launchd/`, `infra/hooks/` | Aqua gui-domain LaunchAgent plists (broker + lms, v1-ready not installed); per-account hook settings templates (statusline `rate_limits` tee, `type:"http"` hooks per `hooks-contract.md`, OTel env block, X4 hook slots); idempotent **merge-never-overwrite** installer. |
-| **SI-6** CI/live-check | `.github/workflows/`, `infra/ci/` | Full CI (Linux unit/component + macOS build-only + separate gitleaks job); the **live-check runner** (`infra/ci/live-check.sh`) enumerating every T3 check with PASS/FAIL/SKIP(pending-owner). |
+- **Freeze (BE-ORCH):** promote whatever quota/events/context-graph payload sections and collector
+  ingestion schema (observability tables in `sqlite-ddl.md`) M3's sources need; extend the golden
+  corpus for any newly frozen frames.
+- **BE-5 collector** — JSONL tail, statusline quota-file ingest, in-process OTLP receiver on
+  `127.0.0.1:4318`, OpenCode SSE consumer (BE-4's stream is already the single consumable surface),
+  `opencode.db` scrape *through the landed credential-table guard*, AWS Cost Explorer/CloudWatch
+  pollers (live-gated). Identity attributes dropped/mapped to labels at ingest ([X2]).
+- **BE-6 read models** — aggregates, freshness states, context-graph feed.
+- **FE-5 dashboards** — per plan §6.3 lead order, DESIGN.md-locked.
+- **SI-4 is HARD-GATED** (Bedrock application-inference-profile `terraform apply` — author IaC,
+  run `terraform plan`, show it, **stop**; owner verbal OK required, §6 gate 2).
 
-**M2 Definition of Done** (plan §8.2 M2 — the gate agent verifies and records in `docs/runbooks/m2-dod.md`):
-Tauri app boots and discovers the broker via the bootstrap file; attended TUI per account in the xterm
-island (login bootstrap end-to-end — **T3 pending-owner** for the real login); one-off prompt against a
-**specified** account streams into the transcript island; skill launch via `/skill-name`; permission
-relay lands in the approval inbox; **6-PTY flow-control soak** passes (bounded memory, no dropped bytes)
-with synthetic TUIs; typing-echo p95 <100 ms locally; detach/reattach restores scrollback. Frozen
-contracts `ws-protocol.md`/`bootstrap-file.md`/`hooks-contract.md` already landed in the freeze.
+**Deferred M2 watch items** (not blockers; tracked in `docs/contracts/icr/README.md` — consider
+resolving the first during the M3 freeze/build): composition-root M2 port wiring (`composeBroker`
+passes kernel only; the pty/approvals adapters are ready-made and gate-proven, the transcript tee is
+blocked on a BE-1 raw-stream seam decision); BE-8 opencode session-create body limitation on the pinned
+SDK; SPIKE-A renderer telemetry sink routing.
 
-> The full M2 workflow script (freeze + all 8 implementers + reviews + gate) was saved by the previous
-> session at
-> `~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/<PREV_SESSION_UUID>/workflows/scripts/stage2-m2-wf_61841abe-2a4.js`.
-> You **cannot** `resumeFromRunId` it (resume is same-session only). Instead, **author a fresh
-> `stage2-m2-impl` workflow** from the runbook skeleton with the freeze phase removed (freeze is
-> already committed). If you can read that saved file, use it as a reference for the exact implementer
-> briefs; otherwise the plan §4–§6 briefs are authoritative.
-
-### 9.2 Then: M3 → M4 → M5 → M6 (one Workflow per milestone, same pattern)
+### 9.2 Then: M4 → M5 → M6 (one Workflow per milestone, same pattern)
 
 For each, author a `stage2-mN` workflow (Freeze→Build→Review→Fix→Gate) from the runbook skeleton, using
 the plan's package briefs and DoD. Headlines:
 
-- **M3 — Instruments live (feature 1).** BE-5 collector (JSONL tail, statusline quota, in-process OTLP
-  receiver on `127.0.0.1:4318`, OpenCode SSE dedupe, `opencode.db` scrape *with the credential-table
-  guard*, AWS Cost Explorer/CloudWatch pollers), BE-6 read models + freshness states + context-graph
-  feed, FE-5 dashboards (per plan §6.3 lead order). **SI-4 is HARD-GATED** (Bedrock inference-profile
-  `terraform apply` — plan only, then stop). Identity attributes dropped/mapped to labels at ingest.
 - **M4 — Lineage ([X4] + feature 6).** BE-7 workstream ledger/briefs/reconciler, FE-4 live context-graph
   island (graphology store → d3-force in a Web Worker → PixiJS v8 WebGL2, per spike-B; honor the fps
   floor and the reduced-motion path), FE-6 workstream lineage UI, SI-3 brief-automation hooks active.
@@ -358,8 +357,8 @@ intent):
   results; salvage anything healthy (verify typecheck+tests+gitleaks, then commit with the message the
   gate *would* have used).
 - **`Workflow resumeFromRunId` is same-session only.** A different session cannot resume a prior run —
-  it must author a fresh workflow. That is why §9.1 tells you to author `stage2-m2-impl` anew rather than
-  resume `wf_61841abe-2a4`.
+  it must author a fresh workflow (this is how M2's impl was recovered: a fresh `stage2-m2-impl`
+  authored from the runbook skeleton + the saved script of the dead run).
 - **The auto-mode classifier blocks** credential-store probing and history rewrites of pre-session
   commits. These blocks are *correct* — surface them to the owner, don't work around them.
 - **Session-limit hardening for long workflows:** keep milestones to one Workflow each; the serial gate

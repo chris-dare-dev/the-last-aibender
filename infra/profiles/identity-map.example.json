@@ -1,0 +1,9 @@
+{
+  "$comment": "POINTER ONLY — this example is committed; the real file is NOT.",
+  "$where": "Copy to $AIBENDER_HOME/identity-map.json (default ~/.aibender/identity-map.json). That file stays machine-local FOREVER [X2]: it maps real identities (account emails, org/account UUIDs, AWS account ids) to the placeholder labels. Never commit it, never copy it into the tree.",
+  "$format": "Each label key holds an array of identity strings. Keys starting with $ are ignored by the loader (@aibender/shared loadIdentityMap). Unknown label keys, non-string entries, and identities mapped to two labels are rejected loudly.",
+  "MAX_A": [],
+  "MAX_B": [],
+  "ENT": [],
+  "AWS_DEV": []
+}

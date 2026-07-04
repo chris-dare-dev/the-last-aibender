@@ -1,0 +1,145 @@
+/*
+ * FE-3 transcript island — Instrument Grade, token-only (DESIGN.md §8.5).
+ * Data surface: monospace character grid, rows on the 20px rhythm (§4.3),
+ * document blocks — never chat bubbles (§7 item 14). Status hues are
+ * semantic and paired with engraved text readouts (§2.4/§9). The only
+ * animation is the phosphor-decay arrival trace (§3.2); reduced motion
+ * collapses its duration to 0ms via the generated tokens.css remap (§3.5).
+ */
+
+.tr-island {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--ig-surface-well);
+}
+
+.tr-scroller {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-grid-row);
+  font-variant-numeric: var(--ig-numeric);
+  color: var(--ig-ink-primary);
+}
+
+.tr-scroller:focus-visible {
+  outline: var(--ig-focus-outline);
+  outline-offset: var(--ig-focus-offset);
+}
+
+.tr-inner {
+  position: relative;
+  width: 100%;
+}
+
+.tr-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ig-space-8);
+}
+
+.tr-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Engraved instrument label (sanctioned mono-caps exception, DESIGN.md §2.5). */
+.tr-engraved {
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-label);
+  line-height: var(--ig-type-label-lh);
+  letter-spacing: var(--ig-tracking-engraved);
+  text-transform: uppercase;
+  color: var(--ig-ink-muted);
+}
+
+.tr-tool {
+  color: var(--ig-ink-secondary);
+}
+
+.tr-tool-name {
+  color: var(--ig-ink-primary);
+}
+
+/* Status is never color-only: readout text carries the state (§9). */
+.tr-tool-status--running {
+  color: var(--ig-ink-muted);
+}
+
+.tr-tool-status--ok {
+  color: var(--ig-status-ok);
+}
+
+.tr-tool-status--error {
+  color: var(--ig-status-fault);
+}
+
+.tr-result {
+  border-top: var(--ig-line-width) solid var(--ig-line-hairline);
+  color: var(--ig-ink-secondary);
+}
+
+.tr-result--ok .tr-result-outcome {
+  color: var(--ig-status-ok);
+}
+
+.tr-result--fault .tr-result-outcome {
+  color: var(--ig-status-fault);
+}
+
+.tr-result-usage {
+  color: var(--ig-ink-muted);
+}
+
+/* LIVE readout — follow-intent is the oracle (SPIKE-C), amber = live datum. */
+.tr-live {
+  position: absolute;
+  right: var(--ig-space-8);
+  bottom: var(--ig-space-8);
+  color: var(--ig-accent);
+  pointer-events: none;
+}
+
+.tr-jump {
+  position: absolute;
+  right: var(--ig-space-8);
+  bottom: var(--ig-space-8);
+  min-height: var(--ig-space-20); /* ≥20px hit target (§9) */
+  padding: var(--ig-space-2) var(--ig-space-8);
+  background: var(--ig-surface-raised);
+  border: var(--ig-line-width) solid var(--ig-line-emphasis);
+  border-radius: var(--ig-radius-0);
+  color: var(--ig-ink-primary);
+  cursor: pointer;
+}
+
+.tr-jump:active {
+  color: var(--ig-accent-press);
+}
+
+.tr-jump:focus-visible {
+  outline: var(--ig-focus-outline);
+  outline-offset: var(--ig-focus-offset);
+}
+
+/* Phosphor decay (§3.2): attack 0ms (backwards fill = bright), hold 80ms
+ * (delay), decay to the block's resting ink. Opacity/color only; duration
+ * token collapses to 0ms under prefers-reduced-motion (tokens.css §3.5). */
+.tr-arrive {
+  animation: tr-phosphor var(--ig-motion-phosphor-decay-duration) var(--ig-motion-phosphor-decay-ease) 80ms both;
+}
+
+@keyframes tr-phosphor {
+  from {
+    color: var(--ig-ink-primary);
+  }
+}

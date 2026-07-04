@@ -2,13 +2,25 @@
   "name": "aibender-core",
   "version": "0.0.0",
   "private": true,
-  "description": "The aibender-core broker daemon (blueprint §2): session kernel, gateway, adapters, collector, workstreams, pipelines. M0 skeleton: composition-root placeholder only.",
+  "description": "The aibender-core broker daemon (blueprint §2): session kernel, gateway, adapters, collector, workstreams, pipelines. M1: BE-1 session kernel & account runtime (core/src/kernel/).",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@aibender/protocol": "workspace:*",
+    "@aibender/schema": "workspace:*",
+    "@aibender/shared": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "0.3.201",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@aibender/testkit": "workspace:*",
+    "@types/ws": "^8.18.0"
   },
   "scripts": {
+    "demo:m1": "tsx scripts/demo-m1.ts",
     "start": "tsx src/main/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"

@@ -29,6 +29,18 @@ description = "12-digit number near AWS context (account IDs are config, not cod
 regex = '''(?i)(?:aws|arn|account|profile|sso|bedrock)[^\n]{0,40}\b\d{12}\b'''
 keywords = ["aws", "arn", "account", "profile", "sso", "bedrock"]
 
+  # SI-4 sanctioned placeholder: "000000000000" is the documented all-zeros
+  # stand-in for AWS_DEV_ACCOUNT_ID in infra/aws (variables.tf default,
+  # terraform.tfvars.example, runbook, bats). Terraform needs a syntactically
+  # valid 12-digit default, and all-zeros is the plan §6/SI-4 convention. Any
+  # NON-zero 12-digit literal still fails this rule; the SI-4 bats suite
+  # (infra/aws/tests/bedrock-iac.bats "hygiene" tests) enforces the same
+  # invariant independently. RATIFIED by BE-ORCH stewarding 2026-07-04 —
+  # see the SECURITY.md §2 tuning log entry.
+  [[rules.allowlists]]
+  regexTarget = "match"
+  regexes = ['''\b0{12}\b''']
+
 # --- Rule 2: personal-provider email addresses ------------------------------
 # Personal account emails are config, not code.
 [[rules]]

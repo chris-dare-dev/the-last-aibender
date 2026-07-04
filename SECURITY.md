@@ -75,6 +75,16 @@ recording the three blocked commits — see
 
 **Tier-1 allowlist tuning log** (every entry must stay value-free):
 
+- *2026-07-04 (M3 build, ratified by BE-ORCH stewarding):* the
+  `aws-account-id-in-context` rule gained a match-target allowlist for the
+  **all-zeros 12-digit run** (`\b0{12}\b`). The SI-4 Bedrock IaC brief
+  mandates a syntactically valid all-zeros stand-in for `AWS_DEV_ACCOUNT_ID`
+  (variables.tf default, tfvars.example, runbook, bats), which the rule
+  flagged sixfold on mandated content. The exception is value-free by
+  construction — all-zeros is not an assignable AWS account id — and every
+  NON-zero 12-digit literal still fails the rule; the SI-4 bats hygiene
+  tests enforce the same all-zeros-only invariant independently, so the
+  invariant is double-covered rather than weakened.
 - *2026-07-04 (M2 gate follow-up):* added a **global path allowlist** for
   `app/src-tauri/target/` (cargo build output, gitignored, never tracked).
   Rust `.rmeta` artifacts embed third-party crate-author emails (tokio,

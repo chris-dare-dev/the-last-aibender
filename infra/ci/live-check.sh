@@ -68,7 +68,7 @@ CHECKS=(
   "hooks-installed|M2|SI-3 hook settings installed into per-account config dirs (read-only)|docs/runbooks/hooks-telemetry.md"
   "lmstudio-probe|M2|LM Studio reachable on 127.0.0.1 (host-native [X3])|docs/research/summaries/01-architecture-blueprint.md §9"
   "opencode-serve-probe|M2|temporary opencode serve: health/list/event only|docs/research/findings/opencode-serve-event-probe.md"
-  "aws-sso-plan|M3|SI-4 terraform plan (owner-run; apply hard-gated)|plan §6/SI-4"
+  "aws-sso-plan|M3|SI-4 terraform plan (owner-run; apply hard-gated)|docs/runbooks/bedrock-iac.md"
   "signing-dryrun|M6|signed (dry-run) sidecar artifact cold-start|docs/spikes/spike-e-signing-ant.md"
 )
 MILESTONES="M1 M2 M3 M6"
@@ -408,13 +408,16 @@ check_opencode_serve_probe() {
   printf 'PASS\topencode serve v%s: /global/health, /session, /event OK on 127.0.0.1:%s (read-only; temp server killed)\n' "$version" "$port"
 }
 
+# SI-4 edit (coordinate with SI-6): detail strings only — the check stays a
+# SKIP by design. Plan needs live SSO credentials (owner-run) and APPLY is
+# hard-gated on the owner's explicit verbal OK; neither ever runs from here.
 check_aws_sso_plan() {
   local tf
   tf="$(find "$ROOT/infra/aws" -name '*.tf' -type f 2>/dev/null || true)"
   if [ -z "$tf" ]; then
-    printf 'SKIP\tpending-owner: SI-4 IaC not landed in infra/aws/ — plan §6/SI-4 (gated)\n'; return
+    printf 'SKIP\tpending-owner: SI-4 IaC not landed in infra/aws/ — docs/runbooks/bedrock-iac.md · plan §6/SI-4 (gated)\n'; return
   fi
-  printf 'SKIP\tpending-owner: owner-run — aws sso login + terraform plan; APPLY is hard-gated on the owner'"'"'s explicit verbal OK (External System Write Policy), never run from this script\n'
+  printf 'SKIP\tpending-owner: SI-4 IaC landed (validate/bats green) — owner-run sequence: aws sso login, terraform plan, review, verbal OK; APPLY is hard-gated (External System Write Policy) and never run from this script; until applied BE-5 is estimate-only — docs/runbooks/bedrock-iac.md\n'
 }
 
 check_signing_dryrun() {

@@ -1,0 +1,20 @@
+# infra/aws/.gitignore — SI-4 / [X2]
+#
+# Real identifiers (AWS_DEV_ACCOUNT_ID, real ARNs) live ONLY in untracked
+# tfvars on the owner's machine. terraform.tfvars.example does not match
+# *.tfvars (it ends in .example) and stays tracked with placeholders.
+*.tfvars
+*.tfvars.json
+
+# Local terraform working state — never committed (state can embed real
+# account ids and ARNs [X2]).
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+plan.out
+crash.log
+crash.*.log
+
+# The dependency lock file IS committed (provider pinning) — keep tracked.
+!.terraform.lock.hcl

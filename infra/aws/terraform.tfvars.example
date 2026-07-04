@@ -1,0 +1,46 @@
+# terraform.tfvars.example — SI-4 Bedrock cost-attribution stack.
+#
+# Copy to terraform.tfvars (gitignored — see infra/aws/.gitignore) on the
+# owner's machine and fill in real values there. [X2]: real account ids, real
+# ARNs, and any identity-bearing value must NEVER be committed — placeholders
+# only in this file. Runbook: docs/runbooks/bedrock-iac.md.
+
+# REQUIRED — the real AWS_DEV_ACCOUNT_ID (12 digits). "000000000000" is the
+# documented all-zeros placeholder and will not plan against a live account
+# (the provider allowed_account_ids guard rejects the mismatch).
+aws_account_id = "000000000000"
+
+aws_region = "us-east-1"
+
+# Verify on the live account before plan (runbook §2):
+#   aws --profile <sso-profile> bedrock list-inference-profiles \
+#     --query 'inferenceProfileSummaries[].inferenceProfileId'
+source_inference_profile_id = "us.anthropic.claude-opus-4-8"
+
+# inference_profile_name    = "aibender-claude-harness"
+# cost_allocation_tag_key   = "aibender-project"
+# cost_allocation_tag_value = "the-last-aibender"
+
+# Leave false for the first apply; flip true in a follow-up apply once the
+# tag key appears in the Billing console (runbook §5).
+activate_cost_allocation_tag = false
+
+# Narrow the assume-role trust to the owner's SSO permission-set role ARN
+# (placeholder shown — the aws-reserved SSO role path):
+# poller_trusted_principal_arns = [
+#   "arn:aws:iam::000000000000:role/aws-reserved/sso.amazonaws.com/AWSReservedSSO_ExamplePermissionSet_0000000000000000"
+# ]
+
+# Set false ONLY if the owner's live verify step shows AccessDenied because
+# the cloudwatch:namespace condition key is not honored for GetMetricData
+# (runbook §4 fallback).
+# restrict_cloudwatch_namespace = true
+
+# Client-side estimate seed (USD per Mtok) for the rendered OpenCode cost
+# block — pin to the real Bedrock prices for the profiled model at plan time.
+# model_cost_per_mtok = {
+#   input       = 5.0
+#   output      = 25.0
+#   cache_read  = 0.5
+#   cache_write = 6.25
+# }

@@ -122,17 +122,30 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq bats shellcheck jq
 
-      # The next three steps are the literal `pnpm run test:infra` composite
+      # The next four steps are the literal `pnpm run test:infra` composite
       # (root package.json), kept as discrete steps for per-suite CI logs —
       # no node/pnpm setup needed in this job.
-      - name: SI script suite (accounts/provisioning — test:infra 1/3)
+      - name: SI script suite (accounts/provisioning — test:infra 1/4)
         run: bash infra/scripts/tests/run.sh
 
-      - name: SI-3 launchd suite (plist templates + render — test:infra 2/3)
+      - name: SI-3 launchd suite (plist templates + render — test:infra 2/4)
         run: bash infra/launchd/tests/run.sh
 
-      - name: SI-3 hooks suite (settings installer merge fidelity — test:infra 3/3)
+      - name: SI-3 hooks suite (settings installer merge fidelity — test:infra 3/4)
         run: bash infra/hooks/tests/run.sh
+
+      # Provider download only (registry, network) — NO backend, NO cloud
+      # credentials, NO plan/apply against live AWS (those are owner-run and
+      # hard-gated, docs/runbooks/bedrock-iac.md). init lets the SI-4 suite's
+      # terraform fmt/validate + credential-less-plan tests run instead of
+      # self-skipping; .terraform.lock.hcl pins linux_arm64/amd64 hashes.
+      # `|| true`: the suite skips terraform-dependent tests when init fails
+      # (e.g. registry outage) — hygiene greps still run.
+      - name: Terraform init for SI-4 (providers only, no backend)
+        run: terraform -chdir=infra/aws init -backend=false || true
+
+      - name: SI-4 Bedrock IaC suite (fmt/validate + hygiene — test:infra 4/4)
+        run: bash infra/aws/tests/run.sh
 
       - name: CI script suite (live-check runner + CI helpers)
         run: bash infra/ci/tests/run.sh

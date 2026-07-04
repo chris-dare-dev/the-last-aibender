@@ -1,8 +1,36 @@
-# ci.yml — minimal placeholder (SI-1; SI-6 owns its evolution).
-# Runs pnpm install + token lint + token drift check + vitest ONLY when a
-# workspace exists; a scaffold-less tree detects no package.json and passes.
-# The token lint / drift steps are deliberately independent of vitest so the
-# DESIGN.md §8.3 gate cannot be weakened by editing the spec files alone.
+# ci.yml — full pipeline (SI-6, plan §6/SI-6). SI-1 landed the minimal
+# placeholder; SI-6 owns its evolution from M2 onward.
+#
+# Job map — these job names are the branch-protection status-check contexts
+# (infra/ci/branch-protection.json must list exactly these + `gitleaks`):
+#   linux-tests    pnpm install (frozen) → -r typecheck → -r test
+#   design-tokens  DESIGN.md §8.3 gate: lint:tokens + committed-theme drift
+#   infra-tests    bats + shellcheck: the `pnpm run test:infra` composite
+#                  (infra/scripts + infra/launchd + infra/hooks) + infra/ci
+#   macos-build    BUILD-ONLY macOS job: core tsc, app build (when landed),
+#                  cargo check of src-tauri (when landed — NEVER a full tauri
+#                  bundle in CI), darwin-tagged units, app-build artifact
+#
+# gitleaks stays in .github/workflows/gitleaks.yml — the [X2] backstop is
+# deliberately a separate workflow so it never shares a failure domain (or a
+# skip condition) with the test pipeline. TruffleHog weekly likewise.
+#
+# Platform-tag conventions (normative doc: infra/ci/README.md):
+#   * macOS-only specs: file name contains `.darwin.` AND the suite guards
+#     itself with `describe.skipIf(process.platform !== 'darwin')`. Linux
+#     runs them as skipped; macos-build executes them via the vitest
+#     filename filter `darwin`.
+#   * WebKit-only specs (Playwright): guard with
+#     `skipIf(process.env.AIBENDER_CI_SKIP_WEBKIT === '1')` — set on Linux
+#     jobs here, never on macOS.
+#   * Playwright browsers are cached per-OS keyed on pnpm-lock.yaml;
+#     infra/ci/playwright-browsers.sh is a no-op until a workspace package
+#     actually depends on playwright, so this pipeline stays green on trees
+#     where FE island tests have not landed yet.
+#
+# T3 live-host checks (real keychain, Aqua launchd, real claude binary,
+# LM Studio, real opencode serve) can never run here — they live in
+# infra/ci/live-check.sh, owner-run at milestone gates (plan §9.1).
 name: ci
 
 on:
@@ -12,49 +40,181 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
-  test:
+  linux-tests:
+    name: linux-tests
+    runs-on: ubuntu-latest
+    env:
+      # WebKit is exercised by macos-build; WebKit-only specs self-skip on
+      # Linux via this env (see tag conventions above).
+      AIBENDER_CI_SKIP_WEBKIT: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm (version from package.json packageManager)
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Playwright browser cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright browsers (no-op until a package needs them)
+        run: bash infra/ci/playwright-browsers.sh
+
+      - name: Typecheck (all workspace packages)
+        run: pnpm -r typecheck
+
+      - name: Test (all workspace packages)
+        run: pnpm -r test
+
+  design-tokens:
+    name: design-tokens
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect pnpm workspace
-        id: detect
-        run: |
-          if [ -f package.json ]; then
-            echo "workspace=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "workspace=false" >> "$GITHUB_OUTPUT"
-            echo "No package.json yet — scaffold-less tree, skipping install/test."
-          fi
-
-      - name: Set up pnpm
-        if: steps.detect.outputs.workspace == 'true'
+      - name: Set up pnpm (version from package.json packageManager)
         uses: pnpm/action-setup@v4
-        with:
-          version: 11
 
       - name: Set up Node
-        if: steps.detect.outputs.workspace == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
+          cache: pnpm
 
-      - name: Install dependencies
-        if: steps.detect.outputs.workspace == 'true'
-        run: pnpm install
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
 
       - name: Token lint (DESIGN.md §8.3 — off-token styling fails CI)
-        if: steps.detect.outputs.workspace == 'true'
         run: pnpm -F aibender-app lint:tokens
 
       - name: Token drift check (committed theme CSS matches tokens.ts)
-        if: steps.detect.outputs.workspace == 'true'
         run: |
           pnpm -F aibender-app build:tokens
           git diff --exit-code -- app/src/chrome/theme/
 
-      - name: Run tests (vitest via workspace scripts)
-        if: steps.detect.outputs.workspace == 'true'
-        run: pnpm -r --if-present test
+  infra-tests:
+    name: infra-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install bats + shellcheck + jq
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bats shellcheck jq
+
+      # The next three steps are the literal `pnpm run test:infra` composite
+      # (root package.json), kept as discrete steps for per-suite CI logs —
+      # no node/pnpm setup needed in this job.
+      - name: SI script suite (accounts/provisioning — test:infra 1/3)
+        run: bash infra/scripts/tests/run.sh
+
+      - name: SI-3 launchd suite (plist templates + render — test:infra 2/3)
+        run: bash infra/launchd/tests/run.sh
+
+      - name: SI-3 hooks suite (settings installer merge fidelity — test:infra 3/3)
+        run: bash infra/hooks/tests/run.sh
+
+      - name: CI script suite (live-check runner + CI helpers)
+        run: bash infra/ci/tests/run.sh
+
+  macos-build:
+    name: macos-build
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm (version from package.json packageManager)
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Core typecheck (build-only gate)
+        run: pnpm -F aibender-core typecheck
+
+      - name: App typecheck
+        run: pnpm -F aibender-app typecheck
+
+      - name: App token build (theme chain)
+        run: pnpm -F aibender-app build:tokens
+
+      - name: App build (vite — lands with FE-2; --if-present until then)
+        run: pnpm -F aibender-app run --if-present build
+
+      - name: Detect src-tauri crate
+        id: tauri
+        run: |
+          manifest="$(git ls-files '*src-tauri/Cargo.toml' | head -n 1)"
+          if [ -n "$manifest" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "dir=$(dirname "$manifest")" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "src-tauri not landed yet (FE-2) — cargo check skipped."
+          fi
+
+      - name: Set up Rust (only when src-tauri exists)
+        if: steps.tauri.outputs.present == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        if: steps.tauri.outputs.present == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ steps.tauri.outputs.dir }}/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/src-tauri/Cargo.lock', '**/src-tauri/Cargo.toml') }}
+
+      - name: cargo check (src-tauri — NOT a full tauri bundle in CI)
+        if: steps.tauri.outputs.present == 'true'
+        run: cargo check --manifest-path "${{ steps.tauri.outputs.dir }}/Cargo.toml"
+
+      - name: Playwright browser cache (macOS)
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('pnpm-lock.yaml') }}
+
+      - name: Install Playwright browsers incl. WebKit (no-op until needed)
+        run: bash infra/ci/playwright-browsers.sh --with-webkit
+
+      - name: Platform-tagged units (vitest filename filter `darwin`)
+        run: pnpm -r --if-present run test darwin --passWithNoTests
+
+      - name: Upload app build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: aibender-app-build
+          path: |
+            app/dist
+            app/src/chrome/theme
+          if-no-files-found: warn

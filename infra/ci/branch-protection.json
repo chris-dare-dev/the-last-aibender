@@ -1,0 +1,23 @@
+{
+  "$comment": "Branch protection for `main` as code (SI-6, plan §6/SI-6). Applied ONLY by infra/ci/apply-branch-protection.sh, owner-run after the first push (pending-owner — never executed by CI or agents). Shape = GitHub REST PUT /repos/{owner}/{repo}/branches/{branch}/protection. Contexts must match the job names in .github/workflows/ci.yml and gitleaks.yml exactly. required_pull_request_reviews stays null on purpose: this is a single-owner repo whose serial gate commits locally and pushes directly; the protection wanted here is green-CI + no force-push/delete, not review gating.",
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "linux-tests",
+      "design-tokens",
+      "infra-tests",
+      "macos-build",
+      "gitleaks"
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "required_linear_history": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": false,
+  "lock_branch": false,
+  "allow_fork_syncing": false
+}

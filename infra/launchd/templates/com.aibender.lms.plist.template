@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.aibender.lms — LM Studio server LaunchAgent (SI-3).
+
+  Blueprint §4.3: LM Studio lifecycle rides the `lms` CLI under a
+  LaunchAgent; the server binds 127.0.0.1 only. `lms server start`
+  daemonizes and exits 0 once the server is up — with
+  KeepAlive={SuccessfulExit:false} launchd retries only when the start
+  FAILS, and does not fight the detached server on success.
+
+  "Down" is a first-class state for the harness (NO SIGNAL instrument,
+  never an error): if this agent is not loaded or LM Studio is stopped,
+  BE-4's health checks degrade gracefully. Loading this agent is optional
+  and owner-run (T3) — see docs/runbooks/launchd.md.
+
+  Double-brace tokens are substituted by infra/launchd/render-launchd.sh.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aibender.lms</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{LMS_BIN}}</string>
+    <string>server</string>
+    <string>start</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>{{AIBENDER_HOME}}/logs/lms.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{AIBENDER_HOME}}/logs/lms.err.log</string>
+</dict>
+</plist>

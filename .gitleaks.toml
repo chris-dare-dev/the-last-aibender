@@ -40,6 +40,37 @@ regex = '''[A-Za-z0-9._%+-]+@(?:gmail|googlemail|icloud|me|mac|outlook|hotmail|l
   regexTarget = "secret"
   regexes = ['''(?i)(?:example|test|placeholder|your[-_.]?email)''']
 
+# --- Stock-rule extension: generic-api-key vs synthesized fixtures ----------
+# The stock generic-api-key rule fires on synthesized test-fixture secrets.
+# Plan §9.1 fixture policy [X2]: fixtures use "obviously-fake tokens that the
+# gitleaks allowlist explicitly names" — this is that naming. Two sanctioned
+# forms, both value-free per the tier model above (no real literal, nothing
+# disclosed):
+#   1. the `synthetic-` prefix — a naming convention (adapter-spec model keys
+#      like `synthetic-8b-q4`); prefer this form for NEW fixtures;
+#   2. two exact-named boot-token literals used by the app bootstrap fakes
+#      (app/src/lib/testing/fakes.ts, bootstrap/wsClient specs,
+#      app/src-tauri/src/smoke.rs) — they decode to English fake-markers:
+#      base64("synth-fake-token") and base64("new-boot-token"). Anchored
+#      whole-secret matches: nothing real can hide behind them. Drop these
+#      two entries if/when the FE fixtures are reshaped to form 1.
+# Any OTHER entropic-looking fixture value is deliberately NOT allowlisted;
+# rename it to the sanctioned prefix instead.
+# Extension semantics proven on gitleaks 8.30.1: a same-id [[rules]] block
+# appends its allowlists to the stock rule (stock regex stays live — a
+# fabricated non-synthetic key is still blocked). Re-prove the seeded
+# failures per docs/runbooks/hygiene.md §5 after ANY edit here.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = [
+    '''^synthetic-''',
+    '''^c3ludGgtZmFrZS10b2tlbg$''',
+    '''^bmV3LWJvb3QtdG9rZW4$''',
+  ]
+
 # --- Rule 3: catch-all email with placeholder allowlist ---------------------
 # Deliberately broad: ANY email that is not a sanctioned placeholder form is
 # flagged. If this proves too noisy once real code lands (package metadata,

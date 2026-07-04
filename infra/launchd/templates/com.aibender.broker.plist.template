@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.aibender.broker — aibender-core broker LaunchAgent (SI-3, v1-READY, NOT FLIPPED).
+
+  Blueprint §2: the broker MUST live in the user's Aqua (gui-domain) session —
+  gui-domain LaunchAgents have full login-keychain value access; Background/
+  user-domain agents fail ACL-gated reads with errSecInteractionNotAllowed
+  (exit 36). Verified live 2026-07-03, docs/research/findings/
+  session-substrate-tiebreak.md.
+
+  THEREFORE THIS TEMPLATE DELIBERATELY OMITS LimitLoadToSessionType:
+  the launchd default for a LaunchAgent is Aqua, which is exactly what we
+  want. Adding LimitLoadToSessionType=Background (or bootstrapping into
+  user/$UID) silently breaks subscription auth for all three accounts —
+  see com.aibender.broker.background-expected-fail.plist.template for the
+  documented expected-failure probe.
+
+  v0 runs the broker as a Tauri sidecar (same Aqua session, keychain-
+  equivalent). This plist is validated at M2 and held ready; the v1 flip is
+  a deliberate, owner-gated step (docs/runbooks/launchd.md).
+
+  Double-brace tokens are substituted by infra/launchd/render-launchd.sh.
+  Bootstrap (owner-run, T3):
+    launchctl bootstrap gui/$UID "$AIBENDER_HOME/launchd/com.aibender.broker.plist"
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aibender.broker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE_BIN}}</string>
+    <string>{{BROKER_ENTRY}}</string>
+  </array>
+
+  <!-- Start at GUI login; the Aqua domain only exists while logged in. -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Restart on crash / non-zero exit, stay down on clean exit
+       (blueprint §2: KeepAlive={SuccessfulExit:false}). Crash-restart is
+       what replaces tmux survival, together with the resume ledger. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>AIBENDER_HOME</key>
+    <string>{{AIBENDER_HOME}}</string>
+  </dict>
+
+  <key>WorkingDirectory</key>
+  <string>{{AIBENDER_HOME}}</string>
+
+  <key>StandardOutPath</key>
+  <string>{{AIBENDER_HOME}}/logs/broker.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{AIBENDER_HOME}}/logs/broker.err.log</string>
+</dict>
+</plist>

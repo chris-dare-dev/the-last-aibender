@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  ############################################################################
+  #  EXPECTED FAILURE — DO NOT USE THIS AGENT TO RUN THE BROKER.             #
+  ############################################################################
+
+  com.aibender.broker.background-expected-fail — the Background/user-domain
+  VARIANT of the broker plist, kept ONLY as the documented expected-failure
+  probe (plan §9.2 SI-3 negative row; T3 procedure in
+  docs/runbooks/launchd.md §"Background-domain expected-failure probe").
+
+  Verified live 2026-07-03 (docs/research/findings/session-substrate-
+  tiebreak.md): a LaunchAgent limited to the Background session type — or
+  bootstrapped into user/$UID — CANNOT perform the ACL-gated login-keychain
+  value reads Claude Code needs for its `Claude Code-credentials-<hash8>`
+  items. `security find-generic-password -w` exits 36
+  (errSecInteractionNotAllowed): the Background security session does not
+  hold the unlocked login-keychain state and UI interaction is disallowed.
+  A broker running here would silently "log out" all three accounts.
+
+  The probe run under this plist MUST observe that exit-36-class failure;
+  a probe that SUCCEEDS here means macOS/launchd semantics have changed and
+  the Aqua ruling needs re-verification before any further reliance on it.
+
+  render-launchd.sh refuses to render this template unless
+  --acknowledge-expected-failure is passed.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aibender.broker.background-expected-fail</string>
+
+  <!-- THE POINT OF THIS FILE: the forbidden session type, made explicit. -->
+  <key>LimitLoadToSessionType</key>
+  <string>Background</string>
+
+  <!-- The probe runs a keychain presence-then-value probe against a
+       harness-owned DUMMY item (never a real credentials item — [X2]),
+       not the broker. PROBE_CMD is supplied at render time. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>{{PROBE_CMD}}</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- One-shot probe: never keep alive. -->
+  <key>KeepAlive</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>{{AIBENDER_HOME}}/logs/background-expected-fail.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>{{AIBENDER_HOME}}/logs/background-expected-fail.err.log</string>
+</dict>
+</plist>

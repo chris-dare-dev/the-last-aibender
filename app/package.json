@@ -1,0 +1,20 @@
+{
+  "name": "aibender-app",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Tauri v2 application shell (FRONTEND department). FE-1 theme/token chain landed (DESIGN.md + app/src/chrome/theme). Other FE packages remain GATED until FE-ORCH marks DESIGN.md locked (plan §5, FE-1).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build:tokens": "tsx scripts/build-tokens.ts",
+    "lint:tokens": "node scripts/lint-tokens.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "tailwindcss": "4.3.2"
+  }
+}

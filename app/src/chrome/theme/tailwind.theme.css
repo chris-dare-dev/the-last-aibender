@@ -1,0 +1,83 @@
+/*
+ * GENERATED FILE — DO NOT EDIT.
+ * Source of truth: app/src/chrome/theme/tokens.ts (normative spec: /DESIGN.md).
+ * Regenerate with: pnpm -F aibender-app build:tokens
+ * Target: Tailwind 4 @theme (utilities exist ONLY for these tokens)
+ */
+@theme {
+  /* -- Anti-slop resets: default palettes/scales are erased. -- */
+  --color-*: initial;
+  --font-*: initial;
+  --text-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+  --text-shadow-*: initial;
+  --blur-*: initial;
+  --ease-*: initial;
+  --animate-*: initial;
+  --tracking-*: initial;
+  --breakpoint-*: initial;
+
+  /* -- Instrument Grade tokens (source: tokens.ts) -- */
+  --spacing: 4px;
+
+  --color-surface-base: #111110;
+  --color-surface-panel: #1A1917;
+  --color-surface-raised: #242220;
+  --color-surface-well: #0C0C0B;
+  --color-scrim: rgba(12, 12, 11, 0.55);
+  --color-ink: #E8E6E1;
+  --color-ink-secondary: #B7B3AA;
+  --color-ink-muted: #8A867E;
+  --color-ink-faint: #57544E;
+  --color-ink-on-accent: #111110;
+  --color-accent: #FFB000;
+  --color-accent-press: #D99600;
+  --color-accent-halo: rgba(255, 176, 0, 0.22);
+  --color-ok: #3FB950;
+  --color-degraded: #D29922;
+  --color-fault: #F85149;
+  --color-nosignal: #57544E;
+  --color-ok-tint: rgba(63, 185, 80, 0.12);
+  --color-degraded-tint: rgba(210, 153, 34, 0.12);
+  --color-fault-tint: rgba(248, 81, 73, 0.12);
+  --color-channel-max-a: #8FB0C9;
+  --color-channel-max-b: #C9B18F;
+  --color-channel-ent: #8FC9B0;
+  --color-channel-bedrock: #C98FA0;
+  --color-channel-lmstudio: #A0A69B;
+  --color-line-hairline: #2A2825;
+  --color-line-emphasis: #3B3733;
+
+  --font-mono: "Berkeley Mono", "TX-02", "IBM Plex Mono", "JetBrains Mono", "Commit Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Cabinet Grotesk", "General Sans", system-ui, "Helvetica Neue", sans-serif;
+  --text-label: 11px;
+  --text-label--line-height: 16px;
+  --text-data: 12px;
+  --text-data--line-height: 20px;
+  --text-body: 13px;
+  --text-body--line-height: 20px;
+  --text-ui: 14px;
+  --text-ui--line-height: 20px;
+  --text-heading: 18px;
+  --text-heading--line-height: 24px;
+  --text-display: 23px;
+  --text-display--line-height: 28px;
+  --text-numeral: 29px;
+  --text-numeral--line-height: 32px;
+  --text-numeral-lg: 36px;
+  --text-numeral-lg--line-height: 40px;
+  --tracking-engraved: 0.08em;
+
+  --radius-1: 1px;
+  --radius-2: 2px;
+
+  --ease-mechanical: cubic-bezier(0.2, 0, 0, 1);
+  --ease-decay: cubic-bezier(0.19, 1, 0.22, 1);
+
+  --breakpoint-compact: 1024px;
+  --breakpoint-cockpit: 1440px;
+  --breakpoint-ultrawide: 2200px;
+}

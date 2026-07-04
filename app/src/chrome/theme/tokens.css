@@ -1,0 +1,125 @@
+/*
+ * GENERATED FILE — DO NOT EDIT.
+ * Source of truth: app/src/chrome/theme/tokens.ts (normative spec: /DESIGN.md).
+ * Regenerate with: pnpm -F aibender-app build:tokens
+ * Target: runtime custom properties
+ */
+:root {
+  --ig-surface-base: #111110;
+  --ig-surface-panel: #1A1917;
+  --ig-surface-raised: #242220;
+  --ig-surface-well: #0C0C0B;
+  --ig-surface-scrim: rgba(12, 12, 11, 0.55);
+  --ig-ink-primary: #E8E6E1;
+  --ig-ink-secondary: #B7B3AA;
+  --ig-ink-muted: #8A867E;
+  --ig-ink-faint: #57544E;
+  --ig-ink-on-accent: #111110;
+  --ig-accent: #FFB000;
+  --ig-accent-press: #D99600;
+  --ig-accent-halo: rgba(255, 176, 0, 0.22);
+  --ig-status-ok: #3FB950;
+  --ig-status-degraded: #D29922;
+  --ig-status-fault: #F85149;
+  --ig-status-nosignal: #57544E;
+  --ig-status-ok-tint: rgba(63, 185, 80, 0.12);
+  --ig-status-degraded-tint: rgba(210, 153, 34, 0.12);
+  --ig-status-fault-tint: rgba(248, 81, 73, 0.12);
+  --ig-channel-max-a: #8FB0C9;
+  --ig-channel-max-b: #C9B18F;
+  --ig-channel-ent: #8FC9B0;
+  --ig-channel-bedrock: #C98FA0;
+  --ig-channel-lmstudio: #A0A69B;
+  --ig-line-hairline: #2A2825;
+  --ig-line-emphasis: #3B3733;
+  --ig-line-width: 1px;
+  --ig-radius-0: 0px;
+  --ig-radius-1: 1px;
+  --ig-radius-2: 2px;
+  --ig-shadow: none;
+  --ig-space-unit: 4px;
+  --ig-space-2: 2px;
+  --ig-space-4: 4px;
+  --ig-space-8: 8px;
+  --ig-space-12: 12px;
+  --ig-space-16: 16px;
+  --ig-space-20: 20px;
+  --ig-space-24: 24px;
+  --ig-space-32: 32px;
+  --ig-space-48: 48px;
+  --ig-grid-ch: 1ch;
+  --ig-grid-row: 20px;
+  --ig-font-mono: "Berkeley Mono", "TX-02", "IBM Plex Mono", "JetBrains Mono", "Commit Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --ig-font-display: "Cabinet Grotesk", "General Sans", system-ui, "Helvetica Neue", sans-serif;
+  --ig-type-label: 11px;
+  --ig-type-label-lh: 16px;
+  --ig-type-data: 12px;
+  --ig-type-data-lh: 20px;
+  --ig-type-body: 13px;
+  --ig-type-body-lh: 20px;
+  --ig-type-ui: 14px;
+  --ig-type-ui-lh: 20px;
+  --ig-type-heading: 18px;
+  --ig-type-heading-lh: 24px;
+  --ig-type-display: 23px;
+  --ig-type-display-lh: 28px;
+  --ig-type-numeral: 29px;
+  --ig-type-numeral-lh: 32px;
+  --ig-type-numeral-lg: 36px;
+  --ig-type-numeral-lg-lh: 40px;
+  --ig-tracking-engraved: 0.08em;
+  --ig-numeric: tabular-nums;
+  --ig-motion-fast: 120ms;
+  --ig-motion-base: 150ms;
+  --ig-motion-deliberate: 180ms;
+  --ig-ease-mechanical: cubic-bezier(0.2, 0, 0, 1);
+  --ig-ease-decay: cubic-bezier(0.19, 1, 0.22, 1);
+  --ig-motion-hover-feedback-duration: 120ms;
+  --ig-motion-hover-feedback-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ig-motion-panel-transition-duration: 150ms;
+  --ig-motion-panel-transition-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ig-motion-focus-shift-duration: 120ms;
+  --ig-motion-focus-shift-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ig-motion-palette-open-duration: 120ms;
+  --ig-motion-palette-open-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ig-motion-phosphor-decay-duration: 640ms;
+  --ig-motion-phosphor-decay-ease: cubic-bezier(0.19, 1, 0.22, 1);
+  --ig-motion-camera-ease-duration: 320ms;
+  --ig-motion-camera-ease-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ig-motion-ceremony-lineage-duration: 480ms;
+  --ig-motion-ceremony-lineage-ease: cubic-bezier(0.2, 0, 0, 1);
+  --ig-latency-interaction: 100ms;
+  --ig-latency-keystroke-echo-p95: 100ms;
+  --ig-latency-palette-open: 100ms;
+  --ig-latency-spinner-threshold: 300ms;
+  --ig-latency-ceremony-budget: 1200ms;
+  --ig-palette-width: 640px;
+  --ig-palette-offset-y: 160px;
+  --ig-palette-row: 28px;
+  --ig-palette-max-rows: 12;
+  --ig-zone-left: 304px;
+  --ig-zone-right: 352px;
+  --ig-zone-center-min: 640px;
+  --ig-breakpoint-compact: 1024px;
+  --ig-breakpoint-cockpit: 1440px;
+  --ig-breakpoint-ultrawide: 2200px;
+  --ig-focus-outline: 1px solid #FFB000;
+  --ig-focus-offset: 1px;
+}
+
+/* Reduced-motion mapping (DESIGN.md §3.5) — total over motion.animated:
+ * every animated token collapses to duration 0; "discrete"-mode tokens
+ * additionally follow their non-tweened spec (see tokens.ts).
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --ig-reduced-motion: 1;
+    --ig-motion-hover-feedback-duration: 0ms;
+    --ig-motion-panel-transition-duration: 0ms;
+    --ig-motion-focus-shift-duration: 0ms;
+    --ig-motion-palette-open-duration: 0ms;
+    --ig-motion-phosphor-decay-duration: 0ms;
+    --ig-motion-camera-ease-duration: 0ms;
+    --ig-motion-ceremony-lineage-duration: 0ms;
+  }
+}

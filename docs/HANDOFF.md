@@ -1,0 +1,399 @@
+# HANDOFF — the-last-aibender
+
+> **Audience:** a fresh Claude Code *ultracode* session, in a different account, with **zero prior
+> context** on this project. Read this document top to bottom before doing anything. It tells you
+> what the project is, exactly where the build stands, what you may and may **not** do, and precisely
+> how to continue.
+>
+> **Companion doc:** [`docs/runbooks/workflow-orchestration.md`](runbooks/workflow-orchestration.md)
+> — the reusable multi-agent *Workflow* pattern that has driven every milestone. You will re-use it
+> verbatim to build the remaining milestones. Read it second.
+>
+> **Last updated:** 2026-07-04, at commit `533cfb8` (end of M2 "freeze" phase).
+> **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
+> **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo
+> `chris-dare-dev/the-last-aibender`. **Everything is committed LOCAL-ONLY. Nothing has been pushed.
+> Do not push** (see §6).
+
+---
+
+## 0. TL;DR — your first five minutes
+
+1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -14 && git status` — confirm you
+   are at `533cfb8` (or later) with a **clean tree**. If the tree is dirty, someone left work
+   uncommitted; investigate before proceeding.
+2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **374 tests pass**, typecheck
+   clean. This is your green baseline. (If `pnpm` is missing: `npm i -g pnpm`.)
+3. Read the two **normative** specs (they are the source of truth, not this doc):
+   `docs/research/summaries/01-architecture-blueprint.md` and
+   `docs/research/summaries/02-stage2-implementation-plan.md`.
+4. Read §6 (**hard gates**) and §7 (**secret hygiene**) of this file. These are non-negotiable and
+   the auto-mode classifier *will* stop you if you cross them.
+5. Your immediate job is **§9.1 — finish M2**. Go there.
+
+---
+
+## 1. What this project is (full context)
+
+**the-last-aibender** is a local macOS harness application with an interactive frontend that unifies
+*all* of the owner's AI tooling behind one interface. The assets it unifies:
+
+- **Three Claude subscription accounts** — two Claude Max plans and one Claude Enterprise account.
+  Throughout the codebase these are referred to **only** by the placeholder labels **`MAX_A`**,
+  **`MAX_B`**, **`ENT`**. The real identities exist only in machine-local files and the owner's head.
+- **OpenCode → AWS Bedrock** through the owner's company **dev** AWS account (placeholder
+  **`AWS_DEV_ACCOUNT_ID`**). A shell function `oc-bedrock` (in `~/.zshrc`) does `aws sso login`, exports
+  the profile + region + a Keychain-fetched API key, then launches `opencode`. OpenCode config is at
+  `~/.config/opencode/opencode.jsonc` (two providers: `amazon-bedrock` via SigV4/SSO, and an
+  OpenAI-compatible provider pointed at Bedrock's `bedrock-mantle` Responses API).
+- **LM Studio** — a local OpenAI-compatible LLM server (default `127.0.0.1:1234`), used to off-load
+  cheap work from the paid providers. **It is frequently *down*** — "down" is a first-class UI state,
+  never an error.
+
+### The six product features the frontend must deliver
+1. **Usage & cost observability** — weekly usage, remaining quota, accumulated cost (real USD for
+   Bedrock), tokens, cache-hit rates, latency, skill frequency/optimality, and more.
+2. **Launch a one-off prompt** against a single agent from a **specified** account/backend (any of the
+   three Claude accounts, OpenCode+Bedrock, or LM Studio).
+3. **Launch Claude *skills*** from a specified account.
+4. **Launch multi-agent workflows** driven by a specified Claude account *or* Bedrock via OpenCode.
+5. **Pipeline / workflow builder** page, scoped to a chosen **workspace** (a bound base directory),
+   scanning that workspace's `.claude/` dirs and OpenCode `.json` files to discover skills/agents/
+   workflows.
+6. **Live context-graph** page — a large, Obsidian-style force-directed graph of all context artifacts
+   (CLAUDE.md, memory files, agent artifacts, references) tied to an active session that **populates
+   live** as files are referenced/read/written during the session.
+
+### The four cross-cutting requirements (apply to *every* milestone) — see §5
+- **[X1]** Parallel, per-account Claude sessions without repeated login — *the hardest problem*.
+- **[X2]** Public-repo secret hygiene — no real identifiers/credentials in the tree or history, ever.
+- **[X3]** Conditional Colima+k3s+SOPS virtualization — but LM Studio connectivity always wins.
+- **[X4]** "Workstreams" — session organization independent of working directory, with branch/
+  continue/merge lineage that replaces manual handoff documents.
+
+---
+
+## 2. Where the truth lives (normative specs)
+
+This handoff summarizes; **these files decide.** If this doc and a spec disagree, the spec wins.
+
+| File | Role |
+|---|---|
+| `docs/research/summaries/01-architecture-blueprint.md` | **NORMATIVE architecture.** Every decision for [X1]–[X4], the session-execution model per backend, observability pipeline, frontend stack, resource budget, and a §12 "contradiction ledger" of what was overridden and why. |
+| `docs/research/summaries/02-stage2-implementation-plan.md` | **NORMATIVE build plan.** The three departments (BE/FE/SI), every work package (BE-1…BE-9, FE-1…FE-6, SI-1…SI-6), the repo layout, milestones **M0–M6** with definition-of-done, and the §9 testing strategy (positive/negative/edge matrix per package + cross-department integration suites). |
+| `docs/research/summaries/00-executive-summary.md` | Narrative digest linking back to the 14 findings docs. |
+| `docs/research/findings/*.md` | 14 deep research docs (one per topic: x1-parallel-multi-account, x2-secret-hygiene, x3-virtualization, x4-workstreams, observability, harness-architecture, session-substrate-tiebreak, pipeline-workflow-builder, frontend-app-shell-stack, frontend-stack-coherence, ui-anti-slop-design, ui-motion-3d-context-graph, local-resource-feasibility, opencode-serve-event-probe). Consult when you need depth. |
+| `docs/spikes/*.md` | 5 spike verdict docs (A–E) with **empirical** results + normative contracts (e.g. `attachRenderer()` for xterm, the graph fps floor, the react-virtual follow-guard). Implementers MUST honor these. |
+| `DESIGN.md` | **LOCKED** "Instrument Grade" design token system + a 20-item FORBIDDEN anti-slop list. All UI must pass `pnpm -F aibender-app lint:tokens`. Changing it requires an ADR + FE-ORCH sign-off. |
+| `docs/contracts/*.md` | **FROZEN** interface contracts: `ws-protocol.md` (FROZEN-M2), `sqlite-ddl.md`, `bootstrap-file.md`, `hooks-contract.md`. Amend only via the freeze phase of a milestone or an ICR. |
+| `SECURITY.md` | The [X2] doctrine, the tier model, the remediation playbook, and the **pending-owner ledger** (incl. the history rewrite in §5.1). |
+| `docs/runbooks/*.md` | Operator procedures + per-milestone DoD records (`m0-dod.md`, `m1-dod.md`, login-bootstrap, version-gate). |
+
+---
+
+## 3. Status — the milestone ledger
+
+The program has three stages: **Stage 1** (research, no code) → **Stage 2** (implement + test,
+milestones M0–M6) → **Stage 3** (adversarial review + fix, incl. mandatory screen-capture of the real
+rendered frontend). You are inside **Stage 2**.
+
+| Milestone | State | What it delivered |
+|---|---|---|
+| **Stage 1 — Discovery** | ✅ committed (`e978cee`) | 14 findings docs + 3 summaries from a 17-agent research fan-out. No code. |
+| **M0 — Clean slate & risk burn-down** | ✅ committed (`98673ac`→`5804dca`) | [X2] hygiene stack (two-tier gitleaks, fail-closed pre-commit hook, CI), pnpm monorepo + 4 `@aibender/*` contract stubs, **DESIGN.md locked**, all **ten** risk spikes executed with verdicts. |
+| **M1 — [X1] proven (synthetic)** | ✅ committed (`96b6872`→`04c395f`) | FROZEN-M1 protocol core + kernel SQLite schema; **BE-1 session kernel** (per-account env injection + scrub, resume ledger with row-before-spawn, transcript-tail validator, double-resume block, FakeQueryRunner seam); **BE-3 gateway control skeleton** + bootstrap discovery; **SI-2** account provisioning + keychain-probe + version-gate scripts. Synthetic 3-account concurrency demo passes (13/13 assertions). |
+| **M2 — Attended cockpit** | ⏳ **IN PROGRESS — freeze only** (`533cfb8`) | **Only the freeze phase landed:** protocol → FROZEN-M2 (transcript/approvals/quota/context-graph payloads, reconnect-replay), `bootstrap-file.md` + `hooks-contract.md`, +32 golden fixtures. **The 8 implementers, 3 reviews, and the gate DID NOT RUN** (the driving session ran out of usage credits mid-flight). **This is your starting point.** |
+| **M3 — Instruments live** | ⬜ not started | Observability collection + dashboards (feature 1). |
+| **M4 — Lineage** | ⬜ not started | [X4] workstreams + the live context graph (feature 6). |
+| **M5 — Pipelines** | ⬜ not started | Catalog scanner + DAG engine (features 4 & 5). |
+| **M6 — Hardened v0 ship** | ⬜ not started | Supervision/resource governor, packaging, 24h soak. |
+| **Stage 3 — Review & fix** | ⬜ not started | Adversarial reviewers (security/opt/docs/scale) + **mandatory rendered-frontend screen-capture review** + a principal-engineer fix team. |
+
+**Two empirical wins already banked** (the riskiest Stage-1 assumptions, now proven on this machine):
+- [X1] keychain isolation: the `claude` credential Keychain item **is** scoped per `CLAUDE_CONFIG_DIR`
+  (service name = base `"Claude Code-credentials"` + first 8 hex of `sha256(NFC(dir))`), verified by
+  read-only `strings` inspection of the shipping binary **v2.1.193**.
+- The SDK's `query({ options.env })` **replaces** the child process environment (does not merge), which
+  makes the [X1] env-scrub airtight. Verified against `@anthropic-ai/claude-agent-sdk` 0.3.201.
+
+---
+
+## 4. Exact repo state right now
+
+- **HEAD:** `533cfb8 feat: freeze M2 protocol full and hooks/bootstrap contracts`. Tree **clean**.
+- **Baseline health:** `pnpm -r typecheck` clean; **374 tests pass** (protocol 72, app 32, shared 36,
+  testkit 48, schema 40, core 146); `pnpm -F aibender-app lint:tokens` clean; gitleaks tier-1 **and**
+  tier-2 clean on the working tree.
+- **Layout** (see plan §2 for the full intended tree):
+  - `packages/{protocol,schema,shared,testkit}` — shared, orchestrator-stewarded contract packages.
+  - `core/src/{kernel,gateway,main}` — the `aibender-core` broker daemon (BACKEND dept). `kernel/pty/`,
+    `adapters/`, `collector/`, `readmodels/`, `workstreams/`, `pipelines/`, `supervision/` are
+    **not yet built** (they land M2–M6).
+  - `app/` — the Tauri v2 frontend (FRONTEND dept). Currently only `DESIGN.md`-gated theme scaffold;
+    `src-tauri/`, `chrome/`, `lib/`, `islands/`, `features/` land M2–M5.
+  - `infra/{profiles,scripts,launchd,hooks,aws,colima,ci}` — SERVER-SIDE dept. `profiles/`+`scripts/`
+    populated by SI-2; the rest land M2–M5.
+  - `spikes/` — the 5 quarantined M0 spike harnesses (real, runnable, **never imported by prod code**).
+  - `docs/{research,contracts,adr,runbooks,spikes}`.
+- **Known non-blocking wart:** `.git/logs/` reflogs still echo the pre-history author identity of the
+  root commit `62d11d0`. Tier-2 gitleaks flags these 12 reflog lines. They are **not** a working-tree
+  leak and cannot be cleared without the owner-gated history rewrite (see §6). Report them as
+  pre-existing/pending-owner, exactly as M1/M2 did — do not try to "fix" them by expiring reflogs while
+  the root commit still carries the identity.
+
+---
+
+## 5. The four cross-cutting requirements — how each is being implemented
+
+Full detail in blueprint §3/§9/§10/§5 respectively. Summary of the *chosen* mechanisms:
+
+- **[X1] Parallel per-account sessions.** Each of MAX_A/MAX_B/ENT gets its own `CLAUDE_CONFIG_DIR` with
+  `CLAUDE_SECURESTORAGE_CONFIG_DIR` **pinned to the same path** → a distinct Keychain item per account →
+  all three run concurrently from one broker process with zero re-login. One interactive `claude /login`
+  per account, ever. Fallback ladder (blueprint §3): setup-token env injection → per-account Linux
+  containers → separate macOS users. **Priority rule: if resource efficiency ever conflicts with
+  parallel multi-account capability, the capability wins.** Implemented by SI-2 + BE-1 (+BE-2 login
+  bootstrap, +BE-9 sacrifice order).
+- **[X2] Public-repo secret hygiene.** Keychain-primary runtime secrets; env-interpolated committed
+  config; **two-tier gitleaks** (tier-1 value-free rules in-repo at `.gitleaks.toml`; tier-2 real
+  literals in an **out-of-repo** file at `~/.aibender/private/gitleaks-tier2.toml`, chmod 600);
+  fail-closed pre-commit hook; CI backstop. Placeholders `MAX_A/MAX_B/ENT/AWS_DEV_ACCOUNT_ID` everywhere.
+  Fixtures synthesized, never copied from real transcripts. SOPS deferred (blueprint §12 ledger #5).
+- **[X3] Virtualization = PARTIAL.** Harness core is **host-native** (guarantees LM Studio
+  `127.0.0.1` reachability by construction). The existing k3s-in-Colima cluster is *kept but demoted*
+  to an optional telemetry adjunct and shrunk. k3s is **never** a dependency of session launch.
+  Implemented by SI-5 (+ an architectural test that `core/` imports nothing from `infra/`).
+- **[X4] Workstreams.** A harness-owned SQLite lineage ledger (`workstream`/`session_node`/
+  `session_edge`/`brief`) with typed edges recorded at *action time*; a continuation is a **child**
+  (not a sibling); a **merge** is one new node with N `merge_parent` edges seeded by a synthesized,
+  conflict-surfacing brief; hook-automated briefs replace manual handoff docs; native stores never
+  mutated. Implemented by BE-7 (+SI-3 hook wiring, +FE-6 UI). Lands M4.
+
+---
+
+## 6. HARD GATES — owner-gated actions you must NOT perform
+
+These require the **owner's explicit verbal OK, per action**. Do not perform them on assumption; the
+auto-mode classifier will (correctly) block several of them anyway. When you reach one, implement
+everything *up to* it, script/document it, list it in the milestone's pending-owner items, and stop.
+
+1. **No `git push` / no history rewrite.** Everything stays **local-only** until the owner runs the
+   [X2] history rewrite that scrubs the work-email author identity from the root commit `62d11d0`
+   (procedure scripted in `SECURITY.md §5.1`: a `git-filter-repo` email callback mapping the
+   work-domain email → the GitHub noreply address, then a force-push). **Pushing more history on top
+   before that rewrite makes the leak permanent.** The classifier blocks `git commit --amend` on the
+   root commit; do not fight it.
+2. **No `terraform apply`** for the Bedrock **application inference profile** (SI-4). Author the IaC,
+   run `terraform plan`, show it, **stop**. This is the External System Write Policy.
+3. **No Colima VM resize / start / stop** (SI-5) without an OK — it causes brief downtime.
+4. **No real `claude /login` or logout, no keychain writes, never `security ... -w`.** `~/.claude` is
+   **read-only** to you. The three one-time logins are owner-run per `docs/runbooks/login-bootstrap.md`.
+   (Note: probing the Keychain for credentials is itself classifier-blocked — don't.)
+5. **No LM Studio start, no cost-incurring model calls.** You *may* spawn a temporary local
+   `opencode serve` for adapter integration tests **if** the binary exists — health/list/event
+   endpoints **only**, never message/inference calls (they cost money) — and kill it when done.
+6. **No GitHub mutations** beyond what the owner has already sanctioned (push protection is already on).
+
+The practical consequence: every milestone is proven in a **synthetic** edition (fakes, temp
+`$AIBENDER_HOME`, stub processes). The **live** proofs (real logins, real TUIs, real Bedrock USD) are
+recorded as **T3 pending-owner** items in each `docs/runbooks/mN-dod.md`. That is by design — do not try
+to make them "real" yourself.
+
+---
+
+## 7. Secret hygiene rules for *you* (critical — you are in a different account, public repo)
+
+- **Never write a real account email, real AWS account ID, token, or key into any repo file** — not in
+  code, comments, tests, fixtures, docs, or commit messages. Use `MAX_A / MAX_B / ENT /
+  AWS_DEV_ACCOUNT_ID`.
+- The **only** place real literals live is the out-of-repo tier-2 gitleaks config at
+  `~/.aibender/private/gitleaks-tier2.toml` (chmod 600). It already exists on this machine. You never
+  need to read it; the pre-commit hook uses it automatically.
+- **Repo git identity is already set** to the owner's GitHub `…@users.noreply.github.com` noreply
+  address (see `git config user.email` in the repo — not repeated here so tier-1 gitleaks stays strict).
+  Do not change it. Your account's real email must never author a commit here.
+- **The pre-commit hook is the enforcement, not your diligence.** It runs gitleaks tier-1 + tier-2 and
+  **fails closed**. Never bypass with `--no-verify`. If it blocks on a genuine false positive, extend
+  the tier-1 allowlist minimally and document why in `SECURITY.md`.
+- Every agent you spawn in a workflow must be told these rules (the `COMMON` preamble in the
+  orchestration runbook already contains them — reuse it).
+
+---
+
+## 8. How the build actually gets done (the methodology)
+
+This project is **not** built by hand-editing files one at a time. It is built by **multi-agent
+Workflow orchestration**, and you must continue in the same style so the work stays parallel, reviewed,
+and consistent. The full, reusable pattern — the `COMMON` agent preamble, the JSON schemas, and the
+five-phase skeleton — is in **[`docs/runbooks/workflow-orchestration.md`](runbooks/workflow-orchestration.md)**.
+Read it before launching anything. In brief:
+
+- **Three departments**, each with an **orchestrator acting as principal engineer**:
+  **BE** (backend broker, owns `core/` + stewards `packages/*`), **FE** (frontend Tauri app, owns
+  `app/` + `DESIGN.md`), **SI** (server-side config/infra, owns `infra/` + repo-root hygiene + CI).
+- **Zero-conflict parallelism via exclusive directory ownership.** Each work package owns specific
+  directories for the whole stage; cross-package needs go through `packages/*` interfaces or an
+  **ICR** (interface change request) that the owning orchestrator lands. This is what lets 2–4
+  implementer agents per department run simultaneously without merge conflicts.
+- **Every milestone is one Workflow run with the same phases:**
+  `Freeze` (BE-ORCH freezes the contracts this milestone needs) → `Build` (implementers in parallel) →
+  ICR stewardship → `Review` (each orchestrator reviews its department's diffs, returns a `fixes` list)
+  → `Fix` (apply required fixes) → `Gate` (a single **serial committer agent** runs typecheck + tests +
+  soaks + gitleaks, writes the `mN-dod.md`, and lands the conventional commits **locally**).
+- **Agents never commit.** Only the gate agent commits, and only locally (never pushes).
+- **Honesty rule:** agents must return `tests_passed: false` with notes rather than a false green. The
+  orchestrator reviews and the gate re-verify independently.
+
+**You (the driving session) are the quality gate above the gate.** After each workflow completes,
+independently verify: read the gate's report, re-run `pnpm -r test` and `gitleaks dir .` yourself,
+confirm the commits landed and the tree is clean, and read the `mN-dod.md` for honesty before moving on.
+
+**Local-model offload (optional, no API cost):** a `local-llm` MCP server (Ollama `qwen2.5-coder:7b`)
+is available for mechanical/high-volume first-draft work — but **you review everything it produces**;
+it is never the reviewer or authority. See the owner's global policy. Not required to make progress.
+
+---
+
+## 9. HOW TO PROCEED
+
+### 9.1 IMMEDIATE NEXT ACTION — finish M2 (attended cockpit)
+
+The M2 freeze is committed (`533cfb8`). What remains is the **Build → Review → Fix → Gate** phases for
+the eight implementer packages that never ran. **Do not re-run the freeze** — it is done and frozen.
+
+Launch a Workflow named `stage2-m2-impl` containing exactly these 8 implementers (full briefs are in
+plan §4–§6; the ready-to-adapt script skeleton is in the orchestration runbook §"M2-remaining script"):
+
+| Pkg | Owns | Builds (one-line; see plan for full brief) |
+|---|---|---|
+| **BE-2** ptyHost | `core/src/kernel/pty/` (+ApprovalBroker/canUseTool wiring) | node-pty attended sessions through the M1 spawn layer; PTY frame streaming w/ ack-watermark flow control (per spike-D); detach/reattach; login-bootstrap (liveSpawn-gated); recycle-loop v0; approval broker. PTY bytes never parsed. |
+| **BE-3** gateway-full | `core/src/gateway/` | Extend M1 skeleton: binary PTY streaming + backpressure, transcript.<sid> projection, approvals bridge, reconnect-replay across all channels, multi-client fan-out. |
+| **BE-4** adapters | `core/src/adapters/` | Supervised `opencode serve` child (random port/password, argv-`serve` match); injectable SecretFetcher (opt-in-gated, never serialized); `@opencode-ai/sdk` client + SSE (`/global/event` dedupe on `evt_`); LM Studio `/v1`+`/api/v0`+`lms` behind interface, down-as-state, JIT+TTL residency; credential-table read guard. |
+| **FE-2** chrome/shell | `app/src-tauri/`, `app/src/chrome/`, `app/src/lib/` | Tauri v2 shell (tray/notify/window; `--smoke-test` headless mode); WS client (reconnect-replay, golden-corpus tested); zustand+ring-buffer/rAF projection (never per-token React state); cockpit chrome per DESIGN.md; **single approval inbox**. |
+| **FE-3** islands | `app/src/islands/{terminal,transcript}/` | xterm 6 island implementing the spike-A `attachRenderer()` contract verbatim (WebGL→DOM fallback, 3s grace); react-virtual transcript island porting the spike-C **follow-guard**. Playwright component tests (Chromium+WebKit). |
+| **FE-5** launchers | `app/src/features/launch/` | One-off prompt launcher (picker offers exactly 5 labels; audit test: no raw identifier can render); skill launcher (`/skill-name` composition); ENT feature-detect degrade. |
+| **SI-3** hooks/launchd | `infra/launchd/`, `infra/hooks/` | Aqua gui-domain LaunchAgent plists (broker + lms, v1-ready not installed); per-account hook settings templates (statusline `rate_limits` tee, `type:"http"` hooks per `hooks-contract.md`, OTel env block, X4 hook slots); idempotent **merge-never-overwrite** installer. |
+| **SI-6** CI/live-check | `.github/workflows/`, `infra/ci/` | Full CI (Linux unit/component + macOS build-only + separate gitleaks job); the **live-check runner** (`infra/ci/live-check.sh`) enumerating every T3 check with PASS/FAIL/SKIP(pending-owner). |
+
+**M2 Definition of Done** (plan §8.2 M2 — the gate agent verifies and records in `docs/runbooks/m2-dod.md`):
+Tauri app boots and discovers the broker via the bootstrap file; attended TUI per account in the xterm
+island (login bootstrap end-to-end — **T3 pending-owner** for the real login); one-off prompt against a
+**specified** account streams into the transcript island; skill launch via `/skill-name`; permission
+relay lands in the approval inbox; **6-PTY flow-control soak** passes (bounded memory, no dropped bytes)
+with synthetic TUIs; typing-echo p95 <100 ms locally; detach/reattach restores scrollback. Frozen
+contracts `ws-protocol.md`/`bootstrap-file.md`/`hooks-contract.md` already landed in the freeze.
+
+> The full M2 workflow script (freeze + all 8 implementers + reviews + gate) was saved by the previous
+> session at
+> `~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/<PREV_SESSION_UUID>/workflows/scripts/stage2-m2-wf_61841abe-2a4.js`.
+> You **cannot** `resumeFromRunId` it (resume is same-session only). Instead, **author a fresh
+> `stage2-m2-impl` workflow** from the runbook skeleton with the freeze phase removed (freeze is
+> already committed). If you can read that saved file, use it as a reference for the exact implementer
+> briefs; otherwise the plan §4–§6 briefs are authoritative.
+
+### 9.2 Then: M3 → M4 → M5 → M6 (one Workflow per milestone, same pattern)
+
+For each, author a `stage2-mN` workflow (Freeze→Build→Review→Fix→Gate) from the runbook skeleton, using
+the plan's package briefs and DoD. Headlines:
+
+- **M3 — Instruments live (feature 1).** BE-5 collector (JSONL tail, statusline quota, in-process OTLP
+  receiver on `127.0.0.1:4318`, OpenCode SSE dedupe, `opencode.db` scrape *with the credential-table
+  guard*, AWS Cost Explorer/CloudWatch pollers), BE-6 read models + freshness states + context-graph
+  feed, FE-5 dashboards (per plan §6.3 lead order). **SI-4 is HARD-GATED** (Bedrock inference-profile
+  `terraform apply` — plan only, then stop). Identity attributes dropped/mapped to labels at ingest.
+- **M4 — Lineage ([X4] + feature 6).** BE-7 workstream ledger/briefs/reconciler, FE-4 live context-graph
+  island (graphology store → d3-force in a Web Worker → PixiJS v8 WebGL2, per spike-B; honor the fps
+  floor and the reduced-motion path), FE-6 workstream lineage UI, SI-3 brief-automation hooks active.
+  DoD includes the graph populating **live** during an active session.
+- **M5 — Pipelines (features 4 & 5).** BE-8 catalog scanner (one scanner, three consumers) + versioned
+  JSON DAG engine with **per-step account routing** (the [X1] differentiator) + durable memoization
+  journal, FE-6 builder UI. Demo: a 3-step pipeline across MAX_A → AWS_DEV (Bedrock) → LOCAL with an
+  approval gate, resumable from the journal after a broker restart.
+- **M6 — Hardened v0 ship.** BE-9 supervision/resource governor (phys_footprint watchdog,
+  pressure-delta signals, the **[X1] sacrifice order** — account sessions never shed), packaging, the
+  full integration suites, a 24h soak within the ~17 GB pessimistic envelope, signed (dry-run) Tauri
+  sidecar build.
+
+### 9.3 Finally: Stage 3 — Review, critique, improve
+
+A separate set of workflows (see the top-level program brief the owner will provide, and plan-level
+intent):
+- **Reviewer/adversary agents** critique security, optimization, documentation, and scalability
+  (specifically: *is it easy to add a new Claude account or a new local LLM?*). They must stress-test
+  [X1]–[X4], **including scanning the actual git history for leaked identifiers** ([X2]).
+- **Mandatory rendered-frontend review:** agents must **screen-capture the actual running frontend on
+  macOS** (use the `computer-use` MCP, or `mcp__Claude_Preview__*` if serving a web build) and critique
+  the *real rendered image* — they must **not** fall back to reading source. This requires the app to
+  actually run, which requires the owner's live logins; coordinate timing.
+- Every reviewer writes a **findings document**; a final **principal-engineer fix team** addresses every
+  finding.
+
+---
+
+## 10. Environment specifics (this machine)
+
+- **Hardware/OS:** Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6. Memory is the binding resource (blueprint
+  §11 budget: full target ~8.7 GB typical / ~17 GB pessimistic).
+- **Toolchain present:** node **v25**, npm 11, **pnpm** (install via `npm i -g pnpm` if absent), cargo/
+  rustc 1.93 (for Tauri `src-tauri`), **gitleaks 8.30** (`brew install gitleaks`), terraform 1.15, jq,
+  sqlite3 3.51, Xcode CLT. Playwright is used by the spikes/islands (Chromium + WebKit).
+- **`$AIBENDER_HOME`** (machine-local, never in repo) = `~/.aibender/`: `accounts/{max-a,max-b,ent}/`
+  (the per-account `CLAUDE_CONFIG_DIR`+securestorage targets), `db/`, `bootstrap/gateway.json`, `logs/`,
+  `private/gitleaks-tier2.toml`, `state/` (version-gate baselines), `quota/<label>.json`. Provisioned by
+  SI-2 scripts; real logins are owner-run.
+- **LM Studio:** default `127.0.0.1:1234`, **usually down** — tolerate it; never auto-start it.
+- **OpenCode:** `oc-bedrock` shell function + `~/.config/opencode/opencode.jsonc`. The `opencode` binary
+  may or may not be installed; adapters must degrade if absent.
+- **SQLite in code:** prefer `node:sqlite` (Node ≥22.5, zero native deps) behind the `@aibender/schema`
+  adapter; a `better-sqlite3` swap path is documented in `driver.ts` / `sqlite-ddl.md`.
+
+---
+
+## 11. Gotchas & recovery patterns (learned the hard way)
+
+- **A workflow can die mid-run on usage/session limits** (this is exactly what happened to M2, and
+  earlier to an M0 gate). The `Freeze` agent had already produced healthy work that no gate had
+  committed — it sat uncommitted until verified and committed by hand. **After every workflow, check
+  `git status` for uncommitted survivor work** and for a `<name>.output` task file with per-agent
+  results; salvage anything healthy (verify typecheck+tests+gitleaks, then commit with the message the
+  gate *would* have used).
+- **`Workflow resumeFromRunId` is same-session only.** A different session cannot resume a prior run —
+  it must author a fresh workflow. That is why §9.1 tells you to author `stage2-m2-impl` anew rather than
+  resume `wf_61841abe-2a4`.
+- **The auto-mode classifier blocks** credential-store probing and history rewrites of pre-session
+  commits. These blocks are *correct* — surface them to the owner, don't work around them.
+- **Session-limit hardening for long workflows:** keep milestones to one Workflow each; the serial gate
+  commits at the end so a mid-run death never loses *committed* progress. If you expect to be near a
+  limit, prefer smaller per-milestone workflows over one mega-run.
+- **Never let an agent's confident summary substitute for your own verification.** Re-run the checks.
+
+---
+
+## 12. Command cheat-sheet
+
+```bash
+cd ~/Personal/SourceCode/the-last-aibender
+
+# health baseline (expect 374 tests green at 533cfb8)
+pnpm install
+pnpm -r typecheck
+pnpm -r test
+pnpm -F aibender-app lint:tokens        # DESIGN.md token enforcement
+pnpm run test:infra                      # SI bats + shellcheck (if present)
+
+# secret hygiene (both must be clean)
+gitleaks dir . --config .gitleaks.toml
+gitleaks dir . --config ~/.aibender/private/gitleaks-tier2.toml --redact
+
+# state
+git log --oneline -15
+git status --porcelain
+
+# the normative specs — READ THESE
+$EDITOR docs/research/summaries/01-architecture-blueprint.md
+$EDITOR docs/research/summaries/02-stage2-implementation-plan.md
+$EDITOR docs/runbooks/workflow-orchestration.md    # how to drive the build
+```
+
+**Golden rule:** local-only, placeholders-only, verify-everything, and honor the hard gates in §6.
+When in doubt, the blueprint and the plan decide — this handoff only points the way.

@@ -66,3 +66,15 @@ devDependency).
   specs switched to `@aibender/testkit` in the same change (move semantics per
   the steward brief; core stays green, proven by its suite).
 - Unification with the gateway-side double landed as ICR-0002.
+
+## Drift-rule application (BE-ORCH, 2026-07-04, post-M2 build)
+
+BE-2's M2 approvals work added the in-loop permission relay to the seam of
+record (`core/src/kernel/queryRunner.ts`): `CanUseToolContext`,
+`CanUseToolResult`, `CanUseToolHandler`, and the optional
+`QuerySpec.canUseTool`. Per the drift rule above, the same shapes now exist in
+testkit's mirror (`packages/testkit/src/queryRunner.ts`, exported from the
+index). Runtime behavior was already compatible (optional property + method
+bivariance); only the mirror text lagged. The interim
+`as unknown as QuerySpec` casts in `core/src/kernel/approvals.spec.ts` were
+removed with the sync (sanctioned call-site adjustment).

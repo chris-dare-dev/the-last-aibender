@@ -42,6 +42,7 @@ import type { ResumeLedgerRow, ResumeLedgerStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
 
+import type { KernelApprovalRelay } from './approvals.js';
 import { buildSessionEnv } from './env.js';
 import {
   DoubleResumeError,
@@ -131,6 +132,13 @@ export interface SessionKernelOptions {
    * inject deterministic fakes.
    */
   readonly pidProbe?: PidLivenessProbe;
+  /**
+   * BE-2 canUseTool wiring (M2): the approval relay. When present, every SDK
+   * spawn's QuerySpec carries a per-session canUseTool handler and session
+   * end supersedes that session's pending approvals (approvals.ts;
+   * blueprint §4.1 in-loop permission relay). Absent → M1 behavior exactly.
+   */
+  readonly approvals?: KernelApprovalRelay;
   readonly logger?: Logger;
   /**
    * Test seams for race proofs (SPIKE-D `--crash-after-ledger` analogue).
@@ -184,6 +192,16 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
 
   const buildEnvFor = (profile: ClaudeProfile): Readonly<Record<string, string>> =>
     buildSessionEnv(profile, { baseEnv: options.baseEnv ?? { ...process.env } });
+
+  // BE-2 canUseTool wiring (M2): per-session in-loop permission relay spread
+  // into every QuerySpec this kernel builds (launch, fork, dead resume).
+  const canUseToolSpread = (
+    sessionId: string,
+    accountLabel: ClaudeProfile['label'],
+  ): Pick<QuerySpec, 'canUseTool'> =>
+    options.approvals !== undefined
+      ? { canUseTool: options.approvals.canUseToolFor({ sessionId, accountLabel }) }
+      : {};
 
   /**
    * Start the runner for an EXISTING ledger row, register the live handle,
@@ -242,6 +260,9 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
         });
       } finally {
         live.delete(row.id);
+        // BE-2 canUseTool wiring (M2): the session's wait vanished — resolve
+        // its pending approvals as `superseded` (ws-protocol.md §10.3).
+        options.approvals?.sessionEnded(row.id);
         const state = ledger.get(row.id)?.state;
         if (state === 'spawning' || state === 'running' || state === 'resumed') {
           ledger.transition(row.id, 'exited');
@@ -306,6 +327,8 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
           : {}),
         ...(args.forkSession !== undefined ? { forkSession: args.forkSession } : {}),
         ...(args.resumeSessionAt !== undefined ? { resumeSessionAt: args.resumeSessionAt } : {}),
+        // BE-2 canUseTool wiring (M2).
+        ...canUseToolSpread(args.id, args.accountLabel),
       },
     );
   };
@@ -524,6 +547,8 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
             cwd: row.cwd,
             env: buildEnvFor(profile),
             resumeNativeSessionId: row.nativeSessionId,
+            // BE-2 canUseTool wiring (M2).
+            ...canUseToolSpread(row.id, profile.label),
           });
         }
       }

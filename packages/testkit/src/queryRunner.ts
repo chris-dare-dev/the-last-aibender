@@ -12,7 +12,46 @@
  * DRIFT RULE: if core's seam changes shape, this mirror MUST change in the
  * same ICR — a silent divergence here breaks every consumer of the fake at
  * typecheck time (which is exactly the loud failure we want).
+ *
+ * Drift-rule applications:
+ *   - 2026-07-04 (M2, BE-2 wiring): `canUseTool` relay types + the optional
+ *     `QuerySpec.canUseTool` — recorded in ICR-0001's landing record.
  */
+
+// ---------------------------------------------------------------------------
+// canUseTool relay (mirror of core's BE-2 wiring, M2)
+// ---------------------------------------------------------------------------
+// The SDK's in-loop permission relay (blueprint §4.1; ws-protocol.md §10
+// `can-use-tool` source). The kernel attaches a handler per spawn; the SDK
+// runner forwards it to query()'s `canUseTool` option. This is the NARROW
+// slice of SDK 0.3.201's CanUseTool the harness consumes — summaries on the
+// approvals wire are identifier-free [X2], built broker-side from the tool
+// name alone.
+
+export interface CanUseToolContext {
+  /** Aborted when the underlying operation is cancelled (SDK signal). */
+  readonly signal?: AbortSignal;
+  /** SDK toolUseID when surfaced — relayed onto the approvals wire. */
+  readonly toolUseId?: string;
+}
+
+export type CanUseToolResult =
+  | {
+      readonly behavior: 'allow';
+      /** The input the SDK applies (the inbox's replacement, or the original). */
+      readonly updatedInput: Record<string, unknown>;
+    }
+  | {
+      readonly behavior: 'deny';
+      /** Relayed deny message (identifier-free [X2]). */
+      readonly message: string;
+    };
+
+export type CanUseToolHandler = (
+  toolName: string,
+  input: Readonly<Record<string, unknown>>,
+  context: CanUseToolContext,
+) => Promise<CanUseToolResult>;
 
 // ---------------------------------------------------------------------------
 // Spawn spec
@@ -46,6 +85,12 @@ export interface QuerySpec {
    * (assertNoForbiddenArgs — `--bare` is refused with a typed error).
    */
   readonly extraArgs?: readonly string[];
+  /**
+   * In-loop permission relay for this session (BE-2 wiring, M2): forwarded
+   * verbatim to the SDK's `canUseTool`. Absent → the SDK's own permission
+   * flow stands (hooks floor still applies account-wide).
+   */
+  readonly canUseTool?: CanUseToolHandler;
 }
 
 // ---------------------------------------------------------------------------

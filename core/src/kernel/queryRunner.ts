@@ -18,6 +18,43 @@
  */
 
 // ---------------------------------------------------------------------------
+// canUseTool relay (BE-2 wiring, M2 — coordinate changes with BE-ORCH)
+// ---------------------------------------------------------------------------
+// The SDK's in-loop permission relay (blueprint §4.1 two-layer permission
+// relay; ws-protocol.md §10 `can-use-tool` source). The kernel attaches a
+// handler per spawn (built from the ApprovalBroker — see approvals.ts); the
+// SDK runner forwards it to query()'s `canUseTool` option. The shape below is
+// the NARROW slice of SDK 0.3.201's CanUseTool the harness consumes — wider
+// SDK context (suggestions, titles, blockedPath) is deliberately dropped
+// here: summaries on the approvals wire must be identifier-free [X2] and are
+// built broker-side from the tool name alone.
+
+export interface CanUseToolContext {
+  /** Aborted when the underlying operation is cancelled (SDK signal). */
+  readonly signal?: AbortSignal;
+  /** SDK toolUseID when surfaced — relayed onto the approvals wire. */
+  readonly toolUseId?: string;
+}
+
+export type CanUseToolResult =
+  | {
+      readonly behavior: 'allow';
+      /** The input the SDK applies (the inbox's replacement, or the original). */
+      readonly updatedInput: Record<string, unknown>;
+    }
+  | {
+      readonly behavior: 'deny';
+      /** Relayed deny message (identifier-free [X2]). */
+      readonly message: string;
+    };
+
+export type CanUseToolHandler = (
+  toolName: string,
+  input: Readonly<Record<string, unknown>>,
+  context: CanUseToolContext,
+) => Promise<CanUseToolResult>;
+
+// ---------------------------------------------------------------------------
 // Spawn spec
 // ---------------------------------------------------------------------------
 
@@ -49,6 +86,12 @@ export interface QuerySpec {
    * (assertNoForbiddenArgs — `--bare` is refused with a typed error).
    */
   readonly extraArgs?: readonly string[];
+  /**
+   * In-loop permission relay for this session (BE-2 wiring, M2): forwarded
+   * verbatim to the SDK's `canUseTool`. Absent → the SDK's own permission
+   * flow stands (hooks floor still applies account-wide).
+   */
+  readonly canUseTool?: CanUseToolHandler;
 }
 
 // ---------------------------------------------------------------------------

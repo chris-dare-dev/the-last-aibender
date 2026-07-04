@@ -2,7 +2,7 @@
   "name": "@aibender/testkit",
   "version": "0.0.0",
   "private": true,
-  "description": "Synthesized fixture generators + fake servers for tests (plan §9.5). Fixtures are ALWAYS synthesized, never copied from real transcripts [X2]. M1 surface: JSONL line generator, transcript-tail fixtures + FakeQueryRunner (ICR-0001), gateway FakeKernel (ICR-0002), golden WS-protocol fixture corpus (ICR-0003).",
+  "description": "Synthesized fixture generators + fake servers for tests (plan §9.5). Fixtures are ALWAYS synthesized, never copied from real transcripts [X2]. Surface: JSONL line generator, transcript-tail fixtures + FakeQueryRunner (ICR-0001), gateway FakeKernel (ICR-0002), golden WS-protocol fixture corpus (ICR-0003), FakePtyBackend + synthetic login TUI (ICR-0006), gateway port doubles (ICR-0007), mock OpenCode SSE server + fake LM Studio + fake opencode.db builder (ICR-0008).",
   "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",

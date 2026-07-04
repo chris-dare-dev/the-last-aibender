@@ -151,6 +151,24 @@ export function createSdkQueryRunner(options: SdkQueryRunnerOptions): QueryRunne
         queryFn = sdk.query;
       }
 
+      // BE-2 canUseTool wiring (M2): adapt the kernel's narrow handler onto
+      // the SDK's CanUseTool option. The SDK context is wider (suggestions,
+      // titles, blockedPath) — deliberately dropped: approvals summaries are
+      // built broker-side from the tool name alone [X2] (see approvals.ts).
+      const canUseTool = spec.canUseTool;
+      const sdkCanUseTool =
+        canUseTool === undefined
+          ? undefined
+          : async (
+              toolName: string,
+              input: Record<string, unknown>,
+              context: { signal?: AbortSignal; toolUseID?: string },
+            ) =>
+              canUseTool(toolName, input, {
+                ...(context.signal !== undefined ? { signal: context.signal } : {}),
+                ...(context.toolUseID !== undefined ? { toolUseId: context.toolUseID } : {}),
+              });
+
       const q = queryFn({
         prompt: spec.prompt,
         options: {
@@ -166,6 +184,7 @@ export function createSdkQueryRunner(options: SdkQueryRunnerOptions): QueryRunne
           ...(spec.resumeSessionAt !== undefined
             ? { resumeSessionAt: spec.resumeSessionAt }
             : {}),
+          ...(sdkCanUseTool !== undefined ? { canUseTool: sdkCanUseTool } : {}),
         },
       });
 

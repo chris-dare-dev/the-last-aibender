@@ -1,10 +1,9 @@
 /**
  * core/src/kernel — BE-1 session kernel & account runtime (plan §4/BE-1;
- * blueprint §3 rules 1–6, §4.1). Public surface for the composition root
- * (core/src/main/) and, later, the gateway's control verbs (BE-3).
- *
- * The pty/ subdirectory (attended sessions, login bootstrap) is BE-2, M2 —
- * deliberately absent here.
+ * blueprint §3 rules 1–6, §4.1) plus the BE-2 M2 slices: the pty/
+ * subdirectory (attended sessions, login bootstrap, recycle v0 — re-exported
+ * below) and the ApprovalBroker seam (approvals.ts) with its canUseTool
+ * wiring into the SDK lifecycle.
  */
 
 export {
@@ -64,6 +63,30 @@ export {
 } from './sdkQueryRunner.js';
 
 export { defaultPidLivenessProbe, type PidLivenessProbe } from './pidLiveness.js';
+
+// BE-2 (M2): ApprovalBroker seam + canUseTool bridge ---------------------------
+export {
+  DEFAULT_APPROVAL_TTL_MS,
+  approvalRelayFromBroker,
+  createApprovalBroker,
+  createCanUseToolBridge,
+  type ApprovalBroker,
+  type ApprovalBrokerOptions,
+  type ApprovalRequestInput,
+  type ApprovalResolution,
+  type CanUseToolBridgeContext,
+  type KernelApprovalRelay,
+  type PendingApprovalHandle,
+} from './approvals.js';
+
+export {
+  type CanUseToolContext,
+  type CanUseToolHandler,
+  type CanUseToolResult,
+} from './queryRunner.js';
+
+// BE-2 (M2): ptyHost, attended sessions, login bootstrap -----------------------
+export * from './pty/index.js';
 
 export {
   validateTranscriptTail,

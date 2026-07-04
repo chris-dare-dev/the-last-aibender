@@ -194,7 +194,7 @@ Rules:
 - Larger output is **split** by the sender; frames are never merged across the
   cap.
 
-## 6. Ack-watermark flow control — FROZEN (M1-CORE, unchanged at M2)
+## 6. Ack-watermark flow control — FROZEN (M1-CORE; attach-semantics prose pin post-M2)
 
 JSON messages on the session's `pty.<sid>` channel. Validator:
 `validatePtyClientMessage(value, expectedSessionId)` — the gateway always
@@ -213,6 +213,26 @@ highWater → `pty.pause()` (kernel PTY buffer fills → child's TTY write block
 → backpressure reaches the producer); ack drains to lowWater → `resume()`.
 Bytes are **never dropped**; a cap breach is a broker bug (assertion), not a
 wire condition.
+
+**Attach semantics (behavior pin, amendment-recorded — prose only, no wire
+change).** A connection receives binary OUTPUT frames for `pty.<sid>` only
+after its FIRST `pty-replay-request` on that channel — the replay-request
+doubles as the **attach verb**. `fromWatermark` names the start offset
+(`0` = from session birth); acks then gate a bounded per-connection delivery
+window. Clients that never attach receive nothing and pin nothing (their
+watermarks never hold retained bytes). Consequences:
+
+- clients MUST send `pty-replay-request` on the `pty.<sid>` channel on every
+  (re)connect to start or resume the byte stream — there is no implicit
+  attach at subscribe time;
+- a `pty-ack` from a never-attached connection is a legal stale no-op at
+  watermark `0` and answers `watermark-out-of-range` above it (the delivered
+  offset is 0);
+- a later `pty-replay-request` from an already-attached connection is the §6
+  reconnect-replay path on the existing consumer, unchanged.
+
+Implemented in `core/src/gateway/server.ts` (`handlePtyMessage`) +
+`core/src/gateway/ptyStream.ts`; golden fixtures unaffected.
 
 ## 7. Error envelope — FROZEN (M1-CORE; one code added at M2)
 
@@ -392,3 +412,4 @@ orchestrators' sign-off.
 | 2026-07-04 | Initial M1-CORE freeze | — (the freeze itself) |
 | 2026-07-04 | §4.2: optional `prompt` on resume params (sdk substrate requires it at M1); §4.1: launch `state` = ledger state at response time (M1 composition note). Additive, backward-compatible — old resume frames stay valid. | [ICR-0004](icr/icr-0004-resume-prompt.md) |
 | 2026-07-04 | **M2 FULL FREEZE.** Promoted: transcript (§9), approvals (§10), quota (§11), context-graph (§12) payload unions; JSON reconnect-replay + per-(boot, channel) seq scoping (§2/§8); auth transport codified as connect-time token, handshake-message draft resolved as not needed (§1). Amended frozen surfaces (recorded here, landed by the freeze agent): error code `approval-not-pending` added (§7); `approve` verb retired-as-reserved — decisions ride the approvals channel (§4); §3 directions concretized (broker→client fan-out channels accept the client `replay-request`). Deferred: `events` payload union → M3 (§8). Protocol `1.0.0-m1-core` → `1.0.0`. FE-ORCH co-sign: **pending** (validator-derived, additive except the recorded amendments). | — (M2 freeze) |
+| 2026-07-04 | §6 **attach-semantics behavior pin** (prose only, NO wire change, requested in the BE-3 M2 return): OUTPUT frames for `pty.<sid>` flow to a connection only after its first `pty-replay-request` on that channel — the replay-request doubles as the attach verb (`fromWatermark` 0 = from session birth); never-attached connections receive nothing and pin nothing; clients must replay-request on every (re)connect. Matches the landed BE-3 implementation and the FE-2 client's documented duty; golden fixtures unaffected. FE-ORCH co-sign: **pending** (bundled with the M2 freeze co-sign). | — (BE-ORCH steward, prose pin) |

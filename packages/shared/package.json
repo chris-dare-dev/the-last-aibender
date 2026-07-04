@@ -1,14 +1,17 @@
 {
   "name": "@aibender/shared",
-  "version": "0.0.0",
+  "version": "1.0.0-m1",
   "private": true,
-  "description": "Cross-cutting utilities: harness id generation, monotonic clock, structured logging with redaction filters keyed off schema secret/identifier tags. Freeze M1.",
+  "description": "Cross-cutting utilities: harness id generation, monotonic clock, structured logging with redaction filters keyed off schema secret/identifier tags, machine-local identity-to-label map loader. FROZEN M1 (amend via ICR).",
   "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@aibender/protocol": "workspace:*"
   },
   "scripts": {
     "test": "vitest run",

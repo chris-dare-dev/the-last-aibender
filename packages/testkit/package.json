@@ -2,13 +2,16 @@
   "name": "@aibender/testkit",
   "version": "0.0.0",
   "private": true,
-  "description": "Synthesized fixture generators + fake servers for tests (plan §9.5). Fixtures are ALWAYS synthesized, never copied from real transcripts [X2]. M0 stub: JSONL transcript-line generator.",
+  "description": "Synthesized fixture generators + fake servers for tests (plan §9.5). Fixtures are ALWAYS synthesized, never copied from real transcripts [X2]. M1 surface: JSONL line generator, transcript-tail fixtures + FakeQueryRunner (ICR-0001), gateway FakeKernel (ICR-0002), golden WS-protocol fixture corpus (ICR-0003).",
   "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@aibender/protocol": "workspace:*"
   },
   "scripts": {
     "test": "vitest run",

@@ -1,14 +1,18 @@
 {
   "name": "@aibender/schema",
-  "version": "0.0.0",
+  "version": "1.0.0-m1",
   "private": true,
-  "description": "SQLite migrations + typed row accessors for ALL harness ledgers. M0 stub: migration-runner interface only (tables land M1/M3/M4/M5 via ICR).",
+  "description": "SQLite migrations + typed row accessors for ALL harness ledgers. FROZEN M1 kernel slice: node:sqlite adapter (WAL), migration 0001 (resume_ledger, account_profiles, schema_meta), state-machine accessors. M3/M4/M5 tables land via ICR.",
   "license": "UNLICENSED",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.5"
+  },
+  "dependencies": {
+    "@aibender/protocol": "workspace:*",
+    "@aibender/shared": "workspace:*"
   },
   "scripts": {
     "test": "vitest run",

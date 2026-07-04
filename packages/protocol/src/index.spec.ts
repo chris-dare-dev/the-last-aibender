@@ -2,17 +2,24 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CHANNEL,
+  PROTOCOL_FREEZE,
   PROTOCOL_VERSION,
   STATIC_CHANNELS,
   isChannelName,
   isEnvelope,
   ptyChannel,
+  sessionIdOfChannel,
+  streamForChannel,
   transcriptChannel,
+  validateEnvelope,
 } from './index.js';
 
-describe('@aibender/protocol (pre-freeze draft)', () => {
-  it('imports and self-identifies as pre-freeze', () => {
-    expect(PROTOCOL_VERSION).toContain('prefreeze');
+describe('@aibender/protocol (M1-core freeze)', () => {
+  // M0 asserted a 'prefreeze' version; updated at the M1 freeze (this change
+  // IS the freeze landing — brief: fix M0 tests when the freeze requires).
+  it('imports and self-identifies as FROZEN-M1-CORE', () => {
+    expect(PROTOCOL_VERSION).toBe('1.0.0-m1-core');
+    expect(PROTOCOL_FREEZE).toBe('FROZEN-M1-CORE');
   });
 
   // -- positive ------------------------------------------------------------
@@ -76,5 +83,33 @@ describe('@aibender/protocol (pre-freeze draft)', () => {
     ).toBe(true);
     // ...but the payload KEY must exist:
     expect(isEnvelope({ stream: 'quota', channel: 'quota', seq: 0 })).toBe(false);
+  });
+
+  // -- M1 freeze additions: stream/channel consistency ----------------------
+
+  it('maps channels to their stream family', () => {
+    expect(streamForChannel('control')).toBe('control');
+    expect(streamForChannel('pty.s01')).toBe('pty');
+    expect(streamForChannel('transcript.s01')).toBe('transcript');
+    expect(streamForChannel('context-graph')).toBe('context-graph');
+    expect(sessionIdOfChannel('pty.s01')).toBe('s01');
+    expect(sessionIdOfChannel('events')).toBeUndefined();
+  });
+
+  it('rejects an envelope whose stream disagrees with its channel', () => {
+    const result = validateEnvelope({
+      stream: 'events',
+      channel: 'pty.s01',
+      seq: 0,
+      payload: {},
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('bad-envelope');
+  });
+
+  it('flags a malformed channel as unknown-channel, not bad-envelope', () => {
+    const result = validateEnvelope({ stream: 'pty', channel: 'pty.', seq: 0, payload: {} });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe('unknown-channel');
   });
 });

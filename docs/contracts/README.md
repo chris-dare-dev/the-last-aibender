@@ -17,6 +17,7 @@ silent divergence.
 | `bootstrap-file.md` | Gateway port/token discovery file format | BE-ORCH + FE-ORCH | M2 |
 | `dag-schema.md` | Pipeline JSON DAG v1 | BE-ORCH | M5 |
 
-Status: **M0 — none of the contract docs exist yet.** `packages/protocol`
-carries a pre-freeze first draft of the envelope + channel names; do not build
-against it as if frozen.
+Status: **M1 — `ws-protocol.md` and `sqlite-ddl.md` are FROZEN-M1-CORE**
+(2026-07-04); the machine-checkable halves are `packages/protocol@1.0.0-m1-core`
+and `packages/schema`. Later-milestone docs do not exist yet. Landed ICRs and
+the deferred watch list live in [icr/](icr/README.md).

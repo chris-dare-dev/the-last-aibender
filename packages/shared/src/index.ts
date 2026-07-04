@@ -1,15 +1,47 @@
 /**
  * @aibender/shared — cross-cutting utilities every other package may consume:
  * harness id generation, monotonic clock, structured logging with redaction
- * filters keyed off schema `secret`/`identifier` tags (plan §3; owner BE-ORCH;
- * freeze M1).
+ * filters keyed off schema `secret`/`identifier` tags, and the machine-local
+ * identity→MAX_A/MAX_B/ENT/AWS_DEV/LOCAL mapping loader (plan §3; owner
+ * BE-ORCH; FROZEN at M1 — amendments via ICR, docs/contracts/icr/).
  *
- * NOT here yet (lands by M1): the identity→MAX_A/MAX_B/ENT mapping utility.
- * Its mapping table loads from machine-local config under ~/.aibender/ and is
- * never committed [X2].
+ * [X2]: the identity mapping table loads from $AIBENDER_HOME/identity-map.json
+ * (default ~/.aibender/) and is never committed; the repo carries only
+ * infra/profiles/identity-map.example.json with empty values.
  */
 
 import { randomUUID } from 'node:crypto';
+
+import { defaultRedactionFilter, type FieldTag, type RedactionFilter, type TaggedField } from './tags.js';
+
+// Re-exports: tag vocabulary + finalized redaction + identity map ------------
+
+export {
+  REDACTED,
+  defaultRedactionFilter,
+  type FieldTag,
+  type RedactionFilter,
+  type TaggedField,
+} from './tags.js';
+
+export {
+  createLineScrubber,
+  createRedactionFilter,
+  type LineScrubberOptions,
+  type RedactionFilterOptions,
+} from './redaction.js';
+
+export {
+  IdentityMapError,
+  emptyIdentityMap,
+  identityMapPath,
+  loadIdentityMap,
+  normalizeIdentity,
+  parseIdentityMap,
+  type IdentityEntry,
+  type IdentityMap,
+  type LoadIdentityMapOptions,
+} from './identityMap.js';
 
 // ---------------------------------------------------------------------------
 // Harness ids — harness ids are never native (Claude/OpenCode) ids [X4].
@@ -48,28 +80,6 @@ export function monotonicMillis(): number {
 // Structured logging with redaction (X2)
 // ---------------------------------------------------------------------------
 
-/** Tags mirroring the column tags @aibender/schema will declare on accessors. */
-export type FieldTag = 'secret' | 'identifier';
-
-export interface TaggedField {
-  readonly key: string;
-  readonly value: unknown;
-  readonly tags: ReadonlySet<FieldTag>;
-}
-
-/**
- * THE redaction-filter signature (plan §3). Given a field and its schema tags,
- * return what may be emitted. Filters are total: they see every field, tagged
- * or not, so they can also do heuristic scrubbing later.
- */
-export type RedactionFilter = (field: TaggedField) => unknown;
-
-export const REDACTED = '[REDACTED]' as const;
-
-/** Fail-safe default: anything tagged `secret` or `identifier` is replaced. */
-export const defaultRedactionFilter: RedactionFilter = ({ value, tags }) =>
-  tags.size > 0 ? REDACTED : value;
-
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface LogRecord {
@@ -84,11 +94,15 @@ export interface LogRecord {
 export interface LoggerOptions {
   /** Where records go. Default: one JSON line per record on stdout. */
   readonly sink?: (record: LogRecord) => void;
-  /** Redaction filter. Default: {@link defaultRedactionFilter}. */
+  /**
+   * Redaction filter. Default: {@link defaultRedactionFilter} (redacts ANY
+   * tagged field). Wire createRedactionFilter({ identityMap }) for the
+   * finalized identifier→label mapping behavior.
+   */
   readonly redact?: RedactionFilter;
   /**
-   * Field-name → tags map, sourced from @aibender/schema declarations once
-   * those land. Fields absent from the map are treated as untagged.
+   * Field-name → tags map, sourced from @aibender/schema declarations
+   * (e.g. KERNEL_FIELD_TAGS). Fields absent from the map are untagged.
    */
   readonly fieldTags?: Readonly<Record<string, readonly FieldTag[]>>;
 }
@@ -103,8 +117,8 @@ export interface Logger {
 const EMPTY_TAGS: ReadonlySet<FieldTag> = new Set();
 
 /**
- * Structured-logger stub. Real transport/rotation lands with the broker (M1);
- * the redaction contract is real NOW and is the part dependents rely on.
+ * Structured logger. Real transport/rotation lands with the broker (M1+);
+ * the redaction contract is frozen NOW and is the part dependents rely on.
  */
 export function createLogger(options: LoggerOptions = {}): Logger {
   const sink =
@@ -116,7 +130,8 @@ export function createLogger(options: LoggerOptions = {}): Logger {
     const safeFields: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fields)) {
       const tags: ReadonlySet<FieldTag> = fieldTags[key] ? new Set(fieldTags[key]) : EMPTY_TAGS;
-      safeFields[key] = redact({ key, value, tags });
+      const field: TaggedField = { key, value, tags };
+      safeFields[key] = redact(field);
     }
     sink({ level, msg, monotonicMs: monotonicMillis(), fields: safeFields });
   };

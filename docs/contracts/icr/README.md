@@ -34,3 +34,25 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
 - Owning orchestrator: <pending/landed>
 - Counterpart orchestrator: <n/a | pending/co-signed>
 ```
+
+## Landed
+
+| ICR | Summary | Landed |
+|---|---|---|
+| [ICR-0001](icr-0001-kernel-test-doubles.md) | FakeQueryRunner + transcript fixtures promoted from core into `@aibender/testkit` | 2026-07-04 |
+| [ICR-0002](icr-0002-gateway-kernel-double.md) | Unified gateway `FakeKernel` double over the canonical FakeQueryRunner | 2026-07-04 |
+| [ICR-0003](icr-0003-ws-golden-corpus.md) | Golden WS-protocol fixture corpus (`GOLDEN_WS_FIXTURES`) in testkit | 2026-07-04 |
+| [ICR-0004](icr-0004-resume-prompt.md) | Optional `prompt` on the frozen resume verb (+ launch-state M1 note); FE-ORCH co-sign **pending** | 2026-07-04 |
+| [ICR-0005](icr-0005-pid-liveness-guard.md) | sqlite-ddl §4 prose: kernel pid-liveness guard proving child death before un-forked dead-resume of `running` rows | 2026-07-04 |
+
+## Deferred watch items (BE-ORCH)
+
+- **`extraArgs` on the wire**: protocol `LaunchParams` deliberately has NO
+  `extraArgs` field. The kernel/runner already refuse `--bare` and screen
+  extra argv defensively (`assertNoForbiddenArgs`); if extraArgs are ever
+  exposed on the control surface, that is a protocol ICR (new frozen field +
+  validator + golden fixtures), not a kernel-side patch.
+- **`isKernelVerbError` structural check** (ICR-0002 follow-up, BE-3): core's
+  guard is `instanceof`; loosening it to the structural shape lets testkit's
+  `FakeKernel` drive the real gateway server without injecting core's error
+  class.

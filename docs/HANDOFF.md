@@ -9,7 +9,7 @@
 > — the reusable multi-agent *Workflow* pattern that has driven every milestone. You will re-use it
 > verbatim to build the remaining milestones. Read it second.
 >
-> **Last updated:** 2026-07-04, at commit `096c6b1` (M2 complete: freeze + impl + gate + post-gate hygiene).
+> **Last updated:** 2026-07-04, after M3 (instruments live) landed in full — see §3 for the commit range.
 > **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
 > **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo
 > `chris-dare-dev/the-last-aibender`. **Everything is committed LOCAL-ONLY. Nothing has been pushed.
@@ -19,18 +19,18 @@
 
 ## 0. TL;DR — your first five minutes
 
-1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -25 && git status` — confirm you
-   are at `096c6b1` (or later) with a **clean tree**. If the tree is dirty, someone left work
+1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -35 && git status` — confirm you
+   are at `bb7ef95` (or later) with a **clean tree**. If the tree is dirty, someone left work
    uncommitted; investigate before proceeding.
-2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **1012 tests pass / 1 skipped**,
-   typecheck clean. Also green: `pnpm run test:infra` (58 bats), `pnpm -F aibender-app lint:tokens`.
-   This is your green baseline. (If `pnpm` is missing: `npm i -g pnpm`.)
+2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **1323 tests pass / 1 skipped**,
+   typecheck clean. Also green: `pnpm run test:infra` (71 bats), `pnpm -F aibender-app lint:tokens`,
+   `pnpm -F aibender-core soak:m2`. This is your green baseline. (If `pnpm` is missing: `npm i -g pnpm`.)
 3. Read the two **normative** specs (they are the source of truth, not this doc):
    `docs/research/summaries/01-architecture-blueprint.md` and
    `docs/research/summaries/02-stage2-implementation-plan.md`.
 4. Read §6 (**hard gates**) and §7 (**secret hygiene**) of this file. These are non-negotiable and
    the auto-mode classifier *will* stop you if you cross them.
-5. Your immediate job is **§9.1 — build M3 (instruments live)**. Go there.
+5. Your immediate job is **§9.1 — build M4 (lineage + live context graph)**. Go there.
 
 ---
 
@@ -104,7 +104,7 @@ rendered frontend). You are inside **Stage 2**.
 | **M0 — Clean slate & risk burn-down** | ✅ committed (`98673ac`→`5804dca`) | [X2] hygiene stack (two-tier gitleaks, fail-closed pre-commit hook, CI), pnpm monorepo + 4 `@aibender/*` contract stubs, **DESIGN.md locked**, all **ten** risk spikes executed with verdicts. |
 | **M1 — [X1] proven (synthetic)** | ✅ committed (`96b6872`→`04c395f`) | FROZEN-M1 protocol core + kernel SQLite schema; **BE-1 session kernel** (per-account env injection + scrub, resume ledger with row-before-spawn, transcript-tail validator, double-resume block, FakeQueryRunner seam); **BE-3 gateway control skeleton** + bootstrap discovery; **SI-2** account provisioning + keychain-probe + version-gate scripts. Synthetic 3-account concurrency demo passes (13/13 assertions). |
 | **M2 — Attended cockpit** | ✅ committed (`533cfb8` freeze; `a04a1ab`→`20cb4f8` impl+gate; `096c6b1` hygiene follow-up) | Freeze: protocol → FROZEN-M2 + `bootstrap-file.md`/`hooks-contract.md` + 32 golden fixtures. Impl (8 packages, 3 orchestrator reviews w/ 9 material fixes applied, serial gate): **BE-2** ptyHost (node-pty attended sessions through the M1 spawn layer, SPIKE-D ack-ring flow control, liveSpawn-gated login bootstrap, recycle v0, ApprovalBroker + canUseTool wiring); **BE-3** gateway full (binary PTY streaming w/ backpressure, transcript.<sid> projection, approvals bridge, reconnect-replay journals, multi-client fan-out); **BE-4** adapters (supervised `opencode serve` + SSE dedupe + gated SecretFetcher, LM Studio down-as-state + JIT/TTL residency, [X2] credential-table read guard); **FE-2** Tauri v2 shell + `--smoke-test` + WS client + zustand/rAF state + cockpit chrome + single approval inbox; **FE-3** xterm/transcript islands (spike-A/C contracts, Playwright Chromium+WebKit); **FE-5** launchers (5-label picker + identifier-audit test); **SI-3** launchd/hook templates + merge-never-overwrite installer; **SI-6** full CI + `live-check.sh` T3 runner. Gate evidence: 1012 tests, 58 bats, 6-PTY soak (zero byte loss/dup, bounded memory), echo p95 0.14 ms, Tauri smoke exit 0, both gitleaks tiers clean. Record: `docs/runbooks/m2-dod.md` (deviations D1–D4; live items T3 pending-owner). |
-| **M3 — Instruments live** | ⬜ not started | Observability collection + dashboards (feature 1). |
+| **M3 — Instruments live** | ✅ committed (`f086c50`→`bb7ef95`) | Freeze: protocol 1.1.0/FROZEN-M3 (`events` payload union closed: `event-summary` + `read-model-snapshot` w/ required per-source freshness; registries shared with schema CHECKs), schema migration 0002 events store (separate collector-owned db, validated insert path refuses identity shapes), hooks-contract §7 acceptance types + golden hook-POST corpus, ICR-0009 kernel message tap (the transcript-tee seam). Impl (all 3 reviews approve, 0 fixes): **BE-5** collector — full §6.1 source matrix (JSONL tailer, statusline tee + gated OAuth scaffold, loopback OTLP receiver, SSE dedupe + induced-disconnect gap-repair, guarded db scrape reconciling to identical evt_ ids, fake-only AWS pollers w/ live clients refusing sans opt-in, LM inline capture, hooks accepting endpoint w/ PermissionRequest→hook-floor relay, JSONL-wins-tokens/OTel-wins-attribution joiner); **BE-6** graph feed + freshness state machine (down-as-state) + all ten §6.3 read models (ccusage block math cited) + classification queue via BE-4; **FE-5** instrument dashboards (NO-SIGNAL doctrine, honest-labeling audit: "ACTUAL" unrenderable under estimate-only); **BE-MAIN** composeBroker wires every port (resolves M2 D3); **SI-4** Bedrock IaC authored + validated, **hard gate HELD** (no plan-with-creds/apply/AWS call). Gate: 1323 tests / 71 bats, identity audit double-proven (in-suite + gate's independent sweep, 0 hits/185 cells), soak still passes composed, both gitleaks tiers clean. Record: `docs/runbooks/m3-dod.md` (D1–D5). |
 | **M4 — Lineage** | ⬜ not started | [X4] workstreams + the live context graph (feature 6). |
 | **M5 — Pipelines** | ⬜ not started | Catalog scanner + DAG engine (features 4 & 5). |
 | **M6 — Hardened v0 ship** | ⬜ not started | Supervision/resource governor, packaging, 24h soak. |
@@ -121,27 +121,28 @@ rendered frontend). You are inside **Stage 2**.
 
 ## 4. Exact repo state right now
 
-- **HEAD:** `096c6b1 chore: tier-1 path allowlist for cargo target dir`. Tree **clean**.
-- **Baseline health:** `pnpm -r typecheck` clean; **1012 tests pass / 1 skipped** (protocol 72, shared 36,
-  testkit 68, schema 40, app 309, core 487+1 — the skip is the double-gated live-opencode placeholder);
-  `pnpm run test:infra` 58/58 bats; `pnpm -F aibender-app lint:tokens` clean (96 files); `cargo test` in
-  `app/src-tauri` 5/5; the 6-PTY soak is runnable on demand via `pnpm -F aibender-core soak:m2`.
+- **HEAD:** `bb7ef95 docs: M3 DoD record and runbook index`. Tree **clean**.
+- **Baseline health:** `pnpm -r typecheck` clean; **1323 tests pass / 1 skipped** (protocol 104, shared 36,
+  testkit 92, schema 61, app 375, core 655+1 — the skip is the double-gated live-opencode placeholder);
+  `pnpm run test:infra` 71/71 bats; `pnpm -F aibender-app lint:tokens` clean (116 files); `cargo test` in
+  `app/src-tauri` 5/5 (no M3 diff there); `pnpm -F aibender-core soak:m2` passes composed.
   gitleaks tier-1 clean on a full-dir scan (incl. a built `app/src-tauri/target/`, path-allowlisted —
   SECURITY.md §2 tuning log); tier-2 clean except the known 12 `.git/logs` reflog echoes (see wart below).
 - **Layout** (see plan §2 for the full intended tree):
   - `packages/{protocol,schema,shared,testkit}` — shared, orchestrator-stewarded contract packages
     (testkit now carries the 32-fixture golden corpus + the promoted pty/gateway/adapter test doubles,
     ICR-0006/7/8).
-  - `core/src/{kernel,gateway,adapters,main}` — the `aibender-core` broker daemon (BACKEND dept).
-    `kernel/pty/`, `gateway/` (full), and `adapters/{opencode,lmstudio,claude-sdk}` are **built** (M2).
-    `collector/`, `readmodels/`, `workstreams/`, `pipelines/`, `supervision/` are **not yet built**
-    (they land M3–M6).
-  - `app/` — the Tauri v2 frontend (FRONTEND dept). Built (M2): `src-tauri/` (shell + `--smoke-test`),
-    `src/chrome/`, `src/lib/`, `src/islands/{terminal,transcript}/`, `src/features/launch/`, plus the
-    locked theme. Dashboards, context-graph island, workstream UI, and the builder land M3–M5.
+  - `core/src/{kernel,gateway,adapters,collector,readmodels,main}` — the `aibender-core` broker daemon
+    (BACKEND dept). `kernel/pty/`, `gateway/` (full), `adapters/{opencode,lmstudio,claude-sdk}` (M2),
+    `collector/` (+`graphfeed/`) and `readmodels/` (M3) are **built**; `composeBroker` wires every port.
+    `workstreams/`, `pipelines/`, `supervision/` are **not yet built** (they land M4–M6).
+  - `app/` — the Tauri v2 frontend (FRONTEND dept). Built: `src-tauri/` (shell + `--smoke-test`),
+    `src/chrome/`, `src/lib/`, `src/islands/{terminal,transcript}/`, `src/features/launch/` (M2),
+    `src/features/observability/` (M3), plus the locked theme. Context-graph island, workstream UI,
+    and the pipeline builder land M4–M5.
   - `infra/{profiles,scripts,launchd,hooks,aws,colima,ci}` — SERVER-SIDE dept. `profiles/`+`scripts/`
-    (SI-2), `launchd/`+`hooks/` (SI-3), `ci/` + full `.github/workflows/` (SI-6) populated; `aws/`
-    (SI-4, hard-gated) and `colima/` (SI-5) land M3+.
+    (SI-2), `launchd/`+`hooks/` (SI-3), `ci/` + full `.github/workflows/` (SI-6), `aws/` (SI-4 IaC
+    authored + validated; **apply pending-owner**) populated; `colima/` (SI-5) still to land.
   - `spikes/` — the 5 quarantined M0 spike harnesses (real, runnable, **never imported by prod code**).
   - `docs/{research,contracts,adr,runbooks,spikes}` — runbooks now include `m2-dod.md`,
     `pty-attended-live.md`, `launchd.md`, `hooks-telemetry.md`; `docs/contracts/icr/README.md` tracks
@@ -267,35 +268,36 @@ it is never the reviewer or authority. See the owner's global policy. Not requir
 
 ## 9. HOW TO PROCEED
 
-### 9.1 IMMEDIATE NEXT ACTION — build M3 (instruments live, feature 1)
+### 9.1 IMMEDIATE NEXT ACTION — build M4 (lineage: [X4] + feature 6)
 
-**M2 is DONE** (see §3): freeze `533cfb8`, impl+gate `a04a1ab`→`20cb4f8`, post-gate hygiene `096c6b1`.
-The `stage2-m2-impl` workflow script that built it (a good structural reference alongside the runbook
-skeleton) is saved at
-`~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/894bbe44-c473-4c8b-b7e4-633d58bc246b/workflows/scripts/stage2-m2-impl-wf_53ddc79a-b5c.js`.
+**M2 and M3 are DONE** (see §3). The workflow scripts that built them (structural references alongside
+the runbook skeleton) are saved under
+`~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/894bbe44-c473-4c8b-b7e4-633d58bc246b/workflows/scripts/`
+(`stage2-m2-impl-wf_53ddc79a-b5c.js`, `stage2-m3-wf_aaa9665f-e68.js`).
 
-Author a fresh Workflow named `stage2-m3` (Freeze→Build→Review→Fix→Gate) from the runbook skeleton,
-using the plan §4–§6 package briefs and the plan §8.2 M3 DoD. Headlines:
+Author a fresh Workflow named `stage2-m4` (Freeze→Build→Review→Fix→Gate) from the runbook skeleton,
+using the plan §4–§6 package briefs and the plan §8.2 M4 DoD. Headlines:
 
-- **Freeze (BE-ORCH):** promote whatever quota/events/context-graph payload sections and collector
-  ingestion schema (observability tables in `sqlite-ddl.md`) M3's sources need; extend the golden
-  corpus for any newly frozen frames.
-- **BE-5 collector** — JSONL tail, statusline quota-file ingest, in-process OTLP receiver on
-  `127.0.0.1:4318`, OpenCode SSE consumer (BE-4's stream is already the single consumable surface),
-  `opencode.db` scrape *through the landed credential-table guard*, AWS Cost Explorer/CloudWatch
-  pollers (live-gated). Identity attributes dropped/mapped to labels at ingest ([X2]).
-- **BE-6 read models** — aggregates, freshness states, context-graph feed.
-- **FE-5 dashboards** — per plan §6.3 lead order, DESIGN.md-locked.
-- **SI-4 is HARD-GATED** (Bedrock application-inference-profile `terraform apply` — author IaC,
-  run `terraform plan`, show it, **stop**; owner verbal OK required, §6 gate 2).
+- **Freeze (BE-ORCH):** the [X4] ledger schema (`workstream`/`session_node`/`session_edge`/`brief`
+  per blueprint §5), the kernel-facing edge-recording interface (BE-1/BE-2 call it on every
+  launch/resume/fork/merge — the `ContinuationEdgeEmitter` stub from M2 is the seam), workstream
+  channel payloads for the FE lineage view, and the graph-feed session-id resolver seam
+  (the ws-protocol §12 M4 pin: composition root MUST inject the ledger resolver).
+- **BE-7 workstreams** — ledger (harness ids never native ids; typed edges at action time;
+  continuation = child; merge = one node with N `merge_parent` edges + conflict-surfacing brief),
+  reconciler (external sessions → inferred-confidence orphans), brief automation handlers,
+  context-pressure "branch now" watch, native stores never mutated (no write path, tested).
+- **FE-4 context-graph island** — spike-B contract (graphology → d3-force in a Worker → PixiJS v8
+  WebGL2), live population, layers/cluster-dim, reduced-motion path, 5k-node fps floor.
+- **FE-6 workstream slice** — lineage view (branch/continue/merge, detached-HEAD bucket, brief
+  viewer, merge flow, "branch now" advisory). Pipelines slice is M5.
+- **SI-3 M4 slice** — the [X4] hook-slot activation (SessionEnd/PreCompact/SessionStart → BE-7
+  endpoints) in the templates + installer.
+- Also chase the **pending contract co-signs** (FE-ORCH rows in `ws-protocol.md`, SI-ORCH rows in
+  `hooks-contract.md`) via the M4 reviewers, and consider SI-5's ungated slice (version pins, probe
+  script, runbook — NO colima VM ops, those are owner-gated).
 
-**Deferred M2 watch items** (not blockers; tracked in `docs/contracts/icr/README.md` — consider
-resolving the first during the M3 freeze/build): composition-root M2 port wiring (`composeBroker`
-passes kernel only; the pty/approvals adapters are ready-made and gate-proven, the transcript tee is
-blocked on a BE-1 raw-stream seam decision); BE-8 opencode session-create body limitation on the pinned
-SDK; SPIKE-A renderer telemetry sink routing.
-
-### 9.2 Then: M4 → M5 → M6 (one Workflow per milestone, same pattern)
+### 9.2 Then: M5 → M6 (one Workflow per milestone, same pattern)
 
 For each, author a `stage2-mN` workflow (Freeze→Build→Review→Fix→Gate) from the runbook skeleton, using
 the plan's package briefs and DoD. Headlines:

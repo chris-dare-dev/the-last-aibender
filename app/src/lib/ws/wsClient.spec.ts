@@ -228,6 +228,11 @@ describe('reconnect-replay watermarks (edge)', () => {
     expect(sent).toContain(
       encodeEnvelope('quota', 0, { kind: 'replay-request', channel: 'quota', fromSeq: 0 }),
     );
+    // EVENTS joined the default set at M3: retained read-model snapshots
+    // hydrate the observability instruments on app start.
+    expect(sent).toContain(
+      encodeEnvelope('events', 0, { kind: 'replay-request', channel: 'events', fromSeq: 0 }),
+    );
   });
 
   it('resumes from lastSeq+1 and drops replayed duplicates exactly-once', async () => {

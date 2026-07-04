@@ -18,6 +18,7 @@ import {
   validateControlResponse,
   validateErrorPayload,
   validateEnvelope,
+  validateEventsPayload,
   validateQuotaSnapshot,
   validateTranscriptPayload,
   type ApprovalsServerPayload,
@@ -26,8 +27,11 @@ import {
   type ControlResponse,
   type ErrorCode,
   type ErrorPayload,
+  type EventSummary,
+  type OpaqueEventsPayload,
   type PtyFrame,
   type QuotaSnapshot,
+  type ReadModelSnapshot,
   type TranscriptPayload,
 } from '@aibender/protocol';
 
@@ -41,6 +45,7 @@ export type InboundStage =
   | 'approvals-server-message'
   | 'quota-payload'
   | 'context-graph-payload'
+  | 'events-payload'
   | 'channel-policy'
   | 'pty-frame-codec';
 
@@ -73,11 +78,15 @@ export type InboundMessage =
       readonly payload: ContextGraphTouch;
     }
   | {
-      /** events payload union is DRAFT until M3 — opaque by channel policy. */
-      readonly kind: 'events-opaque';
+      /**
+       * events union FROZEN at M3 (ws-protocol.md §13): event summaries +
+       * read-model snapshots; unknown kinds decode opaque and MUST be
+       * ignored (the frozen forward-tolerant reader rule).
+       */
+      readonly kind: 'events';
       readonly channel: ChannelName;
       readonly seq: number;
-      readonly payload: unknown;
+      readonly payload: EventSummary | ReadModelSnapshot | OpaqueEventsPayload;
     }
   | { readonly kind: 'pty-frame'; readonly frame: PtyFrame };
 
@@ -92,7 +101,7 @@ export function replayableChannelOf(message: InboundMessage): ChannelName | unde
     case 'approvals':
     case 'quota':
     case 'context-graph':
-    case 'events-opaque':
+    case 'events':
       return isReplayableChannel(message.channel) ? message.channel : undefined;
     default:
       return undefined;
@@ -106,7 +115,7 @@ export function seqOf(message: InboundMessage): number | undefined {
     case 'approvals':
     case 'quota':
     case 'context-graph':
-    case 'events-opaque':
+    case 'events':
       return message.seq;
     default:
       return undefined;
@@ -196,8 +205,12 @@ export function routeBrokerFrame(data: string | Uint8Array): InboundVerdict {
   }
 
   if (channel === 'events') {
-    // Payload union DRAFT until M3 (ws-protocol.md §8): opaque passthrough.
-    return { ok: true, message: { kind: 'events-opaque', channel, seq, payload } };
+    // FROZEN at M3 (ws-protocol.md §13): event-summary + read-model
+    // snapshots; unknown kinds decode opaque (forward-tolerant reader rule).
+    const events = validateEventsPayload(payload);
+    return events.ok
+      ? { ok: true, message: { kind: 'events', channel, seq, payload: events.value } }
+      : { ok: false, code: events.code, stage: 'events-payload' };
   }
 
   return { ok: false, code: 'unknown-channel', stage: 'channel-policy' };

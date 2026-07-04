@@ -1,0 +1,58 @@
+/*
+ * Observability deck layout (FE-5, M3). Token-locked: every value is a
+ * var(--ig-*) custom property or a plain layout primitive — no literals
+ * (DESIGN.md §8.5). Data rows live on the character grid (§4.3).
+ */
+
+.ig-obs-deck {
+  display: flex;
+  flex-direction: column;
+}
+
+/* one engraved data row on the 20px rhythm */
+.ig-obs-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+}
+
+/* leading engraved label cell — fixed ch width so readouts never jitter */
+.ig-obs-key {
+  min-width: calc(var(--ig-grid-ch) * 10);
+}
+
+/* numeric readout cell, right-aligned on the grid */
+.ig-obs-num {
+  min-width: calc(var(--ig-grid-ch) * 7);
+  text-align: right;
+}
+
+.ig-obs-unit {
+  color: var(--ig-ink-muted);
+}
+
+/* per-source freshness strip: degraded sources render as dimmed states */
+.ig-obs-source {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+}
+
+/* remediation affordances (copy actions) sit on one row, never wrap chaos */
+.ig-obs-remediations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ig-space-8);
+}
+
+/* hero ratio readout (local offload) */
+.ig-obs-numeral {
+  font-size: var(--ig-type-numeral);
+  line-height: var(--ig-type-numeral-lh);
+  font-variant-numeric: var(--ig-numeric);
+}

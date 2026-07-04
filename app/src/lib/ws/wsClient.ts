@@ -100,8 +100,10 @@ export interface GatewayClientOptions {
   /**
    * Static channels replay-requested from seq 0 on the FIRST connection of a
    * broker boot (pulls the retained window, e.g. pending approvals pushed
-   * before this window existed). Below-floor answers `watermark-out-of-range`
-   * which is logged and harmless (ws-protocol.md §8).
+   * before this window existed, or the events channel's retained read-model
+   * snapshots so dashboards hydrate without waiting a publish cycle).
+   * Below-floor answers `watermark-out-of-range` which is logged and
+   * harmless (ws-protocol.md §8).
    */
   replayFromZeroOnFirstConnect?: readonly ChannelName[];
 }
@@ -165,8 +167,11 @@ export class GatewayClient {
     this.backoffMaxMs = options.backoff?.maxMs ?? 15_000;
     this.backoffFactor = options.backoff?.factor ?? 2;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+    // EVENTS joined the default set at M3 (BE-ORCH stewarding, FE-5 request):
+    // the retained read-model snapshots replay on the first connect of a
+    // broker boot so the observability instruments hydrate immediately.
     this.replayFromZero =
-      options.replayFromZeroOnFirstConnect ?? [CHANNEL.APPROVALS, CHANNEL.QUOTA];
+      options.replayFromZeroOnFirstConnect ?? [CHANNEL.APPROVALS, CHANNEL.QUOTA, CHANNEL.EVENTS];
   }
 
   // -- observability ---------------------------------------------------------

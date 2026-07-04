@@ -19,6 +19,7 @@ import './chrome/theme/tokens.css';
 import './chrome/chrome.css';
 import { Chrome } from './chrome/Chrome.tsx';
 import { registerAppIslands } from './composition/registerIslands.tsx';
+import { registerObservability } from './features/observability/index.ts';
 import { bindClientToStores } from './lib/stores/bind.ts';
 import { nativeBootstrapProvider, notifyNative } from './lib/native/tauriBridge.ts';
 import { GatewayClient } from './lib/ws/wsClient.ts';
@@ -26,6 +27,10 @@ import { GatewayClient } from './lib/ws/wsClient.ts';
 const client = new GatewayClient({ bootstrapProvider: nativeBootstrapProvider });
 bindClientToStores(client);
 registerAppIslands(client);
+// FE-5 observability feature (M3): binds the events channel, occupies the
+// chrome's 'observability' island slot, registers the palette verb. The app
+// never disposes it — the returned teardown is for tests.
+registerObservability(client);
 
 // Native affordance glue: approval arrivals raise a system notification
 // (tray/notification only — never a streaming path, blueprint §2).

@@ -1,11 +1,12 @@
 /**
  * Island mount seam. The three imperative islands (terminal/transcript —
- * FE-3; graph — FE-4) register themselves here; chrome mounts whatever is
- * registered WITHOUT importing island modules (directory-ownership rule:
- * chrome never reaches into app/src/islands).
+ * FE-3; graph — FE-4) register themselves here, as does the FE-5
+ * observability deck (`observability` slot, M3); chrome mounts whatever is
+ * registered WITHOUT importing island/feature modules (directory-ownership
+ * rule: chrome never reaches into app/src/islands or app/src/features).
  */
 
-export type IslandSlot = 'terminal' | 'transcript' | 'graph';
+export type IslandSlot = 'terminal' | 'transcript' | 'graph' | 'observability';
 
 export interface IslandMount {
   /**

@@ -94,8 +94,10 @@ export function bindClientToStores(client: GatewayClient, options: BindOptions =
         case 'pushed-error':
           connectionStore.getState().recordPushedError(message.error.code, message.error.message);
           break;
-        case 'events-opaque':
-          // Payload union DRAFT until M3 — deliberately ignored.
+        case 'events':
+          // Frozen at M3 (ws-protocol.md §13). FE-2's chrome has no events
+          // consumer — the FE-5 dashboards bind their own projections when
+          // they land; unknown kinds are ignored by the tolerant-reader rule.
           break;
         default:
           break;

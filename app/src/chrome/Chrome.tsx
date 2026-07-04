@@ -15,6 +15,7 @@ import { ClientProvider } from './clientContext.tsx';
 import { CommandPalette } from './CommandPalette.tsx';
 import { FleetPanel } from './FleetPanel.tsx';
 import { InstrumentStack } from './InstrumentStack.tsx';
+import { ObservabilityDock } from './ObservabilityDock.tsx';
 import { SettingsView } from './SettingsView.tsx';
 import { StatusBar } from './StatusBar.tsx';
 import { WorkSurface } from './WorkSurface.tsx';
@@ -40,6 +41,8 @@ export function Chrome({ client }: ChromeProps): ReactNode {
           </main>
           <aside className="ig-zone ig-zone-right" aria-label="instruments zone">
             <InstrumentStack />
+            {/* aggregate gauges below the five channel panels (DESIGN.md §4.1) */}
+            <ObservabilityDock />
           </aside>
         </div>
         <CommandPalette />

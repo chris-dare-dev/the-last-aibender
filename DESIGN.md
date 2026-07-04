@@ -1,7 +1,8 @@
 # DESIGN.md — Instrument Grade
 
 **System name:** Instrument Grade · token namespace `--ig-*`
-**Status:** AUTHORED (FE-1, M0) — awaiting FE-ORCH lock mark. Until locked, no other FE package may merge UI code (plan §5, FE-1 gate).
+**Status:** **LOCKED** (FE-ORCH, 2026-07-04, M1 lock-mark pass). The FE-1 gate (plan §5) is satisfied — other FE packages may merge UI code against this document.
+**Amendment rule (in force while locked):** *any* change to this document, `tokens.ts`, or the generated CSS requires an ADR in `docs/adr/` **plus** FE-ORCH sign-off — this strengthens the M0 change-control note below (which required an ADR only for set-widening changes). Agents never edit values directly; they file an ICR/ADR.
 **Normative sources:** [ui-anti-slop-design](docs/research/findings/ui-anti-slop-design.md) · blueprint §8 · plan §5/FE-1.
 **Implementation:** `app/src/chrome/theme/tokens.ts` (typed source of truth) → generated `tokens.css` + `tailwind.theme.css` → enforced by `app/scripts/lint-tokens.mjs` (§8).
 

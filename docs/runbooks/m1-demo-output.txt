@@ -1,0 +1,33 @@
+# M1 synthetic X1 demo — captured output (gate run, 2026-07-04)
+# Command: pnpm -F aibender-core demo:m1   (core/scripts/demo-m1.ts)
+# Scrubbing: operator home -> $HOME, temp harness home -> $AIBENDER_HOME (done by the script)
+
+# demo-m1 — synthetic X1: three accounts, one broker (plan §8.2 M1)
+# harness home: $AIBENDER_HOME (accounts/{max-a,max-b,ent}, db/)
+{"level":"info","msg":"gateway listening","monotonicMs":127.58475,"fields":{"port":63023,"bootstrap":"$AIBENDER_HOME/bootstrap/gateway.json"}}
+ok 1 - bootstrap file advertises this boot (port + per-boot token discovered)
+# launched MAX_A -> ses_dac2dd88606f4f49b79bdebd819d79ae (state running)
+# launched MAX_B -> ses_b7c81174c8f749c996c53bcc84993fd4 (state running)
+# launched ENT -> ses_e2beb33545774e7da6e9e21504fdb82d (state running)
+ok 2 - three sessions launched, one per account label, all running
+ok 3 - all three sessions are live in the broker AT THE SAME TIME
+#   MAX_A env CLAUDE_CONFIG_DIR=$AIBENDER_HOME/accounts/max-a
+#   MAX_A env CLAUDE_SECURESTORAGE_CONFIG_DIR=$AIBENDER_HOME/accounts/max-a
+#   MAX_B env CLAUDE_CONFIG_DIR=$AIBENDER_HOME/accounts/max-b
+#   MAX_B env CLAUDE_SECURESTORAGE_CONFIG_DIR=$AIBENDER_HOME/accounts/max-b
+#   ENT env CLAUDE_CONFIG_DIR=$AIBENDER_HOME/accounts/ent
+#   ENT env CLAUDE_SECURESTORAGE_CONFIG_DIR=$AIBENDER_HOME/accounts/ent
+ok 4 - three DISTINCT CLAUDE_CONFIG_DIR and CLAUDE_SECURESTORAGE_CONFIG_DIR values
+ok 5 - each session's dirs are its own account's profile dirs
+ok 6 - provider-hijack scrub held: no ANTHROPIC_API_KEY in any spawn env
+ok 7 - at spawn time every ledger row already existed in state `spawning`
+ok 8 - every ledger row was written BEFORE its spawn timestamp
+ok 9 - un-forked resume of the live MAX_A session is BLOCKED (double-resume-blocked)
+ok 10 - all three sessions completed and settled at `exited` in the ledger
+# resume+fork MAX_A ses_dac2dd88606f4f49b79bdebd819d79ae -> child ses_d455414ce38748279b136e2e71ce5c56
+ok 11 - resume+fork works: continuation child resumes the parent's native session
+ok 12 - fork child completed; ledger holds exactly 4 settled rows (3 parents + 1 fork)
+{"level":"info","msg":"gateway closed","monotonicMs":137.568708,"fields":{"port":63023}}
+ok 13 - broker close retracted the bootstrap discovery file
+# assertions: 13, failures: 0
+# DEMO RESULT: PASS

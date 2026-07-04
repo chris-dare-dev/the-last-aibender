@@ -37,6 +37,15 @@ async function untilClients(mock: MockOpencodeServer, count: number): Promise<vo
   throw new Error(`mock never reached ${String(count)} sse client(s)`);
 }
 
+/** Poll a condition (pump-side effects land asynchronously to the consumer). */
+async function until(check: () => boolean, what: string): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(what);
+}
+
 /** Collect events from an iterator until the predicate says stop. */
 async function collectUntil(
   iterator: AsyncIterator<OpencodeEvent>,
@@ -139,6 +148,41 @@ describe('opencode SSE transport (probe contract: dedupe/sync/unknown/replay)', 
       expect(events.filter((event) => event.type === 'session.created')).toHaveLength(1);
       expect(transport.watermark('ses_synth_wm')).toBe(1);
       expect(transport.stats().syncWrappersDropped).toBe(2);
+    });
+  });
+
+  it('onSync fans the evt_↔seq correlation out at parse time (M3 stewarding ICR)', async () => {
+    await withMock(async (mock, transport) => {
+      const seen: { aggregateId: string; seq: number; eventId?: string }[] = [];
+      const unsubscribe = transport.onSync((correlation) => seen.push(correlation));
+      // A throwing observer must never kill the pump (tolerance clause).
+      const unsubscribeThrowing = transport.onSync(() => {
+        throw new Error('observer bug — must be swallowed');
+      });
+      const iterator = transport.events()[Symbol.asyncIterator]();
+      await untilClients(mock, 1);
+      const eventId = mock.emitBusEvent({
+        type: 'session.created',
+        durable: { aggregateId: 'ses_synth_corr', version: 1 },
+        properties: { sessionID: 'ses_synth_corr' },
+      });
+      await collectUntil(iterator, (all) => all.some((e) => e.type === 'session.created'));
+      // The sync twin is co-delivered; poll briefly for its parse.
+      await until(() => seen.length === 1, 'sync correlation never observed');
+      expect(seen).toEqual([{ aggregateId: 'ses_synth_corr', seq: 0, eventId }]);
+      unsubscribe();
+      unsubscribeThrowing();
+      mock.emitBusEvent({
+        type: 'session.updated',
+        durable: { aggregateId: 'ses_synth_corr', version: 1 },
+        properties: { sessionID: 'ses_synth_corr' },
+      });
+      await collectUntil(iterator, (all) => all.some((e) => e.type === 'session.updated'));
+      await until(
+        () => transport.watermark('ses_synth_corr') === 1,
+        'second sync wrapper never captured',
+      );
+      expect(seen).toHaveLength(1); // unsubscribed — no further fan-out
     });
   });
 

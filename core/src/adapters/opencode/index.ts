@@ -60,6 +60,7 @@ export {
   type OpencodeEvent,
   type OpencodeSseTransport,
   type OpencodeSseTransportOptions,
+  type OpencodeSyncCorrelation,
   type SseMessage,
   type SseTransportState,
   type SseTransportStats,

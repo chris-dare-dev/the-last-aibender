@@ -8,9 +8,12 @@
  *   - DEDUPE strictly on the monotonic `evt_` id (`payload.id`). Bounded
  *     LRU-ish window; reconnect replays therefore surface no duplicates.
  *   - `type:"sync"` wrappers are DROPPED after recording their
- *     `syncEvent.seq` per `syncEvent.aggregateID` (the watermark capture).
- *     Sync wrappers never enter the dedupe set — the plain twin must pass
- *     regardless of arrival order.
+ *     `syncEvent.seq` per `syncEvent.aggregateID` (the watermark capture)
+ *     and fanning the evt_↔seq correlation out to {@link
+ *     OpencodeSseTransport.onSync} observers (BE-5's collector marks durable
+ *     slots covered at parse time — the M3 stewarding ICR). Sync wrappers
+ *     never enter the dedupe set — the plain twin must pass regardless of
+ *     arrival order.
  *   - UNKNOWN event types pass through untouched (the 10 s
  *     `server.heartbeat` is not even in the OpenAPI spec — hard evidence the
  *     parser must tolerate unknowns). Malformed `data:` JSON is skipped and
@@ -137,6 +140,22 @@ export interface SseTransportStats {
   readonly malformedDropped: number;
 }
 
+/**
+ * One sync-wrapper observation: the durable slot (`aggregateId`, `seq`) and,
+ * when the wrapper carries it (probe: `syncEvent.id` is the plain twin's
+ * `evt_` id), the correlated live-event id. Exposed per the BE-5 M3 return's
+ * ICR so the collector can mark durable slots covered as soon as the sync
+ * twin is parsed — closing the one-chunk at-least-once window between the
+ * `evt_` and `oc-durable:` raw_ref namespaces (see
+ * core/src/collector/opencode/sseSource.ts).
+ */
+export interface OpencodeSyncCorrelation {
+  readonly aggregateId: string;
+  readonly seq: number;
+  /** The plain twin's `evt_` id when the wrapper names it. */
+  readonly eventId?: string;
+}
+
 export type SseTransportState = 'idle' | 'connecting' | 'connected' | 'closed';
 
 export interface OpencodeSseTransport {
@@ -150,6 +169,14 @@ export interface OpencodeSseTransport {
   /** Highest durable seq seen for an aggregate (session) via sync wrappers. */
   watermark(aggregateId: string): number | undefined;
   watermarks(): ReadonlyMap<string, number>;
+  /**
+   * Observe every parsed sync wrapper AT PARSE TIME (before the next event is
+   * pumped): the durable slot plus the correlated `evt_` id when carried.
+   * Fires for every valid wrapper (including seq re-deliveries — the consumer
+   * owns its own max/dedupe policy). Listener errors are swallowed: an
+   * observer must never kill the pump. Returns an unsubscribe.
+   */
+  onSync(listener: (correlation: OpencodeSyncCorrelation) => void): () => void;
   /**
    * Gap repair: replay a session's durable events after a seq watermark
    * (`GET /api/session/{id}/event?after=<seq>`). The underlying stream stays
@@ -201,6 +228,7 @@ export function createOpencodeSseTransport(
 
   const seenIds = new Set<string>();
   const watermarks = new Map<string, number>();
+  const syncListeners = new Set<(correlation: OpencodeSyncCorrelation) => void>();
   let state: SseTransportState = 'idle';
   let closed = false;
   let consuming = false;
@@ -218,7 +246,7 @@ export function createOpencodeSseTransport(
     return true;
   };
 
-  const captureWatermark = (syncEvent: unknown): void => {
+  const captureWatermark = (syncEvent: unknown, wrapperId: string | undefined): void => {
     if (typeof syncEvent !== 'object' || syncEvent === null) return;
     const record = syncEvent as Record<string, unknown>;
     const aggregate = record['aggregateID'];
@@ -226,6 +254,26 @@ export function createOpencodeSseTransport(
     if (typeof aggregate !== 'string' || typeof seq !== 'number') return;
     const previous = watermarks.get(aggregate);
     if (previous === undefined || seq > previous) watermarks.set(aggregate, seq);
+    // Correlation fan-out (BE-5 ICR): syncEvent.id IS the plain twin's evt_
+    // id (probe §2 double delivery); the wrapper's own id mirrors it.
+    const eventId =
+      typeof record['id'] === 'string' && record['id'].length > 0
+        ? record['id']
+        : wrapperId !== undefined && wrapperId.length > 0
+          ? wrapperId
+          : undefined;
+    const correlation: OpencodeSyncCorrelation = {
+      aggregateId: aggregate,
+      seq,
+      ...(eventId !== undefined ? { eventId } : {}),
+    };
+    for (const listener of syncListeners) {
+      try {
+        listener(correlation);
+      } catch {
+        // Observers never kill the pump.
+      }
+    }
   };
 
   /** Map one /global/event data payload to an emitted event (or undefined). */
@@ -254,9 +302,13 @@ export function createOpencodeSseTransport(
       return undefined;
     }
     if (type === 'sync') {
-      // Durable-store mirror: capture the watermark, drop the wrapper.
-      // NEVER registers the evt_ id — the plain twin must still pass.
-      captureWatermark(record['syncEvent']);
+      // Durable-store mirror: capture the watermark (+ fan the evt_↔seq
+      // correlation out to onSync observers), drop the wrapper. NEVER
+      // registers the evt_ id — the plain twin must still pass.
+      captureWatermark(
+        record['syncEvent'],
+        typeof record['id'] === 'string' ? record['id'] : undefined,
+      );
       stats.syncWrappersDropped += 1;
       return undefined;
     }
@@ -415,6 +467,12 @@ export function createOpencodeSseTransport(
     events: () => startEventStream(),
     watermark: (aggregateId) => watermarks.get(aggregateId),
     watermarks: () => watermarks,
+    onSync: (listener) => {
+      syncListeners.add(listener);
+      return () => {
+        syncListeners.delete(listener);
+      };
+    },
     replaySession: (sessionId, afterSeq) => ({
       [Symbol.asyncIterator]: () => replay(sessionId, afterSeq),
     }),

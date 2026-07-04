@@ -11,7 +11,7 @@
   "packageManager": "pnpm@11.9.0",
   "scripts": {
     "test": "vitest run",
-    "test:infra": "bash infra/scripts/tests/run.sh",
+    "test:infra": "bash infra/scripts/tests/run.sh && bash infra/launchd/tests/run.sh && bash infra/hooks/tests/run.sh",
     "test:packages": "pnpm -r test",
     "typecheck": "pnpm -r --if-present typecheck"
   },

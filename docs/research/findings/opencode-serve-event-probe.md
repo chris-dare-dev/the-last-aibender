@@ -25,7 +25,14 @@
 
 ### 1. Serve mode, auth, and the `/doc` spec (verified live)
 
-`opencode serve --port <p> --hostname 127.0.0.1` (default port `0` = random; default hostname `127.0.0.1`; `--print-logs`, `--log-level`, `--pure` to skip external plugins, `--mdns`, `--cors`). Auth is **HTTP Basic**: username `opencode` (overridable via `OPENCODE_SERVER_USERNAME`), password from `OPENCODE_SERVER_PASSWORD`. Verified: no auth → 401; `-u opencode:<password>` → 200; `Bearer` → 401. The server binds one process that can host **multiple directory-scoped instances** (query param `?directory=` / header `x-opencode-directory` on most routes; v2 routes also accept `location[directory]`).
+`opencode serve --port <p> --hostname 127.0.0.1` (default port `0` = random — **see the correction below: on v1.17.13 `--port 0` actually binds the DEFAULT port 4096**; default hostname `127.0.0.1`; `--print-logs`, `--log-level`, `--pure` to skip external plugins, `--mdns`, `--cors`). Auth is **HTTP Basic**: username `opencode` (overridable via `OPENCODE_SERVER_USERNAME`), password from `OPENCODE_SERVER_PASSWORD`. Verified: no auth → 401; `-u opencode:<password>` → 200; `Bearer` → 401. The server binds one process that can host **multiple directory-scoped instances** (query param `?directory=` / header `x-opencode-directory` on most routes; v2 routes also accept `location[directory]`).
+
+> **Correction (BE-ORCH steward, 2026-07-04, from the BE-4 M2 build return; verified live on v1.17.13, independently re-verified by the steward the same day — `--port 0` bound 127.0.0.1:4096, health-only probe, server killed):**
+> `opencode serve --port 0` does **NOT** bind an OS-random ephemeral port — it falls back to the
+> **default port 4096**. Do not rely on `--port 0` for instance isolation: two supervisors doing so
+> collide on 4096. The BE-4 serve supervisor (`core/src/adapters/opencode/serve.ts`) therefore picks
+> its own ephemeral port and cross-checks the child's reported ready-line port against it. Any lane
+> reading this doc for port-allocation guidance must follow that pattern.
 
 `GET /doc` returns an **OpenAPI 3.1.0** spec (`info.version` is a static `"1.0.0"` — useless for pinning; use `/global/health`). The probe's spec had **162 paths** and **94 `Event*` schemas** (plus `SyncEvent*` and V2 mirrors). Endpoint families:
 

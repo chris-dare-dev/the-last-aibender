@@ -1,0 +1,72 @@
+# the-last-aibender — Tier-1 gitleaks config (X2 / SI-1)
+#
+# TIER MODEL:
+#   Tier 1 (this file, committed)  — GENERIC, VALUE-FREE rules only. A committed
+#     rule containing a real literal (account ID, email, profile name) IS the
+#     leak — never add literals here.
+#   Tier 2 (private, out-of-repo)  — exact-literal rules for the real
+#     identifiers, at ~/.aibender/private/gitleaks-tier2.toml (chmod 600),
+#     wired in by the pre-commit hook with --redact, failing CLOSED if absent.
+#     Its schema is documented in docs/runbooks/hygiene.md; its contents nowhere.
+#
+# Sanctioned placeholders (and ONLY these identity forms) may appear in the
+# tree: MAX_A, MAX_B, ENT, AWS_DEV_ACCOUNT_ID, *@example.com|org|net,
+# *@users.noreply.github.com, noreply@anthropic.com.
+
+title = "the-last-aibender tier-1 (generic, value-free)"
+
+[extend]
+# Keep the full stock ruleset: AWS access keys (AKIA…), generic api keys,
+# private keys, GitHub/Slack/OpenAI tokens, etc.
+useDefault = true
+
+# --- Rule 1: 12-digit number near AWS context -------------------------------
+# AWS account IDs are config, not code. The keyword pre-filter keeps this
+# high-precision; catches ARNs, SSO profile names, sso-session config, etc.
+[[rules]]
+id = "aws-account-id-in-context"
+description = "12-digit number near AWS context (account IDs are config, not code)"
+regex = '''(?i)(?:aws|arn|account|profile|sso|bedrock)[^\n]{0,40}\b\d{12}\b'''
+keywords = ["aws", "arn", "account", "profile", "sso", "bedrock"]
+
+# --- Rule 2: personal-provider email addresses ------------------------------
+# Personal account emails are config, not code.
+[[rules]]
+id = "personal-email-provider"
+description = "personal-provider email addresses (account emails are config, not code)"
+regex = '''[A-Za-z0-9._%+-]+@(?:gmail|googlemail|icloud|me|mac|outlook|hotmail|live|msn|yahoo|proton|protonmail|pm|fastmail|hey|aol|gmx)\.[A-Za-z]{2,}'''
+
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = ['''(?i)(?:example|test|placeholder|your[-_.]?email)''']
+
+# --- Rule 3: catch-all email with placeholder allowlist ---------------------
+# Deliberately broad: ANY email that is not a sanctioned placeholder form is
+# flagged. If this proves too noisy once real code lands (package metadata,
+# license headers), demote it to CI-only or tighten to non-code file types —
+# tuning is tracked in docs/runbooks/hygiene.md.
+[[rules]]
+id = "email-not-a-sanctioned-placeholder"
+description = "any email address that is not a sanctioned placeholder form"
+regex = '''[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'''
+
+  [[rules.allowlists]]
+  regexTarget = "secret"
+  regexes = [
+    # GitHub noreply identities (the sanctioned git author form)
+    '''@users\.noreply\.github\.com$''',
+    # RFC 2606 documentation domains — MAX_A@example.com et al.
+    '''@example\.(?:com|org|net)$''',
+    # Agent co-author trailer used by the tooling in this repo
+    '''^noreply@anthropic\.com$''',
+    # SSH remote syntax (git@github.com:owner/repo) — a service address, not an identity
+    '''^git@github\.com$''',
+    # RFC 6761 invalid/test TLDs for synthesized fixtures
+    '''@[A-Za-z0-9.-]+\.(?:invalid|test|example)$''',
+    # Retina-suffix asset filenames (`name@2x.png`) — an asset-resolver
+    # convention, not an email. False-positive source: PixiJS JSDoc inside the
+    # gitignored spike bundle spikes/graph-perf/browser/dist/pixi-soak.js,
+    # which full-tree `gitleaks dir` scans (the M0 gate) still see.
+    # Value-free (matches a filename shape, no identity). See SECURITY.md §2.
+    '''@\dx\.(?:png|webp|jpe?g|gif|avif|svg)$''',
+  ]

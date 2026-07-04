@@ -1,0 +1,27 @@
+# gitleaks CI backstop (X2 / SI-1) — Tier-1 rules over full history on every
+# push and PR. Tier-2 (private literals) can never run here by design: its
+# config never leaves the owner's machine. CI is the backstop, the local
+# pre-commit hook is the primary gate.
+name: gitleaks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks (Tier-1 config auto-detected from repo root)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No GITLEAKS_LICENSE needed: free for personal-account repos.

@@ -1,0 +1,28 @@
+# docs/runbooks/ — operator procedures
+
+How a human operates this harness on a real machine. Runbooks are the only
+place machine-local layout is documented — real values (account mapping,
+tier-2 scanner literals, tokens) live under `~/.aibender/` and the Keychain,
+**never in the tree** [X2].
+
+## Index
+
+| Runbook | Status | Purpose |
+|---|---|---|
+| [hygiene.md](hygiene.md) | **live** | Set up, verify, and re-prove the two-tier gitleaks gate (SI-1). |
+| `login-bootstrap.md` | planned (M2) | One interactive `claude /login` per account, ever — the attended-PTY bootstrap flow. |
+| `version-gate.md` | planned (M1) | Mandatory checks before any SDK bump, incl. the keychain-deletion canary. |
+| `recovery.md` | planned (M6) | Broker crash/orphan recovery via the resume ledger. |
+| `quota-exhaustion.md` | planned (M6) | What to do when an account hits its 5h/weekly limits. |
+| `colima-upgrade-gate.md` | planned (SI-5) | Pod→host loopback probe as a mandatory gate on colima/lima upgrades. |
+
+## Machine-local runtime layout (documented here, never committed)
+
+```
+~/.aibender/
+├── accounts/{max-a,max-b,ent}/   # per-account CLAUDE_CONFIG_DIR + CLAUDE_SECURESTORAGE_CONFIG_DIR
+├── db/                            # SQLite ledgers
+├── bootstrap/                     # gateway port/token discovery file
+├── logs/
+└── private/                       # tier-2 gitleaks config, label→account mapping (chmod 600)
+```

@@ -1,0 +1,60 @@
+# ci.yml — minimal placeholder (SI-1; SI-6 owns its evolution).
+# Runs pnpm install + token lint + token drift check + vitest ONLY when a
+# workspace exists; a scaffold-less tree detects no package.json and passes.
+# The token lint / drift steps are deliberately independent of vitest so the
+# DESIGN.md §8.3 gate cannot be weakened by editing the spec files alone.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect pnpm workspace
+        id: detect
+        run: |
+          if [ -f package.json ]; then
+            echo "workspace=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "workspace=false" >> "$GITHUB_OUTPUT"
+            echo "No package.json yet — scaffold-less tree, skipping install/test."
+          fi
+
+      - name: Set up pnpm
+        if: steps.detect.outputs.workspace == 'true'
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up Node
+        if: steps.detect.outputs.workspace == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        if: steps.detect.outputs.workspace == 'true'
+        run: pnpm install
+
+      - name: Token lint (DESIGN.md §8.3 — off-token styling fails CI)
+        if: steps.detect.outputs.workspace == 'true'
+        run: pnpm -F aibender-app lint:tokens
+
+      - name: Token drift check (committed theme CSS matches tokens.ts)
+        if: steps.detect.outputs.workspace == 'true'
+        run: |
+          pnpm -F aibender-app build:tokens
+          git diff --exit-code -- app/src/chrome/theme/
+
+      - name: Run tests (vitest via workspace scripts)
+        if: steps.detect.outputs.workspace == 'true'
+        run: pnpm -r --if-present test

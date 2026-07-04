@@ -1,0 +1,42 @@
+# the-last-aibender .gitignore — X2 / SI-1
+# ORDER MATTERS: exclusions first, negations (!) after the pattern they carve out.
+
+# --- secrets & environment (never committed) ---
+.env
+.env.*
+!.env.example
+.env.local
+.envrc
+secrets/
+*.pem
+*.key
+*.age
+keys.txt
+*.local.json
+.claude/settings.local.json
+
+# --- font binaries (DESIGN.md §4.4: fetched at dev-setup, NEVER committed) ---
+# Free faces land here via the dev-setup fetch step; commercial faces are
+# machine-local only. No font binary of any license enters the tree.
+app/assets/fonts/
+
+# --- runtime data (X2: ingested/derived data never lives in the tree) ---
+# transcripts, caches, usage snapshots, quota files, ledgers → var/ in dev mode
+var/
+
+# --- build & dependency output ---
+node_modules/
+dist/
+target/
+coverage/
+*.tsbuildinfo
+
+# --- OS noise ---
+.DS_Store
+
+# NOTES (policy, not patterns):
+# * spikes/ IS committed — M0 spike harnesses are quarantined from prod imports
+#   but tracked in git. Do not add an exclusion for spikes/.
+# * Machine-local private config lives under ~/.aibender/ (out of the repo by
+#   location, e.g. ~/.aibender/private/gitleaks-tier2.toml). It needs no
+#   pattern here because it must never be copied into the tree at all.

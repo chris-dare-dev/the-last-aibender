@@ -1,0 +1,31 @@
+# TruffleHog weekly deep scan (X2 / SI-1) — verified findings only, so the
+# signal is "a live credential is in the repo", not pattern noise. Complements
+# gitleaks: TruffleHog verifies candidate secrets against the issuing service.
+name: trufflehog-weekly
+
+on:
+  schedule:
+    # Mondays 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  trufflehog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog scan (verified results only)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          # Empty base/head forces a full-repo scan on schedule/dispatch
+          # events (there is no diff range to compare).
+          base: ""
+          head: ""
+          extra_args: --results=verified

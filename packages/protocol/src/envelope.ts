@@ -4,9 +4,9 @@
  * pty.ts and are NOT wrapped in this envelope.
  *
  * ============================================================================
- * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04). Amendments only via
- * ICR (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of
- * record: docs/contracts/ws-protocol.md.
+ * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04) → FROZEN-M3
+ * (2026-07-04). Amendments only via ICR (docs/contracts/icr/); BE-ORCH
+ * lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
  * ============================================================================
  */
 
@@ -16,6 +16,8 @@ import { isChannelName, streamForChannel } from './channels.js';
 import type { ContextGraphTouch } from './contextGraph.js';
 import type { ControlRequest, ControlResponse } from './control.js';
 import type { ErrorPayload } from './errors.js';
+import type { EventSummary } from './events.js';
+import type { ReadModelSnapshot } from './readModels.js';
 import type { PtyClientMessage } from './pty.js';
 import type { QuotaSnapshot } from './quota.js';
 import type { JsonReplayRequest } from './replay.js';
@@ -43,9 +45,18 @@ export interface Envelope<TPayload = unknown> {
 export type FrozenM1Payload = ControlRequest | ControlResponse | ErrorPayload | PtyClientMessage;
 
 /**
- * The full frozen cross-channel JSON payload union as of the M2 freeze.
- * Still open: the `events` channel payload union (freezes M3 with BE-5 —
- * draft.ts).
+ * Broker-pushed `events` channel payloads (FROZEN-M3): normalized event
+ * summaries + §6.3 read-model snapshots. Client→broker traffic on `events`
+ * remains `replay-request` only.
+ */
+export type EventsServerPayload = EventSummary | ReadModelSnapshot;
+
+/**
+ * The full frozen cross-channel JSON payload union as of the M3 freeze —
+ * every channel's payload union is now frozen. The `events` union
+ * (EventsServerPayload: event-summary + read-model-snapshot) was the last
+ * open surface, deferred by M2 and closed here; unknown events kinds remain
+ * legal-and-ignored by the frozen forward-tolerant reader rule (events.ts).
  */
 export type FrozenPayload =
   | FrozenM1Payload
@@ -53,7 +64,8 @@ export type FrozenPayload =
   | ApprovalsPayload
   | QuotaSnapshot
   | ContextGraphTouch
-  | JsonReplayRequest;
+  | JsonReplayRequest
+  | EventsServerPayload;
 
 /**
  * Structural + consistency validation of a decoded JSON envelope. Enforces

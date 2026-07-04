@@ -13,8 +13,11 @@
  *   - fakeQueryRunner.ts     the canonical QueryRunner double (ICR-0001)
  *   - fakeKernel.ts          gateway-facing kernel double (ICR-0002)
  *   - wsGolden.ts            golden WS-protocol fixture corpus (ICR-0003;
- *                            extended at the M2 full freeze — corpus pins
- *                            GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M2')
+ *                            extended at the M2 full freeze and again at the
+ *                            M3 events freeze — corpus pins
+ *                            GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M3')
+ *   - hooksGolden.ts         golden hook-POST fixture corpus
+ *                            (hooks-contract.md §6, landed at the M3 freeze)
  *   - fakePtyBackend.ts      scripted PtyBackend + synthetic login TUI
  *                            byte source (ICR-0006, from BE-2)
  *   - fakeGatewayPorts.ts    gateway M2 port doubles: FakePtyHost,
@@ -24,9 +27,12 @@
  *                            (ICR-0008, from BE-4)
  *   - fakeLmStudio.ts        fake LM Studio /v1 + /api/v0 (ICR-0008)
  *   - fakeOpencodeDb.ts      fake opencode.db builder (ICR-0008)
+ *   - statuslineFeed.ts      fake statusline stdin feed: payload generator +
+ *                            tee-file writer (ICR-0010, from BE-5)
+ *   - otlpEmitter.ts         fake OTLP http/json emitter: attr/batch/
+ *                            api_request builders (ICR-0010, from BE-5)
  *
- * Still to come per plan §3: fake statusline stdin feed, fake OTLP emitter,
- * synthesized hook-POST fixtures (hooks-contract.md §6, lands with BE-5 M3).
+ * The plan §3 "still to come" list is now fully landed (ICR-0010 closed it).
  */
 
 export {
@@ -53,6 +59,7 @@ export {
   type QuerySpec,
   type RunnerInitMessage,
   type RunnerMessage,
+  type RunnerMessageTap,
   type RunnerOtherMessage,
   type RunnerResultMessage,
 } from './queryRunner.js';
@@ -142,3 +149,30 @@ export {
   type GoldenWsStage,
   type GoldenWsTextFixture,
 } from './wsGolden.js';
+
+export {
+  GOLDEN_HOOK_CORPUS_FREEZE,
+  GOLDEN_HOOK_FIXTURES,
+  replayGoldenHookFixture,
+  type GoldenHookExpectation,
+  type GoldenHookFixture,
+  type GoldenHookReplayResult,
+} from './hooksGolden.js';
+
+export {
+  synthesizedStatuslinePayload,
+  writeStatuslineTee,
+  type StatuslineWindowInput,
+  type SynthesizedStatuslinePayloadOptions,
+  type WriteStatuslineTeeOptions,
+} from './statuslineFeed.js';
+
+export {
+  SYNTHETIC_OTLP_ACCOUNT_UUID,
+  SYNTHETIC_OTLP_API_REQUEST_TS_MS,
+  SYNTHETIC_OTLP_EMAIL,
+  otlpApiRequestRecord,
+  otlpAttr,
+  otlpLogsBatch,
+  type OtlpLogsBatchOptions,
+} from './otlpEmitter.js';

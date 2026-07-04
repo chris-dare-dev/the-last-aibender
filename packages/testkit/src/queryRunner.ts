@@ -16,6 +16,8 @@
  * Drift-rule applications:
  *   - 2026-07-04 (M2, BE-2 wiring): `canUseTool` relay types + the optional
  *     `QuerySpec.canUseTool` — recorded in ICR-0001's landing record.
+ *   - 2026-07-04 (M3, ICR-0009 transcript-tee seam): optional `raw` retention
+ *     on RunnerInitMessage/RunnerResultMessage + the RunnerMessageTap type.
  */
 
 // ---------------------------------------------------------------------------
@@ -101,6 +103,8 @@ export interface QuerySpec {
 export interface RunnerInitMessage {
   readonly type: 'init';
   readonly nativeSessionId: string;
+  /** Raw-message retention (ICR-0009): the verbatim SDK message, when scripted. */
+  readonly raw?: unknown;
 }
 
 /** Terminal message: the query finished (successfully or not). */
@@ -109,6 +113,8 @@ export interface RunnerResultMessage {
   readonly ok: boolean;
   /** SDK result subtype (e.g. `success`, `error_during_execution`). */
   readonly detail: string;
+  /** Raw-message retention (ICR-0009): the verbatim SDK message, when scripted. */
+  readonly raw?: unknown;
 }
 
 /** Anything else the SDK streams — opaque to the kernel. */
@@ -118,6 +124,13 @@ export interface RunnerOtherMessage {
 }
 
 export type RunnerMessage = RunnerInitMessage | RunnerResultMessage | RunnerOtherMessage;
+
+/**
+ * Mirror of core's ICR-0009 transcript-tee seam: an observer the kernel pump
+ * invokes for every message, per session, in stream order. Taps must not
+ * throw (the kernel logs and ignores a throwing tap).
+ */
+export type RunnerMessageTap = (sessionId: string, message: RunnerMessage) => void;
 
 // ---------------------------------------------------------------------------
 // Handle + runner

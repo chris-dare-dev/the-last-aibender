@@ -80,8 +80,12 @@ export interface FakeSession {
   readonly nativeSessionId: string;
   /** Push an arbitrary extra message (rarely needed). */
   emit(message: RunnerMessage): void;
-  /** Emit the terminal result and end the stream. */
-  complete(options?: { readonly ok?: boolean; readonly detail?: string }): void;
+  /** Emit the terminal result and end the stream. `raw` = ICR-0009 retention. */
+  complete(options?: {
+    readonly ok?: boolean;
+    readonly detail?: string;
+    readonly raw?: unknown;
+  }): void;
   /** End the stream without any result message (process death). */
   die(): void;
 }
@@ -155,6 +159,7 @@ export class FakeQueryRunner implements QueryRunner {
           type: 'result',
           ok: opts.ok ?? true,
           detail: opts.detail ?? (opts.ok === false ? 'error_during_execution' : 'success'),
+          ...(opts.raw !== undefined ? { raw: opts.raw } : {}),
         });
         endOnce();
       },

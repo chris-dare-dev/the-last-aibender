@@ -47,6 +47,8 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
 | [ICR-0006](icr-0006-pty-test-doubles.md) | BE-2 pty doubles (FakePtyBackend + synthetic login TUI) promoted into `@aibender/testkit` | 2026-07-04 |
 | [ICR-0007](icr-0007-gateway-port-doubles.md) | Gateway M2 port doubles (FakePtyHost/FakePtySession/FakeApprovalBroker/FakeTranscriptSource) promoted into `@aibender/testkit` | 2026-07-04 |
 | [ICR-0008](icr-0008-adapter-fakes.md) | BE-4 adapter fakes (mock OpenCode SSE server, fake LM Studio, fake opencode.db builder) promoted into `@aibender/testkit` | 2026-07-04 |
+| [ICR-0009](icr-0009-kernel-message-tap.md) | Kernel message tap + raw-message retention — the BE-1 transcript-tee seam that unblocks composeBroker's transcript wiring (testkit mirror synced per the ICR-0001 drift rule) | 2026-07-04 |
+| [ICR-0010](icr-0010-collector-fixture-feeds.md) | BE-5 collector fixture feeds promoted into `@aibender/testkit`: fake statusline stdin feed (payload generator + tee writer) + fake OTLP http/json emitter — closes the plan §3 "still to come" list | 2026-07-04 |
 
 Post-M2 stewarding also landed (no new ICR numbers): the ICR-0001 drift-rule
 sync (`canUseTool` on testkit's QuerySpec mirror — recorded in ICR-0001's
@@ -54,16 +56,60 @@ landing record), the ws-protocol §6 attach-semantics prose pin (recorded in
 that doc's amendment table), and the `--port 0 = default 4096` correction on
 `docs/research/findings/opencode-serve-event-probe.md` §1.
 
+**Post-M3 stewarding (BE-ORCH, 2026-07-04 — no new ICR numbers, non-frozen
+surfaces or prose pins recorded in the owning docs):**
+
+- **ws-protocol §12 session-id relay pin** (prose only): harness-id-where-
+  known with native-id relay until the BE-7/M4 ledger mapping; composition
+  MUST inject the ledger resolver at M4 (recorded in that doc's amendment
+  table). No BE-6 code change — `resolveSessionId` was built injectable.
+- **sqlite-ddl §7.4 usage-data mapping pin** (prose only): facets →
+  `session_outcomes`; session-meta → `events` (`event_type 'session_meta'`),
+  never mirrored (recorded in that doc's amendment table).
+- **BE-5→BE-6 watcher seam BLESSED in place**: `WatcherTouch` +
+  `GraphFeed.ingestWatcherTouch`/`ingestHookPost`
+  (core/src/collector/graphfeed/feed.ts) are the watcher event surface; the
+  port type stays with the feed (no relocation into core/src/main/).
+- **BE-4 SSE sync correlation landed** (non-frozen internal surface, the
+  BE-5 return's hardening request): `OpencodeSseTransport.onSync` fans the
+  `evt_` id ↔ durable (aggregate, seq) correlation out at parse time;
+  the collector's SSE source consumes it to mark slots healed in either
+  twin-arrival order — closing the documented one-chunk at-least-once window
+  within a process lifetime (core/src/adapters/opencode/sse.ts,
+  core/src/collector/opencode/sseSource.ts, tests in both suites).
+- **FE composition activated**: `registerObservability(client)` wired into
+  `app/src/main.tsx`; `CHANNEL.EVENTS` joined the GatewayClient
+  `replayFromZeroOnFirstConnect` default so retained read-model snapshots
+  hydrate dashboards on the first connect of a broker boot (ws-protocol §8
+  below-floor answers stay the documented harmless case).
+- **`.gitleaks.toml` rule-1 allowlist RATIFIED**: the `\b0{12}\b`
+  (all-zeros) match-target allowlist on `aws-account-id-in-context` stands —
+  the SI-4 brief mandates the syntactically-valid all-zeros placeholder;
+  non-zero 12-digit literals still fail, and the SI-4 bats hygiene tests
+  enforce the same invariant independently (see SECURITY.md §2 tuning log).
+- **SI-4 suite wired into the composite**: root `test:infra` gained
+  `infra/aws/tests/run.sh` (offline-safe self-skips) and ci.yml's
+  infra-tests job runs it after a credential-less
+  `terraform init -backend=false` (provider download only, never plan/apply).
+- **Deferred, not landed** (plan §3 FYI): a seeded-events-store fixture
+  builder in testkit — would add an `@aibender/schema` dependency to testkit
+  for one consumer today (BE-6 specs seed `openEventsStore(':memory:')`
+  inline, trivially migratable); revisit when a second consumer (FE golden
+  store fixtures) materializes.
+
 ## Deferred watch items (BE-ORCH)
 
-- **`events` payload union (M3)**: the one surface left open by the M2 full
-  freeze (ws-protocol.md §8 + amendment record). Freezes with BE-5's
-  normalized events store; until then client payloads on `events` (other than
-  `replay-request`) answer `bad-request` and broker pushes are opaque.
+- ~~**`events` payload union (M3)**~~ **RESOLVED at the M3 freeze
+  (2026-07-04):** the union froze with BE-5's events store — `event-summary`
+  + `read-model-snapshot` + the frozen forward-tolerant unknown-kind rule
+  (ws-protocol.md §13; protocol `1.1.0` / `FROZEN-M3`; corpus + hooks corpus
+  extended in testkit). Client payloads on `events` (other than
+  `replay-request`) still answer `bad-request`.
 - **hooks-contract gating response (T3)**: the CLI-side interpretation of
   http-hook `200` bodies (`permissionDecision`) must be verified on the real
   host at SI-3 install before the hook floor turns enforcing
-  (hooks-contract.md §4).
+  (hooks-contract.md §4). Acceptance-side TYPES are frozen either way
+  (hooks-contract.md §7, M3).
 
 - **`extraArgs` on the wire**: protocol `LaunchParams` deliberately has NO
   `extraArgs` field. The kernel/runner already refuse `--bare` and screen
@@ -74,18 +120,19 @@ that doc's amendment table), and the `--port 0 = default 4096` correction on
   guard is `instanceof`; loosening it to the structural shape lets testkit's
   `FakeKernel` drive the real gateway server without injecting core's error
   class.
-- **M2 composition integration (core/src/main, BE-ORCH — from the BE-3 M2
-  return):** wire `startGateway`'s M2 ports at the composition root. The
-  pty/approvals halves are ready-made (BE-2's `toGatewayPtyHostPort` /
-  `toApprovalBrokerGatewayPort` in `core/src/kernel/pty/gatewayPort.ts`).
-  The transcript tee is BLOCKED on a BE-1 seam decision first: BE-1's
-  `QueryHandle.messages()` is single-consumer (the kernel pump) AND the SDK
-  runner narrows the terminal result (usage/cost dropped from
-  `RunnerResultMessage`), so a composition-root wrapping QueryRunner cannot
-  feed `transcript-result` its usage fields. Either a BE-1 kernel tap on the
-  RAW SDK stream or raw-result retention on the seam (an ICR — the testkit
-  mirror syncs in the same change per the ICR-0001 drift rule) is required
-  before the tee can be composed.
+- ~~**M2 composition integration (core/src/main, BE-MAIN — from the BE-3 M2
+  return)**~~ **RESOLVED at the M3 build (2026-07-04, BE-MAIN):**
+  `composeBroker` now wires EVERY gateway port through one composition —
+  kernel verbs, the shared ApprovalBroker (kernel half via
+  `approvalRelayFromBroker`, gateway half via
+  `toApprovalBrokerGatewayPort`), the BE-2 ptyHost over the same
+  ledger/profiles (`toGatewayPtyHostPort`), the ICR-0009 transcript tee
+  (`messageTap` → `TranscriptSource` with `rawOfRunnerMessage`), and the M3
+  `BrokerPublisherStarter` seam. Proven by
+  `core/src/main/composedBroker.spec.ts` (launch→pty→approval→transcript
+  over one socket) and the composed-mode soak. Remaining for BE-MAIN at M4:
+  the DEFAULT publisher set once the operator-config slice exists (see the
+  seam-status note at the `BrokerPublisherStarter` doc).
 - **BE-8 session-create body (from the BE-4 M2 return):**
   `@opencode-ai/sdk@1.17.13`'s typed `SessionCreateData` body carries only
   `{parentID, title}` — the probe's `{agent, model, metadata, permission}`

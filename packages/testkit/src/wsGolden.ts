@@ -8,11 +8,13 @@
  *
  * VERSIONING: {@link GOLDEN_WS_CORPUS_FREEZE} names the protocol freeze this
  * corpus pins (must equal @aibender/protocol's PROTOCOL_FREEZE — asserted in
- * the suite). The M2 extension adds fixtures for every surface promoted at
+ * the suite). The M2 extension added fixtures for every surface promoted at
  * the M2 freeze: transcript/approvals/quota/context-graph payloads and the
- * JSON `replay-request`. The `events` payload union is still DRAFT (M3) —
- * the corpus pins only its channel POLICY (client payloads rejected;
- * broker pushes treated as opaque until M3).
+ * JSON `replay-request`. The M3 extension closes the last open surface: the
+ * `events` payload union (event-summary + every §6.3 read-model snapshot,
+ * valid + every invalid class) and pins the frozen FORWARD-TOLERANT READER
+ * rule (unknown events kinds are legal-and-ignored). Client payloads on
+ * `events` other than `replay-request` still answer `bad-request`.
  *
  * Every fixture pins:
  *   - the exact frame bytes (text: the UTF-8 string sent as one WS text
@@ -44,6 +46,7 @@ import {
   validateControlResponse,
   validateEnvelope,
   validateErrorPayload,
+  validateEventsPayload,
   validateJsonReplayRequest,
   validatePtyClientMessage,
   validateQuotaSnapshot,
@@ -52,7 +55,7 @@ import {
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M2';
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M3';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -69,9 +72,9 @@ export type GoldenWsStage =
   | 'error-payload'
   | 'pty-client-message'
   /**
-   * Verdict comes from channel POLICY, not a payload validator: channels
-   * whose payload union is still draft (events until M3) accept no client
-   * payloads and their broker pushes pass as opaque envelopes.
+   * Verdict comes from channel POLICY, not a payload validator: client
+   * payloads on broker→client-only channels (other than `replay-request`)
+   * are rejected here regardless of shape.
    */
   | 'channel-policy'
   | 'pty-frame-codec'
@@ -81,7 +84,9 @@ export type GoldenWsStage =
   | 'approvals-server-message'
   | 'quota-payload'
   | 'context-graph-payload'
-  | 'replay-request';
+  | 'replay-request'
+  // M3 freeze stage -----------------------------------------------------------
+  | 'events-payload';
 
 export type GoldenWsExpectation =
   | { readonly valid: true }
@@ -1306,16 +1311,405 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     notes: 'control is NOT replayable — a replay-request there is just an unknown verb',
   },
 
-  // ==== M2 freeze: events channel policy (payload union DRAFT until M3) ==========
+  // ==== M3 freeze: events payload union (event-summary + read models) ============
   {
     name: 'events-broker-payload-draft-opaque',
     kind: 'text',
     direction: 'broker-to-client',
     frame: staticFrame('events', 0, { kind: 'synthesized-draft-event' }),
-    stage: 'channel-policy',
+    stage: 'events-payload',
     expect: { valid: true },
     notes:
-      'events payload union is DRAFT until M3 — clients accept broker pushes as opaque envelopes',
+      'M3: union frozen; this M2-era frame stays VALID under the frozen forward-tolerant ' +
+      'reader rule — unknown kinds decode opaque and are ignored (stage moved from ' +
+      'channel-policy at the M3 freeze, verdict unchanged)',
+  },
+  {
+    name: 'events-summary-min-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 1, {
+      kind: 'event-summary',
+      eventId: 1,
+      ts: 90100000,
+      account: 'MAX_A',
+      backend: 'claude_code',
+      source: 'claude-jsonl',
+      eventType: 'assistant-turn',
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'events-summary-full-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 2, {
+      kind: 'event-summary',
+      eventId: 42,
+      ts: 90100500,
+      account: 'AWS_DEV',
+      backend: 'opencode',
+      source: 'opencode-sse',
+      eventType: 'message.part.updated',
+      sessionId: 'ses_fake_1',
+      model: 'synthetic-model',
+      usage: { inputTokens: 100, outputTokens: 50, cacheReadTokens: 30, cacheCreationTokens: 20 },
+      costEstimatedUsd: 0.012,
+      costActualUsd: 0.011,
+      latencyMs: 900,
+      ttftMs: 120,
+      toolName: 'Read',
+      skillName: 'synthetic-skill',
+      ok: true,
+      errorKind: 'retry',
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'events-summary-label-backend-mismatch',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 3, {
+      kind: 'event-summary',
+      eventId: 2,
+      ts: 90100000,
+      account: 'MAX_A',
+      backend: 'opencode',
+      source: 'claude-jsonl',
+      eventType: 'assistant-turn',
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'the frozen label↔backend pairing applies on the events wire too',
+  },
+  {
+    name: 'events-summary-negative-tokens',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 4, {
+      kind: 'event-summary',
+      eventId: 3,
+      ts: 90100000,
+      account: 'MAX_A',
+      backend: 'claude_code',
+      source: 'claude-jsonl',
+      eventType: 'assistant-turn',
+      usage: { inputTokens: -1, outputTokens: 0, cacheReadTokens: 0, cacheCreationTokens: 0 },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'events-summary-unknown-source',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 5, {
+      kind: 'event-summary',
+      eventId: 4,
+      ts: 90100000,
+      account: 'MAX_A',
+      backend: 'claude_code',
+      source: 'psychic-feed',
+      eventType: 'assistant-turn',
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'EVENT_SOURCES is a closed registry — growing it is an ICR',
+  },
+  {
+    name: 'events-readmodel-quota-gauges-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 6, {
+      kind: 'read-model-snapshot',
+      readModel: 'quota-gauges',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-quota', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        gauges: [
+          { account: 'MAX_A', window: '5h', usedPct: 41.5, resetsAt: 90200000 },
+          { account: 'MAX_B', window: '7d', usedPct: 100, resetsAt: 90000000 },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes: 'resetsAt in the past is legal (FE renders "reset due")',
+  },
+  {
+    name: 'events-readmodel-burn-rate-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 7, {
+      kind: 'read-model-snapshot',
+      readModel: 'burn-rate',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-jsonl', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        entries: [
+          {
+            account: 'MAX_A',
+            blockStartAt: 90000000,
+            blockEndAt: 108000000,
+            tokensPerHour: 120000,
+            usedPct: 30,
+            projectedExhaustionAt: 104000000,
+          },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'events-readmodel-bedrock-cost-estimate-only',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 8, {
+      kind: 'read-model-snapshot',
+      readModel: 'bedrock-cost',
+      capturedAt: 90100000,
+      sources: [
+        { source: 'bedrock-cost-explorer', state: 'estimate-only' },
+        { source: 'bedrock-cloudwatch', state: 'sso-expired', lastIngestAt: 90000000 },
+      ],
+      data: { estimateMtdUsd: 12.5 },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes:
+      'actuals absent while gated — estimate-only/sso-expired are freshness STATES, never errors',
+  },
+  {
+    name: 'events-readmodel-api-equivalent-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 9, {
+      kind: 'read-model-snapshot',
+      readModel: 'api-equivalent-usd',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-jsonl', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        basis: 'api-equivalent',
+        entries: [{ account: 'ENT', backend: 'claude_code', equivalentUsd: 42 }],
+        windowDays: 7,
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes: 'the basis literal freezes honest labeling: equivalence, never spend',
+  },
+  {
+    name: 'events-readmodel-cache-hit-rate-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 10, {
+      kind: 'read-model-snapshot',
+      readModel: 'cache-hit-rate',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-jsonl', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        entries: [
+          {
+            account: 'MAX_A',
+            hitRatePct: 87.5,
+            readTokens: 70000,
+            creation5mTokens: 4000,
+            creation1hTokens: 6000,
+          },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes: 'the 5m/1h TTL split rides the read model (blueprint §6.2 ground truth)',
+  },
+  {
+    name: 'events-readmodel-latency-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 11, {
+      kind: 'read-model-snapshot',
+      readModel: 'latency',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        entries: [
+          {
+            backend: 'lmstudio',
+            p50Ms: 300,
+            p95Ms: 900,
+            ttftP50Ms: 80,
+            ttftP95Ms: 200,
+            sampleCount: 40,
+          },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'events-readmodel-health-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 12, {
+      kind: 'read-model-snapshot',
+      readModel: 'health',
+      capturedAt: 90100000,
+      sources: [{ source: 'opencode-sse', state: 'stale', lastIngestAt: 90000000 }],
+      data: {
+        entries: [
+          {
+            source: 'opencode-sse',
+            errorCount: 1,
+            retryCount: 2,
+            throttleCount: 0,
+            timeoutCount: 0,
+            windowMinutes: 60,
+          },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'events-readmodel-skill-leaderboard-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 13, {
+      kind: 'read-model-snapshot',
+      readModel: 'skill-leaderboard',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-otel', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        entries: [
+          {
+            skillName: 'synthetic-skill',
+            invocations: 12,
+            successRatePct: 75,
+            tokensPerOutcome: 5400.5,
+            worstQuartile: false,
+          },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes: 'correctionRatePct absent — the local-model classification job has not run',
+  },
+  {
+    name: 'events-readmodel-session-outcomes-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 14, {
+      kind: 'read-model-snapshot',
+      readModel: 'session-outcomes',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-jsonl', state: 'fresh', lastIngestAt: 90099000 }],
+      data: { entries: [{ outcome: 'completed', count: 9 }], windowDays: 7 },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'events-readmodel-local-offload-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 15, {
+      kind: 'read-model-snapshot',
+      readModel: 'local-offload',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'lmstudio-down' }],
+      data: { offloadRatioPct: 22.2, localTokens: 200, totalTokens: 900, windowDays: 7 },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes: 'lmstudio-down is a first-class freshness state (blueprint §4.3) — never an error',
+  },
+  {
+    name: 'events-readmodel-unknown-id',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 16, {
+      kind: 'read-model-snapshot',
+      readModel: 'vibes',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-jsonl', state: 'fresh' }],
+      data: {},
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'READ_MODEL_IDS is a closed registry — tolerance applies to KINDS, not read models',
+  },
+  {
+    name: 'events-readmodel-empty-sources',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 17, {
+      kind: 'read-model-snapshot',
+      readModel: 'quota-gauges',
+      capturedAt: 90100000,
+      sources: [],
+      data: { gauges: [] },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'per-source freshness is REQUIRED — a snapshot with no sources cannot be honest',
+  },
+  {
+    name: 'events-readmodel-unknown-freshness-state',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 18, {
+      kind: 'read-model-snapshot',
+      readModel: 'quota-gauges',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-quota', state: 'broken' }],
+      data: { gauges: [] },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'events-readmodel-quota-pct-overflow',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 19, {
+      kind: 'read-model-snapshot',
+      readModel: 'quota-gauges',
+      capturedAt: 90100000,
+      sources: [{ source: 'claude-quota', state: 'fresh' }],
+      data: { gauges: [{ account: 'MAX_A', window: '5h', usedPct: 100.5, resetsAt: 1 }] },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'events-unknown-kind-tolerated',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 20, {
+      kind: 'm4-workstream-lens',
+      lens: { nodes: 3 },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes:
+      'THE frozen forward-tolerant reader rule: M4/M5 kinds land without breaking M3 clients — ' +
+      'decode opaque, ignore',
+  },
+  {
+    name: 'events-payload-missing-kind',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 21, { readModel: 'quota-gauges' }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'tolerance requires a non-empty string kind — kindless payloads are malformed',
   },
 
   // ==== M2 freeze: pushed errors for the new code ================================
@@ -1439,14 +1833,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Route one fixture through the frozen protocol validators exactly the way
  * the gateway's routeTextFrame/routeBinaryFrame (and the FE client's inbound
  * path) do: json-parse → envelope → channel/direction-specific validator.
- * M2 routing order on non-control JSON channels:
+ * Routing order on non-control JSON channels (M2, closed at M3):
  *   1. `pty.<sid>` → pty flow-control validator (M1, unchanged);
  *   2. client → broker `replay-request` on a replayable channel → replay
  *      validator;
  *   3. client → broker on `approvals` → decision validator; any other
  *      client payload on a broker→client channel → channel policy reject;
- *   4. broker → client → the channel's payload validator (`events` excepted:
- *      its union is DRAFT until M3 — opaque passthrough by policy).
+ *   4. broker → client → the channel's payload validator — including
+ *      `events` since M3 (event-summary + read-model snapshots; unknown
+ *      kinds valid-and-ignored by the frozen forward-tolerant reader rule).
  */
 export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayResult {
   if (fixture.kind === 'binary') {
@@ -1539,6 +1934,9 @@ export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayR
       : { valid: false, code: transcript.code, stage: 'transcript-payload' };
   }
 
-  // events: payload union DRAFT until M3 — opaque passthrough by policy.
-  return { valid: true, stage: 'channel-policy' };
+  // events (M3): the frozen payload union, forward-tolerant on unknown kinds.
+  const events = validateEventsPayload(payload);
+  return events.ok
+    ? { valid: true, stage: 'events-payload' }
+    : { valid: false, code: events.code, stage: 'events-payload' };
 }

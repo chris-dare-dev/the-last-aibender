@@ -21,11 +21,13 @@
  * dropped, never echoed — [X2]-friendly).
  *
  * ============================================================================
- * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04). Amendments only via
- * ICR (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of
- * record: docs/contracts/ws-protocol.md.
+ * FROZEN-M1-CORE (2026-07-04) → FROZEN-M2 (2026-07-04) → FROZEN-M3
+ * (2026-07-04). Amendments only via ICR (docs/contracts/icr/); BE-ORCH
+ * lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
  * M2 additions: transcript / approvals / quota / context-graph payload
  * validators + the JSON replay-request validator.
+ * M3 additions: the `events` payload validator (event-summary +
+ * read-model-snapshot, with the frozen forward-tolerant unknown-kind rule).
  * ============================================================================
  */
 
@@ -55,10 +57,24 @@ import type {
 import { CONTROL_VERBS, REQUEST_ID_RE, RESERVED_CONTROL_VERBS } from './control.js';
 import type { ErrorDetail, ErrorPayload } from './errors.js';
 import { isErrorCode } from './errors.js';
+import type { EventSummary, OpaqueEventsPayload, SourceFreshness } from './events.js';
+import { isEventErrorKind, isEventSource, isSourceFreshnessState } from './events.js';
 import type { PtyAck, PtyClientMessage, PtyReplayRequest, PtyResize } from './pty.js';
 import { PTY_MAX_COLS, PTY_MAX_ROWS } from './pty.js';
-import type { QuotaSnapshot } from './quota.js';
+import type { QuotaSnapshot, QuotaWindow } from './quota.js';
 import { QUOTA_SOURCES, QUOTA_WINDOWS } from './quota.js';
+import type {
+  ApiEquivalentUsdEntry,
+  BurnRateEntry,
+  CacheHitRateEntry,
+  HealthEntry,
+  LatencyEntry,
+  QuotaGauge,
+  ReadModelSnapshot,
+  SessionOutcomeEntry,
+  SkillLeaderboardEntry,
+} from './readModels.js';
+import { isReadModelId } from './readModels.js';
 import type { JsonReplayRequest } from './replay.js';
 import { isReplayableChannel } from './replay.js';
 import type { ValidationResult } from './result.js';
@@ -853,4 +869,538 @@ export function validateJsonReplayRequest(
     return invalid('bad-request', 'replay-request fromSeq must be a non-negative safe integer');
   }
   return valid({ kind: 'replay-request', channel, fromSeq });
+}
+
+// ---------------------------------------------------------------------------
+// Events payloads (inbound to the frontend client) — FROZEN-M3
+// ---------------------------------------------------------------------------
+
+function isPct(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0 && value <= 100;
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return isNonNegativeSafeInteger(value) && value > 0;
+}
+
+function validateSourceFreshnessList(value: unknown): ValidationResult<readonly SourceFreshness[]> {
+  if (!Array.isArray(value) || value.length === 0) {
+    return invalid('bad-request', 'read-model-snapshot sources must be a non-empty array');
+  }
+  const out: SourceFreshness[] = [];
+  for (const entry of value as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'source freshness entry must be an object');
+    const source = entry['source'];
+    if (!isEventSource(source)) {
+      return invalid('bad-request', `unknown freshness source ${JSON.stringify(source)}`);
+    }
+    const state = entry['state'];
+    if (!isSourceFreshnessState(state)) {
+      return invalid('bad-request', `unknown freshness state ${JSON.stringify(state)}`);
+    }
+    const lastIngestAt = entry['lastIngestAt'];
+    if (lastIngestAt !== undefined && !isEpochMs(lastIngestAt)) {
+      return invalid('bad-request', 'freshness lastIngestAt, when present, must be epoch ms');
+    }
+    out.push({ source, state, ...(lastIngestAt !== undefined ? { lastIngestAt } : {}) });
+  }
+  return valid(out);
+}
+
+function validateEventSummary(value: Record<string, unknown>): ValidationResult<EventSummary> {
+  const eventId = value['eventId'];
+  if (!isPositiveSafeInteger(eventId)) {
+    return invalid('bad-request', 'event-summary eventId must be a positive safe integer');
+  }
+  const ts = value['ts'];
+  if (!isEpochMs(ts)) return invalid('bad-request', 'event-summary ts must be epoch ms');
+  const account = value['account'];
+  if (!isAccountLabel(account)) {
+    return invalid('bad-request', `event-summary account unknown ${JSON.stringify(account)}`);
+  }
+  const backend = value['backend'];
+  if (!isBackend(backend)) {
+    return invalid('bad-request', `event-summary backend unknown ${JSON.stringify(backend)}`);
+  }
+  if (LABEL_BACKENDS[account] !== backend) {
+    return invalid(
+      'bad-request',
+      `event-summary label/backend pairing violation: ${account} requires ${LABEL_BACKENDS[account]}`,
+    );
+  }
+  const source = value['source'];
+  if (!isEventSource(source)) {
+    return invalid('bad-request', `event-summary source unknown ${JSON.stringify(source)}`);
+  }
+  const eventType = value['eventType'];
+  if (!isNonEmptyString(eventType)) {
+    return invalid('bad-request', 'event-summary eventType must be a non-empty string');
+  }
+  const sessionId = value['sessionId'];
+  if (sessionId !== undefined && !isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', 'event-summary sessionId malformed');
+  }
+  const model = value['model'];
+  if (model !== undefined && !isNonEmptyString(model)) {
+    return invalid('bad-request', 'event-summary model, when present, must be a non-empty string');
+  }
+  let usage: EventSummary['usage'];
+  if (value['usage'] !== undefined) {
+    const parsed = validateTranscriptUsage(value['usage']);
+    if (!parsed.ok) return parsed;
+    usage = parsed.value;
+  }
+  const costEstimatedUsd = value['costEstimatedUsd'];
+  if (costEstimatedUsd !== undefined && !isNonNegativeFinite(costEstimatedUsd)) {
+    return invalid('bad-request', 'event-summary costEstimatedUsd must be a non-negative finite number');
+  }
+  const costActualUsd = value['costActualUsd'];
+  if (costActualUsd !== undefined && !isNonNegativeFinite(costActualUsd)) {
+    return invalid('bad-request', 'event-summary costActualUsd must be a non-negative finite number');
+  }
+  const latencyMs = value['latencyMs'];
+  if (latencyMs !== undefined && !isNonNegativeSafeInteger(latencyMs)) {
+    return invalid('bad-request', 'event-summary latencyMs must be a non-negative safe integer');
+  }
+  const ttftMs = value['ttftMs'];
+  if (ttftMs !== undefined && !isNonNegativeSafeInteger(ttftMs)) {
+    return invalid('bad-request', 'event-summary ttftMs must be a non-negative safe integer');
+  }
+  const toolName = value['toolName'];
+  if (toolName !== undefined && !isNonEmptyString(toolName)) {
+    return invalid('bad-request', 'event-summary toolName, when present, must be a non-empty string');
+  }
+  const skillName = value['skillName'];
+  if (skillName !== undefined && !isNonEmptyString(skillName)) {
+    return invalid('bad-request', 'event-summary skillName, when present, must be a non-empty string');
+  }
+  const ok = value['ok'];
+  if (ok !== undefined && typeof ok !== 'boolean') {
+    return invalid('bad-request', 'event-summary ok, when present, must be a boolean');
+  }
+  const errorKind = value['errorKind'];
+  if (errorKind !== undefined && !isEventErrorKind(errorKind)) {
+    return invalid('bad-request', `event-summary errorKind unknown ${JSON.stringify(errorKind)}`);
+  }
+  return valid({
+    kind: 'event-summary',
+    eventId,
+    ts,
+    account,
+    backend,
+    source,
+    eventType,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(usage !== undefined ? { usage } : {}),
+    ...(costEstimatedUsd !== undefined ? { costEstimatedUsd } : {}),
+    ...(costActualUsd !== undefined ? { costActualUsd } : {}),
+    ...(latencyMs !== undefined ? { latencyMs } : {}),
+    ...(ttftMs !== undefined ? { ttftMs } : {}),
+    ...(toolName !== undefined ? { toolName } : {}),
+    ...(skillName !== undefined ? { skillName } : {}),
+    ...(ok !== undefined ? { ok } : {}),
+    ...(errorKind !== undefined ? { errorKind } : {}),
+  });
+}
+
+type SnapshotData<M extends ReadModelSnapshot['readModel']> = Extract<
+  ReadModelSnapshot,
+  { readModel: M }
+>['data'];
+
+function validateQuotaGauges(value: unknown): ValidationResult<SnapshotData<'quota-gauges'>> {
+  if (!isRecord(value) || !Array.isArray(value['gauges'])) {
+    return invalid('bad-request', 'quota-gauges data must carry a gauges array');
+  }
+  const gauges: QuotaGauge[] = [];
+  for (const entry of value['gauges'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'quota gauge must be an object');
+    const account = entry['account'];
+    if (!isAccountLabel(account)) return invalid('bad-request', 'quota gauge account unknown');
+    const window = entry['window'];
+    if (!(QUOTA_WINDOWS as readonly string[]).includes(window as string)) {
+      return invalid('bad-request', 'quota gauge window must be 5h|7d|7d_sonnet');
+    }
+    const usedPct = entry['usedPct'];
+    if (!isPct(usedPct)) return invalid('bad-request', 'quota gauge usedPct must be in 0..100');
+    const resetsAt = entry['resetsAt'];
+    if (!isEpochMs(resetsAt)) return invalid('bad-request', 'quota gauge resetsAt must be epoch ms');
+    gauges.push({ account, window: window as QuotaWindow, usedPct, resetsAt });
+  }
+  return valid({ gauges });
+}
+
+function validateBurnRate(value: unknown): ValidationResult<SnapshotData<'burn-rate'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'burn-rate data must carry an entries array');
+  }
+  const entries: BurnRateEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'burn-rate entry must be an object');
+    const account = entry['account'];
+    if (!isAccountLabel(account)) return invalid('bad-request', 'burn-rate account unknown');
+    const blockStartAt = entry['blockStartAt'];
+    const blockEndAt = entry['blockEndAt'];
+    if (!isEpochMs(blockStartAt) || !isEpochMs(blockEndAt) || blockEndAt < blockStartAt) {
+      return invalid('bad-request', 'burn-rate block bounds must be epoch ms with end >= start');
+    }
+    const tokensPerHour = entry['tokensPerHour'];
+    if (!isNonNegativeFinite(tokensPerHour)) {
+      return invalid('bad-request', 'burn-rate tokensPerHour must be a non-negative finite number');
+    }
+    const usedPct = entry['usedPct'];
+    if (usedPct !== undefined && !isPct(usedPct)) {
+      return invalid('bad-request', 'burn-rate usedPct, when present, must be in 0..100');
+    }
+    const projectedExhaustionAt = entry['projectedExhaustionAt'];
+    if (projectedExhaustionAt !== undefined && !isEpochMs(projectedExhaustionAt)) {
+      return invalid('bad-request', 'burn-rate projectedExhaustionAt must be epoch ms');
+    }
+    entries.push({
+      account,
+      blockStartAt,
+      blockEndAt,
+      tokensPerHour,
+      ...(usedPct !== undefined ? { usedPct } : {}),
+      ...(projectedExhaustionAt !== undefined ? { projectedExhaustionAt } : {}),
+    });
+  }
+  return valid({ entries });
+}
+
+function validateBedrockCost(value: unknown): ValidationResult<SnapshotData<'bedrock-cost'>> {
+  if (!isRecord(value)) return invalid('bad-request', 'bedrock-cost data must be an object');
+  const estimateMtdUsd = value['estimateMtdUsd'];
+  if (!isNonNegativeFinite(estimateMtdUsd)) {
+    return invalid('bad-request', 'bedrock-cost estimateMtdUsd must be a non-negative finite number');
+  }
+  const actualMtdUsd = value['actualMtdUsd'];
+  if (actualMtdUsd !== undefined && !isNonNegativeFinite(actualMtdUsd)) {
+    return invalid('bad-request', 'bedrock-cost actualMtdUsd must be a non-negative finite number');
+  }
+  const actualYesterdayUsd = value['actualYesterdayUsd'];
+  if (actualYesterdayUsd !== undefined && !isNonNegativeFinite(actualYesterdayUsd)) {
+    return invalid('bad-request', 'bedrock-cost actualYesterdayUsd must be a non-negative finite number');
+  }
+  const actualLagHours = value['actualLagHours'];
+  if (actualLagHours !== undefined && !isNonNegativeFinite(actualLagHours)) {
+    return invalid('bad-request', 'bedrock-cost actualLagHours must be a non-negative finite number');
+  }
+  return valid({
+    estimateMtdUsd,
+    ...(actualMtdUsd !== undefined ? { actualMtdUsd } : {}),
+    ...(actualYesterdayUsd !== undefined ? { actualYesterdayUsd } : {}),
+    ...(actualLagHours !== undefined ? { actualLagHours } : {}),
+  });
+}
+
+function validateApiEquivalentUsd(
+  value: unknown,
+): ValidationResult<SnapshotData<'api-equivalent-usd'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'api-equivalent-usd data must carry an entries array');
+  }
+  if (value['basis'] !== 'api-equivalent') {
+    return invalid('bad-request', "api-equivalent-usd basis must be the literal 'api-equivalent' (honest labeling, §6.3)");
+  }
+  const windowDays = value['windowDays'];
+  if (!isPositiveSafeInteger(windowDays)) {
+    return invalid('bad-request', 'api-equivalent-usd windowDays must be a positive safe integer');
+  }
+  const entries: ApiEquivalentUsdEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'api-equivalent-usd entry must be an object');
+    const account = entry['account'];
+    if (!isAccountLabel(account)) return invalid('bad-request', 'api-equivalent-usd account unknown');
+    const backend = entry['backend'];
+    if (!isBackend(backend) || LABEL_BACKENDS[account] !== backend) {
+      return invalid('bad-request', 'api-equivalent-usd entry violates the label/backend pairing');
+    }
+    const equivalentUsd = entry['equivalentUsd'];
+    if (!isNonNegativeFinite(equivalentUsd)) {
+      return invalid('bad-request', 'api-equivalent-usd equivalentUsd must be a non-negative finite number');
+    }
+    entries.push({ account, backend, equivalentUsd });
+  }
+  return valid({ basis: 'api-equivalent', entries, windowDays });
+}
+
+function validateCacheHitRate(value: unknown): ValidationResult<SnapshotData<'cache-hit-rate'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'cache-hit-rate data must carry an entries array');
+  }
+  const entries: CacheHitRateEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'cache-hit-rate entry must be an object');
+    const account = entry['account'];
+    if (!isAccountLabel(account)) return invalid('bad-request', 'cache-hit-rate account unknown');
+    const hitRatePct = entry['hitRatePct'];
+    if (!isPct(hitRatePct)) return invalid('bad-request', 'cache-hit-rate hitRatePct must be in 0..100');
+    for (const field of ['readTokens', 'creation5mTokens', 'creation1hTokens'] as const) {
+      if (!isNonNegativeSafeInteger(entry[field])) {
+        return invalid('bad-request', `cache-hit-rate ${field} must be a non-negative safe integer`);
+      }
+    }
+    entries.push({
+      account,
+      hitRatePct,
+      readTokens: entry['readTokens'] as number,
+      creation5mTokens: entry['creation5mTokens'] as number,
+      creation1hTokens: entry['creation1hTokens'] as number,
+    });
+  }
+  return valid({ entries });
+}
+
+function validateLatency(value: unknown): ValidationResult<SnapshotData<'latency'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'latency data must carry an entries array');
+  }
+  const entries: LatencyEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'latency entry must be an object');
+    const backend = entry['backend'];
+    if (!isBackend(backend)) return invalid('bad-request', 'latency backend unknown');
+    const p50Ms = entry['p50Ms'];
+    const p95Ms = entry['p95Ms'];
+    if (!isNonNegativeFinite(p50Ms) || !isNonNegativeFinite(p95Ms) || p95Ms < p50Ms) {
+      return invalid('bad-request', 'latency percentiles must be non-negative with p95 >= p50');
+    }
+    const ttftP50Ms = entry['ttftP50Ms'];
+    if (ttftP50Ms !== undefined && !isNonNegativeFinite(ttftP50Ms)) {
+      return invalid('bad-request', 'latency ttftP50Ms must be a non-negative finite number');
+    }
+    const ttftP95Ms = entry['ttftP95Ms'];
+    if (ttftP95Ms !== undefined && !isNonNegativeFinite(ttftP95Ms)) {
+      return invalid('bad-request', 'latency ttftP95Ms must be a non-negative finite number');
+    }
+    const sampleCount = entry['sampleCount'];
+    if (!isNonNegativeSafeInteger(sampleCount)) {
+      return invalid('bad-request', 'latency sampleCount must be a non-negative safe integer');
+    }
+    entries.push({
+      backend,
+      p50Ms,
+      p95Ms,
+      ...(ttftP50Ms !== undefined ? { ttftP50Ms } : {}),
+      ...(ttftP95Ms !== undefined ? { ttftP95Ms } : {}),
+      sampleCount,
+    });
+  }
+  return valid({ entries });
+}
+
+function validateHealth(value: unknown): ValidationResult<SnapshotData<'health'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'health data must carry an entries array');
+  }
+  const entries: HealthEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'health entry must be an object');
+    const source = entry['source'];
+    if (!isEventSource(source)) return invalid('bad-request', 'health source unknown');
+    for (const field of ['errorCount', 'retryCount', 'throttleCount', 'timeoutCount'] as const) {
+      if (!isNonNegativeSafeInteger(entry[field])) {
+        return invalid('bad-request', `health ${field} must be a non-negative safe integer`);
+      }
+    }
+    const windowMinutes = entry['windowMinutes'];
+    if (!isPositiveSafeInteger(windowMinutes)) {
+      return invalid('bad-request', 'health windowMinutes must be a positive safe integer');
+    }
+    entries.push({
+      source,
+      errorCount: entry['errorCount'] as number,
+      retryCount: entry['retryCount'] as number,
+      throttleCount: entry['throttleCount'] as number,
+      timeoutCount: entry['timeoutCount'] as number,
+      windowMinutes,
+    });
+  }
+  return valid({ entries });
+}
+
+function validateSkillLeaderboard(
+  value: unknown,
+): ValidationResult<SnapshotData<'skill-leaderboard'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'skill-leaderboard data must carry an entries array');
+  }
+  const entries: SkillLeaderboardEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'skill-leaderboard entry must be an object');
+    const skillName = entry['skillName'];
+    if (!isNonEmptyString(skillName)) {
+      return invalid('bad-request', 'skill-leaderboard skillName must be a non-empty string');
+    }
+    const invocations = entry['invocations'];
+    if (!isNonNegativeSafeInteger(invocations)) {
+      return invalid('bad-request', 'skill-leaderboard invocations must be a non-negative safe integer');
+    }
+    const successRatePct = entry['successRatePct'];
+    if (successRatePct !== undefined && !isPct(successRatePct)) {
+      return invalid('bad-request', 'skill-leaderboard successRatePct must be in 0..100');
+    }
+    const correctionRatePct = entry['correctionRatePct'];
+    if (correctionRatePct !== undefined && !isPct(correctionRatePct)) {
+      return invalid('bad-request', 'skill-leaderboard correctionRatePct must be in 0..100');
+    }
+    const tokensPerOutcome = entry['tokensPerOutcome'];
+    if (tokensPerOutcome !== undefined && !isNonNegativeFinite(tokensPerOutcome)) {
+      return invalid('bad-request', 'skill-leaderboard tokensPerOutcome must be a non-negative finite number');
+    }
+    const worstQuartile = entry['worstQuartile'];
+    if (typeof worstQuartile !== 'boolean') {
+      return invalid('bad-request', 'skill-leaderboard worstQuartile must be a boolean');
+    }
+    entries.push({
+      skillName,
+      invocations,
+      ...(successRatePct !== undefined ? { successRatePct } : {}),
+      ...(correctionRatePct !== undefined ? { correctionRatePct } : {}),
+      ...(tokensPerOutcome !== undefined ? { tokensPerOutcome } : {}),
+      worstQuartile,
+    });
+  }
+  return valid({ entries });
+}
+
+function validateSessionOutcomes(
+  value: unknown,
+): ValidationResult<SnapshotData<'session-outcomes'>> {
+  if (!isRecord(value) || !Array.isArray(value['entries'])) {
+    return invalid('bad-request', 'session-outcomes data must carry an entries array');
+  }
+  const windowDays = value['windowDays'];
+  if (!isPositiveSafeInteger(windowDays)) {
+    return invalid('bad-request', 'session-outcomes windowDays must be a positive safe integer');
+  }
+  const entries: SessionOutcomeEntry[] = [];
+  for (const entry of value['entries'] as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'session-outcomes entry must be an object');
+    const outcome = entry['outcome'];
+    if (!isNonEmptyString(outcome)) {
+      return invalid('bad-request', 'session-outcomes outcome must be a non-empty string');
+    }
+    const count = entry['count'];
+    if (!isNonNegativeSafeInteger(count)) {
+      return invalid('bad-request', 'session-outcomes count must be a non-negative safe integer');
+    }
+    entries.push({ outcome, count });
+  }
+  return valid({ entries, windowDays });
+}
+
+function validateLocalOffload(value: unknown): ValidationResult<SnapshotData<'local-offload'>> {
+  if (!isRecord(value)) return invalid('bad-request', 'local-offload data must be an object');
+  const offloadRatioPct = value['offloadRatioPct'];
+  if (!isPct(offloadRatioPct)) {
+    return invalid('bad-request', 'local-offload offloadRatioPct must be in 0..100');
+  }
+  const localTokens = value['localTokens'];
+  const totalTokens = value['totalTokens'];
+  if (!isNonNegativeSafeInteger(localTokens) || !isNonNegativeSafeInteger(totalTokens)) {
+    return invalid('bad-request', 'local-offload token counts must be non-negative safe integers');
+  }
+  if (localTokens > totalTokens) {
+    return invalid('bad-request', 'local-offload localTokens must not exceed totalTokens');
+  }
+  const windowDays = value['windowDays'];
+  if (!isPositiveSafeInteger(windowDays)) {
+    return invalid('bad-request', 'local-offload windowDays must be a positive safe integer');
+  }
+  return valid({ offloadRatioPct, localTokens, totalTokens, windowDays });
+}
+
+function validateReadModelSnapshot(
+  value: Record<string, unknown>,
+): ValidationResult<ReadModelSnapshot> {
+  const readModel = value['readModel'];
+  if (!isReadModelId(readModel)) {
+    return invalid('bad-request', `unknown read model ${JSON.stringify(readModel)}`);
+  }
+  const capturedAt = value['capturedAt'];
+  if (!isEpochMs(capturedAt)) {
+    return invalid('bad-request', 'read-model-snapshot capturedAt must be epoch ms');
+  }
+  const sources = validateSourceFreshnessList(value['sources']);
+  if (!sources.ok) return sources;
+
+  const data = value['data'];
+  const base = {
+    kind: 'read-model-snapshot',
+    capturedAt,
+    sources: sources.value,
+  } as const;
+  switch (readModel) {
+    case 'quota-gauges': {
+      const parsed = validateQuotaGauges(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'burn-rate': {
+      const parsed = validateBurnRate(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'bedrock-cost': {
+      const parsed = validateBedrockCost(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'api-equivalent-usd': {
+      const parsed = validateApiEquivalentUsd(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'cache-hit-rate': {
+      const parsed = validateCacheHitRate(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'latency': {
+      const parsed = validateLatency(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'health': {
+      const parsed = validateHealth(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'skill-leaderboard': {
+      const parsed = validateSkillLeaderboard(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'session-outcomes': {
+      const parsed = validateSessionOutcomes(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'local-offload': {
+      const parsed = validateLocalOffload(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+  }
+}
+
+/**
+ * Validate an inbound payload on the `events` channel (client side).
+ *
+ * The FROZEN forward-tolerant reader rule (M3): a payload whose `kind` is a
+ * non-empty string OUTSIDE the frozen set decodes as an
+ * {@link OpaqueEventsPayload} and MUST be ignored — M4/M5 add kinds without
+ * breaking M3 clients. Registered kinds (`event-summary`,
+ * `read-model-snapshot`) validate strictly; a payload with no string kind is
+ * malformed.
+ */
+export function validateEventsPayload(
+  value: unknown,
+): ValidationResult<EventSummary | ReadModelSnapshot | OpaqueEventsPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'events payload must be an object');
+  const kind = value['kind'];
+  if (!isNonEmptyString(kind)) {
+    return invalid('bad-request', 'events payload kind must be a non-empty string');
+  }
+  if (kind === 'event-summary') return validateEventSummary(value);
+  if (kind === 'read-model-snapshot') return validateReadModelSnapshot(value);
+  // Forward-tolerant: unknown kinds are legal-and-ignored (sanitized to kind).
+  return valid({ kind, opaque: true });
 }

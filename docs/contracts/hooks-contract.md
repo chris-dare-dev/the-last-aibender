@@ -146,16 +146,58 @@ response body is hook output in the CLI's own schema, e.g.:
    of the same template — BE-7 consumes those events from the store, not via
    a second transport.
 
-## 6. Fixtures
+## 6. Fixtures — LANDED (M3)
 
 Synthesized hook-POST fixtures (bodies per §2, labels per [X2] fixture
-policy) land in `packages/testkit` alongside BE-5's collector at M3 — the
+policy) live in `packages/testkit` as **`GOLDEN_HOOK_FIXTURES`** (+
+`replayGoldenHookFixture`, `GOLDEN_HOOK_CORPUS_FREEZE = 'FROZEN-M3'`) — the
 same corpus-and-replay device the WS protocol uses (`GOLDEN_WS_FIXTURES`
-precedent, ICR-0003). Until then the examples in this document are the
-normative shapes.
+precedent, ICR-0003). Every acceptance class is pinned as exact body bytes:
+gating-capable accepts (with the relay slice), non-gating accepts,
+unknown-event `unmapped` accepts, 404 label rejections (incl. case
+sensitivity), and every 400 class (missing fields, non-object, unparseable).
+BE-5's collector replays these against its real HTTP handler; SI-3 templates
+validate against the same shapes.
 
-## 7. Amendment record
+## 7. Acceptance-side types — FROZEN (M3, `packages/protocol`)
+
+This contract pinned the accepting collector to BE-5/M3; the M3 freeze lands
+the types BE-5 and the gateway agree on, in `packages/protocol` (`hooks.ts`):
+
+- **Envelope validation result** — `validateHookPost(accountSegment, body)`
+  → `HookPostOutcome`: `{ ok: true, accepted: AcceptedHookPost }` or a typed
+  rejection (`unknown-label`/404, `malformed-body`/400) exactly per the §2
+  table. `AcceptedHookPost` carries the label (FROM THE PATH ONLY [X2]), the
+  event name, the native session id, the §3 vocabulary group (`unmapped` for
+  unknown names — still accepted), the gating capability, and the body
+  **verbatim** (unknown keys pass through, per §2 — the one deliberate
+  exception to the WS validators' sanitize-to-contract-keys rule).
+- **Ack shape** — `HookAck`: `204` (accepted, no opinion — the default) ·
+  `200 + HookGatingOutput` (`permissionDecision` ∈ `allow·deny·ask`, CLI
+  schema per §4) · `404` · `400`. `ackForHookOutcome` enforces that a gating
+  output is only ever attached to an ACCEPTED, GATING-CAPABLE post
+  (`PermissionRequest`/`PreToolUse`, `GATING_CAPABLE_HOOK_EVENTS`) — a buggy
+  floor can never gate `SessionEnd`.
+- **PermissionRequest → hook-floor relay contract** —
+  `hookFloorRelayInput(accepted)` → `{ accountLabel, nativeSessionId,
+  toolName, toolUseId? }` or `undefined` (not gating-capable, or no
+  `tool_name` to summarize [X2]). The broker maps the native session id to a
+  harness id where the ledger knows one, else relays the native id (the
+  approvals-wire sessionId charset admits both), and raises the
+  `approval-request` with source `hook-floor`
+  ([ws-protocol.md §10.1](ws-protocol.md)).
+- The §3 vocabulary is machine-checkable as `HOOK_EVENT_VOCABULARY` (29
+  names → 8 groups) + `mapHookEventName`; endpoint constants
+  (`HOOK_PATH_PREFIX = /hooks/v1/`, `DEFAULT_HOOKS_PORT = 4319`,
+  `HOOKS_PORT_ENV_VAR`) are exported alongside.
+
+The §4 T3 verification item (CLI-side interpretation of `200` gating bodies
+on the real host before the floor turns enforcing) is UNCHANGED by this
+freeze — the REQUEST and ack shapes are frozen either way.
+
+## 8. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
 | 2026-07-04 | Initial FROZEN-M2 freeze: versioned `/hooks/v1/<LABEL>` envelope; native-vocabulary body with `hook_event_name`/`session_id` required; accept-unknown-events rule; label-from-template-only attribution [X2]; gating-response shape with the T3 verification flag. SI-ORCH co-sign: **pending**. | — (M2 freeze) |
+| 2026-07-04 | **M3 acceptance-side freeze (§7):** typed POST validation outcome + ack shape + PermissionRequest→hook-floor relay contract landed in `packages/protocol` (`hooks.ts`); §3 vocabulary machine-checkable (`HOOK_EVENT_VOCABULARY`, 29 names/8 groups); golden hook-POST corpus landed in `packages/testkit` (§6, `GOLDEN_HOOK_FIXTURES`). No change to any §1–§5 shape — this freeze makes the M2 prose machine-checkable and pins the collector/gateway agreement surface. §4 T3 gating-verification flag unchanged. SI-ORCH co-sign: **pending**. | — (M3 freeze) |

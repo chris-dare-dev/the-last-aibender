@@ -3,9 +3,34 @@
  * aibender-core gateway (BE-3) and every frontend client (FE-2).
  *
  * ============================================================================
- * FROZEN-M2 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs. The M2 FULL
- * freeze (plan §3: "M1 core, M2 full"). Amendments ONLY via ICR
- * (docs/contracts/icr/).
+ * FROZEN-M3 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs (SI-ORCH co-signs
+ * the hooks acceptance slice). The M3 freeze closes the ONE surface the M2
+ * full freeze left open and adds the M3 read-model/hooks-acceptance types.
+ * Amendments ONLY via ICR (docs/contracts/icr/).
+ *
+ * Promoted to FROZEN at M3:
+ *   - the `events` channel payload union (events.ts + readModels.ts):
+ *     `event-summary` (normalized events-store row fan-out) and
+ *     `read-model-snapshot` (the ten §6.3 dashboard leads, each with an
+ *     explicit per-source freshness field — degraded sources are STATES,
+ *     never errors); unknown kinds stay legal-and-ignored by the frozen
+ *     forward-tolerant reader rule (the M2 opaque policy, made permanent)
+ *   - EVENT_SOURCES / SOURCE_FRESHNESS_STATES / EVENT_ERROR_KINDS /
+ *     READ_MODEL_IDS vocabularies (shared with @aibender/schema migration
+ *     0002 CHECK constraints)
+ *   - hooks acceptance-side types (hooks.ts): POST validation outcome, ack
+ *     shape, PermissionRequest→hook-floor relay contract
+ *     (docs/contracts/hooks-contract.md; BE-5 collector + gateway agree here)
+ *
+ * Verified sufficient at M3 (no amendment needed):
+ *   - quota snapshot (quota.ts) carries the statusline tee data exactly
+ *     (five_hour/seven_day → 5h/7d windows, usedPct, resetsAt countdowns)
+ *   - context-graph touch (contextGraph.ts) stays file-paths + session-ids
+ *     ONLY [X2]
+ *
+ * Carried forward unchanged from FROZEN-M2 (2026-07-04):
+ *   - transcript.<sid> payloads · approvals payloads · quota snapshot ·
+ *     context-graph touch · JSON reconnect-replay · connect-time auth token
  *
  * Carried forward unchanged from FROZEN-M1-CORE (2026-07-04):
  *   - wire vocabularies (vocab.ts): account labels, backends, substrates,
@@ -17,40 +42,30 @@
  *   - binary PTY frame format + codec, ack-watermark flow-control messages
  *     incl. pty-resize (pty.ts)
  *   - error envelope + code registry (errors.ts)
+ *   - the M2 decisions: `approve` retired-as-reserved (decisions ride the
+ *     approvals channel); connect-time auth token; `approval-not-pending`
  *
- * Promoted to FROZEN at M2:
- *   - transcript.<sid> payloads (transcript.ts): delta · tool · result
- *   - approvals payloads (approvals.ts): request · decision · resolved,
- *     covering can-use-tool, hook-floor and workflow-gate sources
- *   - quota snapshot (quota.ts)
- *   - context-graph touch (contextGraph.ts) — identity-free by design [X2]
- *   - JSON reconnect-replay (replay.ts): per-(boot, channel) seq journal +
- *     `replay-request`; PTY byte replay was already frozen at M1
- *   - the WS auth transport: connect-time token (query param or bearer
- *     header) — the M1 "handshake message" placeholder was resolved as NOT
- *     NEEDED (ws-protocol.md §1)
- *   - error code `approval-not-pending` (amendment-recorded)
+ * NOTHING remains draft after this freeze (draft.ts was removed — its last
+ * occupant, the events union, is now frozen). New payload kinds on the
+ * events channel may still land in later milestones WITHOUT a version break
+ * (the forward-tolerant reader rule); every other change is an ICR.
  *
- * Decisions recorded at this freeze:
- *   - the reserved `approve` control verb is retired-as-reserved: decisions
- *     ride the approvals channel; the verb name stays registered-and-rejected
- *     (`verb-reserved`) so nothing can squat on it
- *   - the `events` payload union is DEFERRED TO M3 (draft.ts) — the only
- *     surface still open after this freeze
- *
- * Prose of record: docs/contracts/ws-protocol.md. If code and prose disagree,
- * file an ICR — never a silent divergence.
+ * Prose of record: docs/contracts/ws-protocol.md (WS surfaces) and
+ * docs/contracts/hooks-contract.md (hooks acceptance). If code and prose
+ * disagree, file an ICR — never a silent divergence.
  * ============================================================================
  */
 
 /**
- * Protocol version. `1.0.0` = the M2 full freeze (`1.0.0-m1-core` was the
- * M1-CORE freeze). Consumers may assert against {@link PROTOCOL_FREEZE}.
+ * Protocol version. `1.1.0` = the M3 freeze (additive: events union +
+ * read-model snapshots + hooks acceptance; `1.0.0` was the M2 full freeze,
+ * `1.0.0-m1-core` the M1-CORE freeze). Consumers may assert against
+ * {@link PROTOCOL_FREEZE}.
  */
-export const PROTOCOL_VERSION = '1.0.0' as const;
+export const PROTOCOL_VERSION = '1.1.0' as const;
 
 /** Freeze marker for runtime assertions and golden fixtures. */
-export const PROTOCOL_FREEZE = 'FROZEN-M2' as const;
+export const PROTOCOL_FREEZE = 'FROZEN-M3' as const;
 
 // FROZEN surfaces (M1-CORE, carried forward) ----------------------------------
 export {
@@ -92,6 +107,7 @@ export {
   isEnvelope,
   validateEnvelope,
   type Envelope,
+  type EventsServerPayload,
   type FrozenM1Payload,
   type FrozenPayload,
 } from './envelope.js';
@@ -194,11 +210,74 @@ export {
   validateControlRequest,
   validateControlResponse,
   validateErrorPayload,
+  validateEventsPayload,
   validateJsonReplayRequest,
   validatePtyClientMessage,
   validateQuotaSnapshot,
   validateTranscriptPayload,
 } from './validate.js';
 
-// DRAFT surfaces (M3 freeze — events only) --------------------------------------
-export { type DraftPayloadBase, type EventsPayloadDraft } from './draft.js';
+// FROZEN surfaces promoted at M3 ------------------------------------------------
+export {
+  EVENT_ERROR_KINDS,
+  EVENT_SOURCES,
+  SOURCE_FRESHNESS_STATES,
+  isEventErrorKind,
+  isEventSource,
+  isSourceFreshnessState,
+  type EventErrorKind,
+  type EventSource,
+  type EventSummary,
+  type OpaqueEventsPayload,
+  type SourceFreshness,
+  type SourceFreshnessState,
+} from './events.js';
+
+export {
+  READ_MODEL_IDS,
+  isReadModelId,
+  type ApiEquivalentUsdEntry,
+  type ApiEquivalentUsdSnapshot,
+  type BedrockCostSnapshot,
+  type BurnRateEntry,
+  type BurnRateSnapshot,
+  type CacheHitRateEntry,
+  type CacheHitRateSnapshot,
+  type HealthEntry,
+  type HealthSnapshot,
+  type LatencyEntry,
+  type LatencySnapshot,
+  type LocalOffloadSnapshot,
+  type QuotaGauge,
+  type QuotaGaugesSnapshot,
+  type ReadModelId,
+  type ReadModelSnapshot,
+  type ReadModelSnapshotBase,
+  type SessionOutcomeEntry,
+  type SessionOutcomesSnapshot,
+  type SkillLeaderboardEntry,
+  type SkillLeaderboardSnapshot,
+} from './readModels.js';
+
+export {
+  DEFAULT_HOOKS_PORT,
+  GATING_CAPABLE_HOOK_EVENTS,
+  HOOKS_PORT_ENV_VAR,
+  HOOK_EVENT_GROUPS,
+  HOOK_EVENT_VOCABULARY,
+  HOOK_PATH_PREFIX,
+  HOOK_PERMISSION_DECISIONS,
+  ackForHookOutcome,
+  hookFloorRelayInput,
+  isGatingCapableHookEvent,
+  mapHookEventName,
+  validateHookPost,
+  type AcceptedHookPost,
+  type HookAck,
+  type HookEventGroup,
+  type HookFloorRelayInput,
+  type HookGatingOutput,
+  type HookPermissionDecision,
+  type HookPostOutcome,
+  type HookPostRejection,
+} from './hooks.js';

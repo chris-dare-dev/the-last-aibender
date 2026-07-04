@@ -5,8 +5,9 @@
  * (blueprint §6.2); workflow runs/steps/memoization journal (blueprint §7).
  *
  * ============================================================================
- * FROZEN-M1 (2026-07-04) — kernel slice. Owner BE-ORCH; amendments only via
- * ICR (docs/contracts/icr/). Prose of record: docs/contracts/sqlite-ddl.md.
+ * FROZEN-M1 (2026-07-04) — kernel slice · FROZEN-M3 (2026-07-04) — events
+ * slice. Owner BE-ORCH; amendments only via ICR (docs/contracts/icr/).
+ * Prose of record: docs/contracts/sqlite-ddl.md.
  *
  * Frozen at M1:
  *   - the {@link SqliteDriver} adapter + node:sqlite implementation (WAL on
@@ -15,8 +16,16 @@
  *     history-drift rejection; migrate.ts)
  *   - migration 0001: resume_ledger + account_profiles + schema_meta
  *   - kernel accessors + the resume-ledger state machine (kernel.ts)
- * Lands later (each via ICR at its milestone): M3 events tables, M4 X4
- * tables, M5 pipeline tables.
+ * Frozen at M3 (this freeze):
+ *   - migration 0002: events + quota_snapshots + session_outcomes + prices
+ *     (blueprint §6.2), applied to the SEPARATE collector-owned database
+ *     (`~/.aibender/db/events.db`) via the EVENTS_STORE_MIGRATIONS sibling
+ *     list — decision recorded in sqlite-ddl.md
+ *   - events accessors: validated insert path with (backend, raw_ref) dedupe,
+ *     identity-shape screen [X2], Cost Explorer cost_actual_usd backfill,
+ *     quota/outcome dedupe, override-wins price pinning (events.ts)
+ * Lands later (each via ICR at its milestone): M4 X4 tables (kernel db),
+ * M5 pipeline tables.
  *
  * Field-tag convention (consumed by @aibender/shared redaction filters):
  * columns carrying sensitive material are declared in KERNEL_FIELD_TAGS with
@@ -106,6 +115,8 @@ export {
 
 export { KERNEL_MIGRATIONS, MIGRATION_0001_KERNEL } from './migrations/0001-kernel.js';
 
+export { EVENTS_STORE_MIGRATIONS, MIGRATION_0002_EVENTS } from './migrations/0002-events.js';
+
 export {
   ACTIVE_SESSION_STATES,
   IllegalTransitionError,
@@ -126,7 +137,47 @@ export {
   type SchemaMetaStore,
 } from './kernel.js';
 
+export {
+  EVENTS_FIELD_TAGS,
+  EventNotFoundError,
+  EventsStoreError,
+  assertIdentityFreeColumn,
+  createEventsTableStore,
+  createPricesStore,
+  createQuotaSnapshotsStore,
+  createSessionOutcomesStore,
+  type EventFilter,
+  type EventInsertOutcome,
+  type EventRow,
+  type EventUsage,
+  type EventsStoreOptions,
+  type EventsTableStore,
+  type NewEventRow,
+  type NewQuotaSnapshotRow,
+  type NewSessionOutcomeRow,
+  type PriceRow,
+  type PriceSource,
+  type PricesStore,
+  type QuotaSnapshotInsertOutcome,
+  type QuotaSnapshotRow,
+  type QuotaSnapshotsStore,
+  type SessionOutcomeInsertOutcome,
+  type SessionOutcomeRow,
+  type SessionOutcomesStore,
+} from './events.js';
+
 import { openNodeSqliteDatabase } from './driver.js';
+import {
+  createEventsTableStore,
+  createPricesStore,
+  createQuotaSnapshotsStore,
+  createSessionOutcomesStore,
+  type EventsStoreOptions,
+  type EventsTableStore,
+  type PricesStore,
+  type QuotaSnapshotsStore,
+  type SessionOutcomesStore,
+} from './events.js';
 import {
   createAccountProfilesStore,
   createResumeLedgerStore,
@@ -138,6 +189,7 @@ import {
 } from './kernel.js';
 import { createMigrationRunner } from './migrate.js';
 import { KERNEL_MIGRATIONS } from './migrations/0001-kernel.js';
+import { EVENTS_STORE_MIGRATIONS } from './migrations/0002-events.js';
 import type { SqliteDriver } from './driver.js';
 
 export interface KernelStore {
@@ -171,6 +223,48 @@ export async function openKernelStore(options: OpenKernelStoreOptions): Promise<
     resumeLedger: createResumeLedgerStore(driver, storeOptions),
     accountProfiles: createAccountProfilesStore(driver, storeOptions),
     schemaMeta: createSchemaMetaStore(driver),
+    close: () => driver.close(),
+  };
+}
+
+// M3 surface — the collector-owned events database (blueprint §6.2) ------------
+
+export interface EventsStore {
+  readonly driver: SqliteDriver;
+  /** `wal` for file-backed stores; `memory` for `:memory:` test stores. */
+  readonly journalMode: string;
+  readonly events: EventsTableStore;
+  readonly quotaSnapshots: QuotaSnapshotsStore;
+  readonly sessionOutcomes: SessionOutcomesStore;
+  readonly prices: PricesStore;
+  close(): void;
+}
+
+export interface OpenEventsStoreOptions extends EventsStoreOptions {
+  /** `:memory:` (tests) or an absolute file path (e.g. ~/.aibender/db/events.db). */
+  readonly path: string;
+}
+
+/**
+ * One-call composition root for the SEPARATE collector-owned events database
+ * (blueprint §6.2 "One SQLite (WAL) database owned by the collector"; the
+ * sibling-list decision of sqlite-ddl.md §6, recorded at the M3 freeze):
+ * open through the node:sqlite adapter, apply EVENTS_STORE_MIGRATIONS, hand
+ * back the typed accessors. NEVER pointed at the kernel database — the
+ * collector's high-volume writes must not contend with row-before-spawn.
+ */
+export async function openEventsStore(options: OpenEventsStoreOptions): Promise<EventsStore> {
+  const { driver, journalMode } = openNodeSqliteDatabase({ path: options.path });
+  const runner = createMigrationRunner(driver, options);
+  await runner.apply(EVENTS_STORE_MIGRATIONS);
+  const storeOptions: EventsStoreOptions = options.nowIso ? { nowIso: options.nowIso } : {};
+  return {
+    driver,
+    journalMode,
+    events: createEventsTableStore(driver, storeOptions),
+    quotaSnapshots: createQuotaSnapshotsStore(driver, storeOptions),
+    sessionOutcomes: createSessionOutcomesStore(driver, storeOptions),
+    prices: createPricesStore(driver, storeOptions),
     close: () => driver.close(),
   };
 }

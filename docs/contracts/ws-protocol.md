@@ -1,17 +1,16 @@
 # WS protocol contract — envelope, channels, PTY frames, flow control
 
-> ## 🔒 FROZEN-M2 (full) — 2026-07-04
-> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M2 FULL freeze (plan §3: "M1
-> core, M2 full"). After this banner, every section below is **FROZEN** and
-> changes **only** through an interface change request
-> ([docs/contracts/icr/](icr/README.md)): an implementer files
+> ## 🔒 FROZEN-M3 — 2026-07-04
+> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M3 freeze closes the ONE surface
+> the M2 full freeze deliberately left open: the `events` channel **payload
+> union** is now FROZEN (§13 — event summaries + the §6.3 read-model
+> snapshots, with a frozen forward-tolerant unknown-kind rule). Every section
+> below is **FROZEN** and changes **only** through an interface change
+> request ([docs/contracts/icr/](icr/README.md)): an implementer files
 > `icr-NNNN-<slug>.md`, BE-ORCH lands the change, FE-ORCH co-signs.
-> **One deliberate exception:** the `events` channel **payload union** is
-> DEFERRED TO M3 (§8) — the channel itself (name, direction, seq/replay
-> semantics) is frozen now.
 >
 > The machine-checkable half of this contract is `packages/protocol`
-> (`PROTOCOL_VERSION = '1.0.0'`, `PROTOCOL_FREEZE = 'FROZEN-M2'`). **This
+> (`PROTOCOL_VERSION = '1.1.0'`, `PROTOCOL_FREEZE = 'FROZEN-M3'`). **This
 > document is the prose of record when the two disagree — file an ICR, never
 > a silent divergence.**
 
@@ -70,7 +69,7 @@ schedule), plan BE-3 (gateway). Flow-control mechanics were proven by SPIKE-D
 | Channel | Stream | Direction | Payloads |
 |---|---|---|---|
 | `control` | `control` | bidirectional | control requests/responses (§4), pushed `error` payloads (§7) |
-| `events` | `events` | broker → client (+ client `replay-request` §8) | **payload union DRAFT until M3** (§8) |
+| `events` | `events` | broker → client (+ client `replay-request` §8) | `event-summary` / `read-model-snapshot` + tolerated unknown kinds (§13, **frozen M3**) |
 | `quota` | `quota` | broker → client (+ client `replay-request` §8) | `quota-snapshot` (§11) |
 | `approvals` | `approvals` | bidirectional | `approval-request` / `approval-decision` / `approval-resolved` (§10) + client `replay-request` (§8) |
 | `pty.<sid>` | `pty` | bidirectional | binary PTY frames (§5) + JSON flow-control messages (§6) |
@@ -293,12 +292,12 @@ the axis):
   [bootstrap-file.md](bootstrap-file.md)) and starts fresh.
 - Validator: `validateJsonReplayRequest(value, expectedChannel)`.
 
-**Still DRAFT after this freeze (the only open surface):** the `events`
-channel **payload union** — deferred to M3, when BE-5's normalized events
-store defines what actually fans out (recorded in the amendment table).
-Until then: client payloads on `events` (other than `replay-request`) answer
-`bad-request`; broker pushes on `events` are treated by clients as opaque
-envelopes (golden fixture `events-broker-payload-draft-opaque`).
+**M3 resolution of the M2 deferral:** the `events` channel **payload union**
+froze at M3 with BE-5's normalized events store (§13). Client payloads on
+`events` (other than `replay-request`) still answer `bad-request`; broker
+pushes now validate against the frozen union, with unknown kinds
+legal-and-ignored by the frozen forward-tolerant reader rule (§13 — the M2
+"opaque envelope" policy made permanent).
 
 ## 9. `transcript.<sid>` payloads — FROZEN (M2)
 
@@ -396,16 +395,101 @@ vocabulary ([hooks-contract.md](hooks-contract.md)): `PostToolUse` on
 read/write-shaped tools → `read`/`write`; `InstructionsLoaded` →
 `instructions`; `FileChanged` → `watched`.
 
-## 13. Golden corpus — the BE↔FE contract device
+**Session-id relay (M3 stewarding pin, prose only — no wire change):**
+`sessionId` is a harness session id *where the broker knows one*. Hook
+bodies and native watcher surfaces carry NATIVE session ids, and the ledger
+mapping lands with BE-7 (M4) — until then the feed maps to a harness id
+where the ledger knows one, **else relays the native id** (charset-validated,
+never rewritten; ids that fail the wire charset are dropped). This mirrors
+the frozen approvals-relay precedent verbatim (hooks-contract.md §7,
+`hookFloorRelayInput`). The producer seam is injectable
+(`resolveSessionId`, core/src/collector/graphfeed/hookTouches.ts): at M4
+the composition root MUST inject the ledger resolver so harness ids take
+over — consumers see no shape change either way.
 
-`GOLDEN_WS_FIXTURES` in `packages/testkit` (ICR-0003, extended at this
-freeze; `GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M2'` must equal the protocol
-package's `PROTOCOL_FREEZE`). Every frozen payload family has valid + every
-invalid class pinned as exact wire bytes; both departments' CI replays the
-same frames (plan §9.3 BE↔FE #1). A fixture change requires both
-orchestrators' sign-off.
+## 13. `events` payloads — FROZEN (M3)
 
-## 14. Amendment record
+Broker → client — the collector fan-out (blueprint §6.1/§6.2, plan
+§4/BE-5/BE-6). The union the M2 freeze deferred; frozen at M3 together with
+the events store DDL ([sqlite-ddl.md](sqlite-ddl.md) migration 0002).
+Validator: `validateEventsPayload`. Types: `events.ts` + `readModels.ts` in
+`packages/protocol`.
+
+### 13.1 `event-summary`
+
+One normalized events-store row, fanned out for live dashboards. Mirrors the
+`events` fact table MINUS everything value-heavy or machine-locating [X2]:
+NO `raw_ref`, NO `file_refs`, NO native ids, NO tool/prompt bodies.
+
+```jsonc
+{ "kind": "event-summary",
+  "eventId": 42,                  // events-store row id (dashboard ordering/dedupe axis)
+  "ts": 90100500,                 // epoch ms
+  "account": "AWS_DEV",           // placeholder labels only [X2]
+  "backend": "opencode",          // must satisfy the frozen label↔backend pairing
+  "source": "opencode-sse",       // EVENT_SOURCES (the §6.1 matrix, closed registry)
+  "eventType": "message.part.updated",  // OPEN vocabulary (CLI minors add events)
+  "sessionId": "ses_…",           // optional — harness id only
+  "model": "…", "usage": { … },   // optional; usage = the four token classes (§9 shape)
+  "costEstimatedUsd": 0.012,      // optional; always an estimate
+  "costActualUsd": 0.011,         // optional; Cost Explorer backfill when landed
+  "latencyMs": 900, "ttftMs": 120,
+  "toolName": "Read", "skillName": "…",
+  "ok": true, "errorKind": "retry" }   // errorKind ∈ error·retry·throttle·timeout
+```
+
+### 13.2 `read-model-snapshot`
+
+The ten §6.3 dashboard leads (closed registry `READ_MODEL_IDS`, in blueprint
+order): `quota-gauges` · `burn-rate` · `bedrock-cost` · `api-equivalent-usd`
+· `cache-hit-rate` · `latency` · `health` · `skill-leaderboard` ·
+`session-outcomes` · `local-offload`. Common envelope:
+
+```jsonc
+{ "kind": "read-model-snapshot",
+  "readModel": "quota-gauges",
+  "capturedAt": 90100000,          // epoch ms
+  "sources": [                     // REQUIRED, non-empty: per-source freshness
+    { "source": "claude-quota", "state": "fresh", "lastIngestAt": 90099000 } ],
+  "data": { … } }                  // per-readModel shape (readModels.ts)
+```
+
+**Freshness is a first-class field, never an error** (blueprint §6.3):
+`state` ∈ `fresh · stale · no-signal · lmstudio-down · cluster-absent ·
+sso-expired · account-logged-out · estimate-only`
+(`SOURCE_FRESHNESS_STATES`). A degraded source renders NO SIGNAL from its
+freshness entry; producers never fabricate zeros; absent optional data
+fields (Bedrock actuals while gated, correction rates before the local-model
+job) mean "not computable yet" with the freshness entry saying why. Honesty
+pins are validated, not advisory: `api-equivalent-usd` carries the frozen
+literal `basis: "api-equivalent"` (equivalence, never spend); quota/burn
+percentages are 0–100; `p95 >= p50`; `localTokens <= totalTokens`.
+
+### 13.3 Forward-tolerant reader rule — FROZEN
+
+A broker push on `events` whose `kind` is a non-empty string OUTSIDE the
+frozen set is **legal and MUST be ignored by clients** (decoded as an opaque
+payload). This makes later milestones' dashboard kinds (M4 workstream
+lenses, M5 pipeline run monitors) non-breaking for M3 clients — the M2
+"opaque envelope" policy made permanent. Tolerance applies to KINDS only:
+malformed **registered** kinds, kindless payloads, and unknown `readModel` /
+`source` / freshness values answer `bad-request`. Golden fixtures:
+`events-unknown-kind-tolerated`, `events-broker-payload-draft-opaque`
+(the M2-era frame, byte-identical, still valid).
+
+## 14. Golden corpus — the BE↔FE contract device
+
+`GOLDEN_WS_FIXTURES` in `packages/testkit` (ICR-0003, extended at the M2
+freeze and again at this M3 freeze with the `events-payload` stage;
+`GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M3'` must equal the protocol package's
+`PROTOCOL_FREEZE`). Every frozen payload family has valid + every invalid
+class pinned as exact wire bytes — including one valid snapshot per §6.3
+read model; both departments' CI replays the same frames (plan §9.3 BE↔FE
+#1). A fixture change requires both orchestrators' sign-off. The hooks
+acceptance surface has its own sibling corpus (`GOLDEN_HOOK_FIXTURES`,
+[hooks-contract.md §6](hooks-contract.md)).
+
+## 15. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
@@ -413,3 +497,5 @@ orchestrators' sign-off.
 | 2026-07-04 | §4.2: optional `prompt` on resume params (sdk substrate requires it at M1); §4.1: launch `state` = ledger state at response time (M1 composition note). Additive, backward-compatible — old resume frames stay valid. | [ICR-0004](icr/icr-0004-resume-prompt.md) |
 | 2026-07-04 | **M2 FULL FREEZE.** Promoted: transcript (§9), approvals (§10), quota (§11), context-graph (§12) payload unions; JSON reconnect-replay + per-(boot, channel) seq scoping (§2/§8); auth transport codified as connect-time token, handshake-message draft resolved as not needed (§1). Amended frozen surfaces (recorded here, landed by the freeze agent): error code `approval-not-pending` added (§7); `approve` verb retired-as-reserved — decisions ride the approvals channel (§4); §3 directions concretized (broker→client fan-out channels accept the client `replay-request`). Deferred: `events` payload union → M3 (§8). Protocol `1.0.0-m1-core` → `1.0.0`. FE-ORCH co-sign: **pending** (validator-derived, additive except the recorded amendments). | — (M2 freeze) |
 | 2026-07-04 | §6 **attach-semantics behavior pin** (prose only, NO wire change, requested in the BE-3 M2 return): OUTPUT frames for `pty.<sid>` flow to a connection only after its first `pty-replay-request` on that channel — the replay-request doubles as the attach verb (`fromWatermark` 0 = from session birth); never-attached connections receive nothing and pin nothing; clients must replay-request on every (re)connect. Matches the landed BE-3 implementation and the FE-2 client's documented duty; golden fixtures unaffected. FE-ORCH co-sign: **pending** (bundled with the M2 freeze co-sign). | — (BE-ORCH steward, prose pin) |
+| 2026-07-04 | **M3 FREEZE.** Closed the one open surface: the `events` payload union (§13) — `event-summary` (normalized events-store row fan-out, value-light [X2]) + `read-model-snapshot` (the ten §6.3 dashboard leads with a REQUIRED per-source freshness field; degraded sources are states, never errors) + the frozen forward-tolerant unknown-kind rule (§13.3, the M2 opaque policy made permanent). New closed registries: `EVENT_SOURCES`, `SOURCE_FRESHNESS_STATES`, `EVENT_ERROR_KINDS`, `READ_MODEL_IDS` (shared with schema migration 0002 CHECKs). Verified sufficient, NO amendment: quota snapshot (§11) carries the statusline tee data exactly (five_hour/seven_day → 5h/7d, usedPct, resetsAt); context-graph touch (§12) stays paths+session-ids only [X2]. Corpus: `events-payload` stage added; fixture `events-broker-payload-draft-opaque` kept byte-identical and valid, its pinned stage moved channel-policy→events-payload (the deferral resolving as recorded at M2); 19 new events fixtures (valid per read model + every invalid class). Protocol `1.0.0` → `1.1.0`, `FROZEN-M2` → `FROZEN-M3`. No new error codes; no change to any M1/M2 wire shape. FE-ORCH co-sign: **pending** (includes the one-line freeze-literal advance in `app/src/features/launch/wire.spec.ts`). | — (M3 freeze) |
+| 2026-07-04 | §12 **session-id relay pin** (prose only, NO wire change; requested in the BE-6 M3 return): `sessionId` documented as harness-id-where-known with native-id relay until the BE-7/M4 ledger mapping — the exact hooks-contract §7 approvals-relay sentence, now stated for context-graph too; the composition root MUST inject the ledger resolver at M4 (the `resolveSessionId` seam, core/src/collector/graphfeed/hookTouches.ts). Validator, charset and golden fixtures unchanged. FE-ORCH co-sign: n/a (no wire change). | — (BE-ORCH steward, prose pin) |

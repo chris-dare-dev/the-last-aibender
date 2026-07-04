@@ -1,0 +1,99 @@
+[
+  {
+    "probe": "system bun",
+    "ok": true,
+    "detail": {
+      "version": "1.2.23",
+      "hasTerminal": false
+    },
+    "note": "bun 1.2.23 predates Bun.Terminal (needs >= 1.3.5)"
+  },
+  {
+    "probe": "node-pty 1.1.0",
+    "ok": true,
+    "detail": {
+      "impl": "node-pty@1.1.0",
+      "runtime": "node v25.8.0",
+      "ok": true,
+      "ttySeen": true,
+      "initialSize": "80x24",
+      "resizeSeen": "120x40",
+      "echoSeen": true,
+      "exitEvent": {
+        "exitCode": 0,
+        "signal": 1
+      },
+      "timings": {
+        "spawnToFirstByteMs": 127.4,
+        "resizeToSigwinchMs": 0.7,
+        "killToExitMs": 1.8
+      },
+      "apiSurface": [
+        "addListener",
+        "clear",
+        "cols",
+        "destroy",
+        "emit",
+        "end",
+        "fd",
+        "kill",
+        "listeners",
+        "master",
+        "on",
+        "onData",
+        "onExit",
+        "once",
+        "pause",
+        "pid",
+        "pipe",
+        "process",
+        "ptsName",
+        "removeAllListeners",
+        "removeListener",
+        "resize",
+        "resume",
+        "rows",
+        "setEncoding",
+        "slave",
+        "write"
+      ]
+    },
+    "note": "[spawn-helper exec bit re-applied] "
+  },
+  {
+    "probe": "Bun.Terminal (local bun)",
+    "ok": false,
+    "detail": {
+      "impl": "Bun.Terminal (bun 1.3.14)",
+      "runtime": "bun 1.3.14",
+      "ok": false,
+      "hasTerminalApi": true,
+      "ttySeen": true,
+      "initialSize": "80x24",
+      "resizeSeen": null,
+      "echoSeen": true,
+      "exitEvent": {
+        "exitCode": 143,
+        "signal": "SIGTERM"
+      },
+      "timings": {
+        "spawnToFirstByteMs": 45.4,
+        "killToExitMs": 2
+      },
+      "apiSurface": [
+        "close",
+        "closed",
+        "controlFlags",
+        "inputFlags",
+        "localFlags",
+        "outputFlags",
+        "ref",
+        "resize",
+        "setRawMode",
+        "unref",
+        "write"
+      ]
+    },
+    "note": ""
+  }
+]

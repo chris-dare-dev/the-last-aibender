@@ -1,0 +1,13 @@
+# Spike-local workspace root — stops pnpm from resolving up into the repo
+# workspace (spikes are quarantined, never workspace members; see spikes/README.md).
+packages: []
+# Build-script approvals (pnpm 11 supply-chain guard):
+#   esbuild   — places its platform binary (vite dependency)
+#   node-pty  — node-gyp native build (the parity baseline under test)
+#   bun       — places the bun 1.3.x binary (Bun.Terminal probe target)
+#   playwright— host OS dependency check only; browsers installed explicitly
+allowBuilds:
+  esbuild: true
+  node-pty: true
+  bun: true
+  playwright: true

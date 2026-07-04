@@ -1,0 +1,23 @@
+{
+  "name": "@aibender-spike/pty-supervision",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SPIKE-D (plan spikes vi + vii): 6-PTY ack-watermark flow-control soak + broker-SIGKILL orphan/resume fidelity. QUARANTINED — never imported by prod code. Verdict: docs/spikes/spike-d-pty-supervision.md",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "postinstall": "node scripts/fix-spawn-helper.mjs",
+    "test": "vitest run",
+    "soak": "tsx src/runSoak.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "node-pty": "^1.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

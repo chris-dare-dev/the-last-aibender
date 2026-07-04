@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SPIKE-C react-virtual end-anchored harness</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body, #root { height: 100%; width: 100%; overflow: hidden; }
+      body { background: #111110; color: #e8e6e1; font: 13px/1.5 ui-monospace, Menlo, monospace; }
+      .scroller { height: 100%; width: 100%; overflow-y: auto; contain: strict; }
+      .row { padding: 2px 12px; border-bottom: 1px solid #1d1c1a; overflow-wrap: break-word; }
+      .row .tag { color: #ffb000; margin-right: 8px; }
+      #jump-live {
+        position: fixed; right: 16px; bottom: 16px; z-index: 10;
+        background: #ffb000; color: #111110; border: 0; padding: 6px 10px;
+        font: inherit; cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

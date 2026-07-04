@@ -1,5 +1,21 @@
 # App Shell + Frontend Architecture for the-last-aibender (macOS-first harness)
 
+> **⚠️ PARTIALLY SUPERSEDED (annotation added 2026-07-04, SI-1 doc-hygiene chore).**
+> Several recommendations in this doc were overridden by the
+> [frontend-stack-coherence tie-break](frontend-stack-coherence.md) and the
+> [architecture blueprint §12 contradiction ledger](../summaries/01-architecture-blueprint.md#12-contradiction-ledger-what-was-overridden-and-why):
+>
+> - **Svelte 5 pick → overridden**: the stack is **React 19.2 + zustand 5 + Compiler**
+>   (ledger #3, via this doc's own fallback clause).
+> - **three.js/3d-force-graph for the context graph → overridden**: the
+>   **graphology + d3-force + Pixi v8** stack won (ledger #4); 3d-force-graph is a
+>   deferred showcase mode.
+> - **"One PTY per account" → corrected**: it conflated account with session; the
+>   session substrate is the hybrid of ledger #1 (SDK + node-pty for attended TUIs).
+>
+> The shell verdict (Tauri v2 + detached local core daemon, shell-agnosticism) and the
+> rest of the analysis **stand**. Read the blueprint first; treat this doc as evidence.
+
 **Stage-1 discovery research — no code. Researched 2026-07-03.**
 Scope: app shell (Tauri v2 vs Electron vs pure local web app), PTY/terminal embedding, process
 supervision, streaming transport, WebGL/WebGPU, memory budget, tray/notifications,

@@ -10,6 +10,7 @@ tier-2 scanner literals, tokens) live under `~/.aibender/` and the Keychain,
 | Runbook | Status | Purpose |
 |---|---|---|
 | [hygiene.md](hygiene.md) | **live** | Set up, verify, and re-prove the two-tier gitleaks gate (SI-1). |
+| [m0-dod.md](m0-dod.md) | **record** | M0 definition-of-done gate record: per-item status, spike verdicts, pending-owner ledger. |
 | `login-bootstrap.md` | planned (M2) | One interactive `claude /login` per account, ever — the attended-PTY bootstrap flow. |
 | `version-gate.md` | planned (M1) | Mandatory checks before any SDK bump, incl. the keychain-deletion canary. |
 | `recovery.md` | planned (M6) | Broker crash/orphan recovery via the resume ledger. |

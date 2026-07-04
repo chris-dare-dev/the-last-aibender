@@ -1,0 +1,15 @@
+{
+  "name": "@aibender-spike/signing-ant",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SPIKE-E harness (quarantined): (viii) ant-profile experiment preflight, (ix) sidecar codesign dry run. Never imported by prod code.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "preflight:ant": "node ant-preflight.ts",
+    "dryrun:signing": "node signing-dryrun.ts",
+    "test": "node signing-dryrun.ts"
+  }
+}

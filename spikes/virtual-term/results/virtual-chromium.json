@@ -1,0 +1,180 @@
+{
+  "browser": "chromium",
+  "skipped": false,
+  "raw": {
+    "spontaneousDrop": null,
+    "outcomes": [
+      {
+        "size": "800x400",
+        "label": "shrink-h",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 244,
+        "devMedian": 426,
+        "devMax": 556
+      },
+      {
+        "size": "800x750",
+        "label": "grow-h",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 0,
+        "devMedian": 163,
+        "devMax": 346
+      },
+      {
+        "size": "500x750",
+        "label": "narrow-w (rewrap)",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 432,
+        "devMedian": 476,
+        "devMax": 579
+      },
+      {
+        "size": "1000x500",
+        "label": "widen+shrink-h",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 15
+      }
+    ],
+    "finalLineCount": 155
+  },
+  "shim": {
+    "outcomes": [
+      {
+        "size": "800x400",
+        "label": "shrink-h",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": false,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      },
+      {
+        "size": "800x750",
+        "label": "grow-h",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      },
+      {
+        "size": "500x750",
+        "label": "narrow-w (rewrap)",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      },
+      {
+        "size": "1000x500",
+        "label": "widen+shrink-h",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      }
+    ],
+    "phases": [
+      {
+        "name": "A-anchored-stream",
+        "frames": 317,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 1,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 0,
+        "lastScrollTop": 2394
+      },
+      {
+        "name": "B-resize-800x400",
+        "frames": 72,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 5,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 2742,
+        "lastScrollTop": 3831
+      },
+      {
+        "name": "B-resize-800x750",
+        "frames": 72,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 306,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 3525,
+        "lastScrollTop": 4534
+      },
+      {
+        "name": "B-resize-500x750",
+        "frames": 73,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 0,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 4534,
+        "lastScrollTop": 5803
+      },
+      {
+        "name": "B-resize-1000x500",
+        "frames": 73,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 584,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 5803,
+        "lastScrollTop": 5891
+      },
+      {
+        "name": "C-scroll-up-release",
+        "frames": 197,
+        "maxDeviation": 2091,
+        "jankFrames": 194,
+        "maxUpwardJump": 1200,
+        "settleDeviation": 2091,
+        "atEndAtSettle": false,
+        "firstScrollTop": 5891,
+        "lastScrollTop": 4858
+      },
+      {
+        "name": "D-jump-to-live",
+        "frames": 163,
+        "maxDeviation": 2091,
+        "jankFrames": 3,
+        "maxUpwardJump": 1,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 4858,
+        "lastScrollTop": 9552
+      }
+    ],
+    "scrollMethod": "mouse.wheel",
+    "finalLineCount": 245
+  },
+  "boundsPx": {
+    "settle": 4,
+    "drift": 4,
+    "jankFrame": 8
+  }
+}

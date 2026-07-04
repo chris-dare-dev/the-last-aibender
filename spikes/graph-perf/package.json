@@ -1,0 +1,30 @@
+{
+  "name": "spike-b-graph-perf",
+  "version": "0.0.0",
+  "private": true,
+  "description": "M0 spike B (plan spikes ii + iii): Pixi v8 5k-node soak + d3-force worker layout round-trip latency. QUARANTINED — never imported by prod code.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "bench:layout": "tsx src/bench-layout.ts",
+    "bench:pixi": "tsx src/bench-pixi.ts",
+    "build:page": "esbuild browser/pixi-soak.ts --bundle --format=iife --outfile=browser/dist/pixi-soak.js --target=es2022",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "@types/node": "^22.15.0",
+    "d3-force": "3.0.0",
+    "esbuild": "^0.25.0",
+    "graphology": "0.26.0",
+    "graphology-types": "^0.24.8",
+    "pixi.js": "8.19.0",
+    "playwright": "^1.50.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

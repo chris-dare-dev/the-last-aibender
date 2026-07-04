@@ -1,0 +1,183 @@
+{
+  "browser": "webkit",
+  "skipped": false,
+  "raw": {
+    "spontaneousDrop": {
+      "tMs": 2250,
+      "count": 65
+    },
+    "outcomes": [
+      {
+        "size": "800x400",
+        "label": "shrink-h",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 225,
+        "devMedian": 288,
+        "devMax": 452
+      },
+      {
+        "size": "800x750",
+        "label": "grow-h",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 15,
+        "devMedian": 59,
+        "devMax": 405
+      },
+      {
+        "size": "500x750",
+        "label": "narrow-w (rewrap)",
+        "preLive": false,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 20
+      },
+      {
+        "size": "1000x500",
+        "label": "widen+shrink-h",
+        "preLive": true,
+        "live": false,
+        "libAtEnd": false,
+        "devMin": 0,
+        "devMedian": 15,
+        "devMax": 41
+      }
+    ],
+    "finalLineCount": 160
+  },
+  "shim": {
+    "outcomes": [
+      {
+        "size": "800x400",
+        "label": "shrink-h",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      },
+      {
+        "size": "800x750",
+        "label": "grow-h",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      },
+      {
+        "size": "500x750",
+        "label": "narrow-w (rewrap)",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      },
+      {
+        "size": "1000x500",
+        "label": "widen+shrink-h",
+        "preLive": true,
+        "live": true,
+        "libAtEnd": true,
+        "devMin": 0,
+        "devMedian": 0,
+        "devMax": 0
+      }
+    ],
+    "phases": [
+      {
+        "name": "A-anchored-stream",
+        "frames": 229,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 1,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 0,
+        "lastScrollTop": 2351
+      },
+      {
+        "name": "B-resize-800x400",
+        "frames": 58,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 4,
+        "settleDeviation": 0,
+        "atEndAtSettle": false,
+        "firstScrollTop": 2551,
+        "lastScrollTop": 3870
+      },
+      {
+        "name": "B-resize-800x750",
+        "frames": 58,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 350,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 3520,
+        "lastScrollTop": 4572
+      },
+      {
+        "name": "B-resize-500x750",
+        "frames": 58,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 0,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 4611,
+        "lastScrollTop": 5881
+      },
+      {
+        "name": "B-resize-1000x500",
+        "frames": 58,
+        "maxDeviation": 0,
+        "jankFrames": 0,
+        "maxUpwardJump": 604,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 6131,
+        "lastScrollTop": 6169
+      },
+      {
+        "name": "C-scroll-up-release",
+        "frames": 143,
+        "maxDeviation": 2057,
+        "jankFrames": 141,
+        "maxUpwardJump": 1200,
+        "settleDeviation": 2057,
+        "atEndAtSettle": false,
+        "firstScrollTop": 6169,
+        "lastScrollTop": 5007
+      },
+      {
+        "name": "D-jump-to-live",
+        "frames": 129,
+        "maxDeviation": 2057,
+        "jankFrames": 4,
+        "maxUpwardJump": 1,
+        "settleDeviation": 0,
+        "atEndAtSettle": true,
+        "firstScrollTop": 5007,
+        "lastScrollTop": 9651
+      }
+    ],
+    "scrollMethod": "mouse.wheel",
+    "finalLineCount": 245
+  },
+  "boundsPx": {
+    "settle": 4,
+    "drift": 4,
+    "jankFrame": 8
+  }
+}

@@ -1,0 +1,281 @@
+{
+  "meta": {
+    "startedAt": "2026-07-04T04:42:53.954Z",
+    "node": "v25.8.0",
+    "platform": "darwin arm64",
+    "headed": true,
+    "lines": 100000,
+    "proxyNote": "Playwright WebKit (engine proxy for WKWebView). NOT a real Tauri WKWebView window; see verdict doc T3 section."
+  },
+  "browserVersion": "WebKit 26.5",
+  "webglRun": {
+    "boot": {
+      "rendererMode": "webgl",
+      "webglLoadError": null,
+      "webglAddonLoaded": true,
+      "textureAtlasPresent": true,
+      "canvasCount": 2,
+      "domRowsCount": -1,
+      "contextLossCount": 0,
+      "contextLossEvents": [],
+      "bufferLines": 45,
+      "errors": [],
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+      "devicePixelRatio": 1
+    },
+    "bulk": {
+      "totalLines": 100000,
+      "chunkLines": 1000,
+      "bytes": 12500000,
+      "parseMs": 158,
+      "settleMs": 4,
+      "wallMs": 162,
+      "linesPerSec": 617283.9506172839,
+      "mbPerSec": 77.1604938271605,
+      "frameStats": {
+        "frames": 7,
+        "meanGapMs": 20.428571428571427,
+        "p95GapMs": 31,
+        "maxGapMs": 31
+      },
+      "post": {
+        "rendererMode": "webgl",
+        "webglLoadError": null,
+        "webglAddonLoaded": true,
+        "textureAtlasPresent": true,
+        "canvasCount": 3,
+        "domRowsCount": -1,
+        "contextLossCount": 0,
+        "contextLossEvents": [],
+        "bufferLines": 10045,
+        "errors": [],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+        "devicePixelRatio": 1
+      }
+    },
+    "paced": {
+      "frames": 300,
+      "linesPerFrame": 40,
+      "totalLines": 12000,
+      "wallMs": 3527,
+      "achievedFps": 85.05812305075135,
+      "frameStats": {
+        "frames": 299,
+        "meanGapMs": 11.77257525083612,
+        "p95GapMs": 14,
+        "maxGapMs": 14
+      },
+      "post": {
+        "rendererMode": "webgl",
+        "webglLoadError": null,
+        "webglAddonLoaded": true,
+        "textureAtlasPresent": true,
+        "canvasCount": 3,
+        "domRowsCount": -1,
+        "contextLossCount": 0,
+        "contextLossEvents": [],
+        "bufferLines": 10045,
+        "errors": [],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+        "devicePixelRatio": 1
+      }
+    },
+    "contextLoss": {
+      "before": {
+        "rendererMode": "webgl",
+        "webglLoadError": null,
+        "webglAddonLoaded": true,
+        "textureAtlasPresent": true,
+        "canvasCount": 3,
+        "domRowsCount": -1,
+        "contextLossCount": 0,
+        "contextLossEvents": [],
+        "bufferLines": 10045,
+        "errors": [],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+        "devicePixelRatio": 1
+      },
+      "trigger": {
+        "attempted": true,
+        "perCanvas": [
+          {
+            "class": "xterm-link-layer",
+            "lost": false,
+            "reason": "no gl context"
+          },
+          {
+            "class": "(none)",
+            "lost": true
+          },
+          {
+            "class": "(none)",
+            "lost": false,
+            "reason": "no gl context"
+          }
+        ]
+      },
+      "after": {
+        "rendererMode": "dom",
+        "webglLoadError": null,
+        "webglAddonLoaded": true,
+        "textureAtlasPresent": true,
+        "canvasCount": 0,
+        "domRowsCount": 45,
+        "contextLossCount": 1,
+        "contextLossEvents": [
+          {
+            "t": 6821,
+            "type": "webglcontextlost"
+          }
+        ],
+        "bufferLines": 10045,
+        "errors": [],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+        "devicePixelRatio": 1,
+        "handlerFiredWithinGrace": true
+      },
+      "postLossWrite": {
+        "beforeLines": 10045,
+        "afterLines": 10045,
+        "marker": "POSTLOSS-MARKER-1783140181406",
+        "tail": "POSTLOSS-MARKER-1783140181406",
+        "rendererMode": "dom",
+        "canvasCount": 0,
+        "domRowsCount": 45,
+        "errors": []
+      }
+    },
+    "log": {
+      "consoleErrors": [
+        "[warning] webgl context not restored; firing onContextLoss"
+      ],
+      "pageErrors": []
+    }
+  },
+  "webgpuProbe": {
+    "hasNavigatorGpu": false,
+    "gpuObjectType": "undefined",
+    "adapterRequested": false,
+    "adapterPresent": false,
+    "adapterInfo": null,
+    "features": null,
+    "limitsSample": null,
+    "preferredCanvasFormat": null,
+    "deviceRequested": false,
+    "devicePresent": false,
+    "error": null
+  },
+  "webglRawInfo": {
+    "webgl2": true,
+    "webgl1": false,
+    "vendor": "WebKit",
+    "renderer": "WebKit WebGL",
+    "unmaskedVendor": "Apple Inc.",
+    "unmaskedRenderer": "Apple GPU",
+    "contextAttributes": {
+      "alpha": true,
+      "antialias": true,
+      "depth": true,
+      "failIfMajorPerformanceCaveat": false,
+      "powerPreference": "default",
+      "premultipliedAlpha": true,
+      "preserveDrawingBuffer": false,
+      "stencil": false
+    }
+  },
+  "domRun": {
+    "boot": {
+      "rendererMode": "dom",
+      "webglLoadError": null,
+      "webglAddonLoaded": false,
+      "textureAtlasPresent": false,
+      "canvasCount": 0,
+      "domRowsCount": 45,
+      "contextLossCount": 0,
+      "contextLossEvents": [],
+      "bufferLines": 45,
+      "errors": [],
+      "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+      "devicePixelRatio": 1
+    },
+    "bulk": {
+      "totalLines": 100000,
+      "chunkLines": 1000,
+      "bytes": 12500000,
+      "parseMs": 152,
+      "settleMs": 7,
+      "wallMs": 159,
+      "linesPerSec": 628930.8176100629,
+      "mbPerSec": 78.61635220125785,
+      "frameStats": {
+        "frames": 5,
+        "meanGapMs": 23.4,
+        "p95GapMs": 32,
+        "maxGapMs": 32
+      },
+      "post": {
+        "rendererMode": "dom",
+        "webglLoadError": null,
+        "webglAddonLoaded": false,
+        "textureAtlasPresent": false,
+        "canvasCount": 0,
+        "domRowsCount": 45,
+        "contextLossCount": 0,
+        "contextLossEvents": [],
+        "bufferLines": 10045,
+        "errors": [],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+        "devicePixelRatio": 1
+      }
+    },
+    "paced": {
+      "frames": 300,
+      "linesPerFrame": 40,
+      "totalLines": 12000,
+      "wallMs": 3530,
+      "achievedFps": 84.98583569405099,
+      "frameStats": {
+        "frames": 299,
+        "meanGapMs": 11.77257525083612,
+        "p95GapMs": 14,
+        "maxGapMs": 14
+      },
+      "post": {
+        "rendererMode": "dom",
+        "webglLoadError": null,
+        "webglAddonLoaded": false,
+        "textureAtlasPresent": false,
+        "canvasCount": 0,
+        "domRowsCount": 45,
+        "contextLossCount": 0,
+        "contextLossEvents": [],
+        "bufferLines": 10045,
+        "errors": [],
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+        "devicePixelRatio": 1
+      }
+    },
+    "log": {
+      "consoleErrors": [],
+      "pageErrors": []
+    }
+  },
+  "assessment": {
+    "webglAddonLoaded": true,
+    "webglCanvasPresent": true,
+    "bulk100kCompleted": true,
+    "noUnexpectedContextLossDuringWrite": true,
+    "contextLossHandlerFired": true,
+    "contextLossFellBackToDom": true,
+    "contextLossFallbackKeptData": true,
+    "domFallbackCompleted100k": true,
+    "noPageErrors": true
+  },
+  "throughputComparison": {
+    "webglLinesPerSec": 617283.9506172839,
+    "domLinesPerSec": 628930.8176100629,
+    "webglToDialRatio": 0.9814814814814814,
+    "webglBulkP95FrameGapMs": 31,
+    "domBulkP95FrameGapMs": 32
+  }
+}

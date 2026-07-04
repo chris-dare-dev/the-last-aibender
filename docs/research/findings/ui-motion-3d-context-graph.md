@@ -1,5 +1,20 @@
 # Motion + 3D technology research — the live force-directed context graph
 
+> **⚠️ FRAMEWORK CONTEXT SUPERSEDED (annotation added 2026-07-04, SI-1 doc-hygiene chore).**
+> This doc's React-leaning framework assumptions collided with the app-shell doc's
+> Svelte 5 pick; the conflict was resolved by the
+> [frontend-stack-coherence tie-break](frontend-stack-coherence.md) and recorded in the
+> [architecture blueprint §12 contradiction ledger](../summaries/01-architecture-blueprint.md#12-contradiction-ledger-what-was-overridden-and-why):
+>
+> - **Framework (ledger #3)**: **React 19.2 + zustand 5 + Compiler** is the decided
+>   stack — this doc's React assumptions hold, but via the coherence tie-break, not by
+>   default; read Motion/adapter guidance against that decision.
+> - **Graph renderer (ledger #4)**: this doc's **graphology + d3-force (worker) + Pixi v8**
+>   recommendation **won** over the app-shell doc's three.js/3d-force-graph line and is
+>   the confirmed architecture; 3d-force-graph is demoted to a deferred showcase mode.
+>
+> Read the blueprint (§8) first; treat this doc as the deep-dive evidence base.
+
 **Stage-1 discovery research · the-last-aibender · researched 2026-07-03**
 
 Topic: renderer + animation stack for the flagship feature — a LIVE, Obsidian-style force-directed

@@ -1,0 +1,7 @@
+# Standalone workspace root for the QUARANTINED Spike-A harness.
+# This file exists so (a) pnpm treats spikes/webview-render as its own root —
+# it can never resolve into the monorepo workspace — and (b) the esbuild
+# postinstall (places the platform binary; pulled in by tsx) is approved,
+# mirroring the root workspace's allowBuilds policy.
+allowBuilds:
+  esbuild: true

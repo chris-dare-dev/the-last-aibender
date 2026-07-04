@@ -1,0 +1,10 @@
+# Standalone workspace root for the SPIKE-D harness (quarantine: spikes/ is
+# excluded from the repo-root workspace; this file keeps installs local AND
+# holds the pnpm 11 build-script approvals).
+# node-pty compiles a native addon on install (node-gyp) — approved.
+# esbuild's postinstall only places its platform binary (tsx/vitest dep) — approved.
+packages:
+  - '.'
+allowBuilds:
+  node-pty: true
+  esbuild: true

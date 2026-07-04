@@ -1,0 +1,9 @@
+# Standalone pnpm root for the quarantined spike (spikes/ is deliberately NOT a
+# member of the repo workspace — see spikes/README.md). This file stops pnpm from
+# walking up to the repo root, so a plain `pnpm install` here stays local.
+packages:
+  - .
+# esbuild's postinstall only places its platform binary — approved (matches the
+# repo-root convention in /pnpm-workspace.yaml).
+allowBuilds:
+  esbuild: true

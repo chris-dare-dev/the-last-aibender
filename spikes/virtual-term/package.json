@@ -1,0 +1,29 @@
+{
+  "name": "@aibender-spike/virtual-term",
+  "version": "0.0.0",
+  "private": true,
+  "description": "SPIKE-C (plan spikes v + x): react-virtual end-anchored mid-stream resize behavior + Bun.Terminal parity vs node-pty. QUARANTINED — never imported by prod code.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "test:virtual": "tsx test/run-virtual.ts",
+    "test:parity": "tsx bun-parity/run-parity.ts",
+    "test": "pnpm run build && pnpm run test:virtual && pnpm run test:parity"
+  },
+  "devDependencies": {
+    "@tanstack/react-virtual": "3.14.5",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.1.0",
+    "bun": "1.3.14",
+    "node-pty": "1.1.0",
+    "playwright": "^1.61.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vite": "8.1.3"
+  }
+}

@@ -1,0 +1,30 @@
+<!doctype html>
+<!--
+  SPIKE-A harness page (QUARANTINED, plan spikes i + iv).
+  Boots @xterm/xterm 6 + WebGL addon, exposes window.__spike for the
+  Playwright runner (src/run-spike.ts) to drive phases and read results.
+  No real account data anywhere: all terminal content is synthesized.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>spike-a-webview-render</title>
+    <link rel="stylesheet" href="/node_modules/@xterm/xterm/css/xterm.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: #111110; /* warm charcoal, DESIGN.md direction */
+      }
+      #terminal {
+        width: 1280px;
+        height: 720px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="terminal"></div>
+    <script type="module" src="/page/harness.js"></script>
+  </body>
+</html>

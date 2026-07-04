@@ -4,6 +4,17 @@
 **Date:** 2026-07-03 · **Researcher:** Claude (stage-1 discovery agent)
 **Verdict:** **PARTIAL** — SOPS: adopt unconditionally. k3s-in-Colima: keep as optional adjunct for stateless auxiliary services only (it already runs on this machine and passed the LM Studio connectivity gate empirically). Harness core (Claude sessions, LM Studio, frontend/backend): **host-native** (launchd + per-account `CLAUDE_CONFIG_DIR`).
 
+> **⚠️ SOPS STANCE OVERRIDDEN (annotation added 2026-07-04, SI-1 doc-hygiene chore).**
+> This doc's "SOPS + age: adopt now, unconditionally" position (verdict above, TL;DR
+> item 7, §7, recommendation #1, and the [X2] secrets-layout note) was **overridden to
+> DEFER** by the dedicated hygiene research — see
+> [architecture blueprint §12 contradiction ledger, item 5](../summaries/01-architecture-blueprint.md#12-contradiction-ledger-what-was-overridden-and-why)
+> and [x2-secret-hygiene](x2-secret-hygiene.md): nothing in the repo needs
+> encrypt-in-repo, "not in repo at all" beats "in repo encrypted", and premature
+> ceremony adds surface without closing a risk. The pivot is pre-decided (one
+> `age-keygen` away) the day k3s grows or a versioned-sensitive file appears.
+> Everything else in this doc (k3s adjunct verdict, LM Studio gate, right-sizing) stands.
+
 ---
 
 ## TL;DR

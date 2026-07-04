@@ -1,0 +1,509 @@
+/*
+ * FE-2 cockpit chrome — Instrument Grade (DESIGN.md, LOCKED).
+ * Every value is a token: var(--ig-*) from the generated tokens.css.
+ * Structure is hairlines + surface steps — no cards, no elevation, no glow.
+ * Breakpoint media queries repeat the token VALUES because CSS cannot read
+ * custom properties inside @media; each is annotated with its token name.
+ */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--ig-surface-base);
+}
+
+#root {
+  height: 100%;
+}
+
+/* Focus: always visible, always amber, always an outline (DESIGN.md §2.8). */
+:focus-visible {
+  outline: var(--ig-focus-outline);
+  outline-offset: var(--ig-focus-offset);
+}
+
+.ig-app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--ig-surface-base);
+  color: var(--ig-ink-primary);
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+}
+
+/* --- engraved instrument labels (DESIGN.md §2.5 sanctioned exception) ----- */
+
+.ig-engraved {
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-label);
+  line-height: var(--ig-type-label-lh);
+  letter-spacing: var(--ig-tracking-engraved);
+  text-transform: uppercase;
+  color: var(--ig-ink-muted);
+}
+
+/* --- status readouts: semantic hues, SNAP transitions (DESIGN.md §3.6) ---- */
+
+.ig-status-ok {
+  color: var(--ig-status-ok);
+  transition: none;
+}
+.ig-status-degraded {
+  color: var(--ig-status-degraded);
+  transition: none;
+}
+.ig-status-fault {
+  color: var(--ig-status-fault);
+  transition: none;
+}
+.ig-status-nosignal {
+  color: var(--ig-status-nosignal);
+  transition: none;
+}
+
+/* --- status bar ------------------------------------------------------------ */
+
+.ig-statusbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-16);
+  height: var(--ig-space-24);
+  padding: 0 var(--ig-space-12);
+  border-bottom: var(--ig-line-width) solid var(--ig-line-emphasis);
+  flex: none;
+}
+
+.ig-statusbar-spacer {
+  flex: 1;
+}
+
+.ig-statusbar button {
+  all: unset;
+  cursor: pointer;
+  font: inherit;
+}
+
+.ig-attention {
+  color: var(--ig-accent);
+}
+
+/* --- three-zone cockpit (DESIGN.md §4) -------------------------------------- */
+
+.ig-cockpit {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: var(--ig-zone-left) minmax(var(--ig-zone-center-min), 1fr) var(--ig-zone-right);
+}
+
+.ig-zone {
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.ig-zone-left {
+  border-right: var(--ig-line-width) solid var(--ig-line-hairline);
+}
+
+.ig-zone-right {
+  border-left: var(--ig-line-width) solid var(--ig-line-hairline);
+}
+
+/* compact (<var(--ig-breakpoint-cockpit) = 1440px): left rail collapses */
+@media (max-width: 1439px) {
+  .ig-cockpit {
+    grid-template-columns: var(--ig-space-48) minmax(0, 1fr) var(--ig-zone-right);
+  }
+  .ig-zone-left .ig-panel-body,
+  .ig-zone-left .ig-panel-detail {
+    display: none;
+  }
+}
+
+/* below compact (<var(--ig-breakpoint-compact) = 1024px): single column,
+   instruments become a top strip (DESIGN.md §4.2) */
+@media (max-width: 1023px) {
+  .ig-cockpit {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .ig-zone {
+    overflow-y: visible;
+  }
+  .ig-zone-right {
+    order: -1;
+    flex-direction: row;
+    overflow-x: auto;
+    border-left: none;
+    border-bottom: var(--ig-line-width) solid var(--ig-line-hairline);
+  }
+  .ig-zone-right .ig-panel {
+    min-width: 200px;
+    border-bottom: none;
+    border-right: var(--ig-line-width) solid var(--ig-line-hairline);
+  }
+  .ig-zone-left {
+    border-right: none;
+  }
+}
+
+/* --- panels: hairline-separated, never carded ------------------------------- */
+
+.ig-panel {
+  padding: var(--ig-space-8) var(--ig-space-12);
+  border-bottom: var(--ig-line-width) solid var(--ig-line-hairline);
+  background: var(--ig-surface-panel);
+}
+
+.ig-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+}
+
+.ig-panel-readout {
+  margin-left: auto;
+  font-size: var(--ig-type-label);
+  letter-spacing: var(--ig-tracking-engraved);
+}
+
+.ig-panel-detail {
+  color: var(--ig-ink-muted);
+  font-size: var(--ig-type-label);
+  line-height: var(--ig-type-label-lh);
+  letter-spacing: var(--ig-tracking-engraved);
+  text-transform: uppercase;
+}
+
+/* channel identity tick: 2×16px, index hue, identity use ONLY (§2.5) */
+.ig-channel-tick {
+  display: block;
+  width: var(--ig-space-16);
+  height: var(--ig-space-2);
+  margin-top: var(--ig-space-2);
+}
+
+/* NO SIGNAL: the whole instrument dims to faint — slot retained (§2.4) */
+.ig-panel[data-status='nosignal'] .ig-panel-body,
+.ig-panel[data-status='nosignal'] .ig-panel-detail {
+  color: var(--ig-ink-faint);
+}
+
+/* --- gauges (character-grid data surface) ----------------------------------- */
+
+.ig-gauge-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  height: var(--ig-grid-row);
+}
+
+.ig-gauge-track {
+  flex: 1;
+  height: var(--ig-space-4);
+  background: var(--ig-line-hairline);
+}
+
+.ig-gauge-fill {
+  height: 100%;
+  background: var(--ig-ink-secondary);
+}
+
+.ig-gauge-fill[data-status='degraded'] {
+  background: var(--ig-status-degraded);
+}
+
+.ig-gauge-fill[data-status='fault'] {
+  background: var(--ig-status-fault);
+}
+
+.ig-gauge-value {
+  min-width: calc(var(--ig-grid-ch) * 6);
+  text-align: right;
+}
+
+/* --- phosphor decay (§3.2): color/opacity only, instant attack, 80ms hold --- */
+
+@keyframes ig-phosphor {
+  from {
+    color: var(--ig-accent);
+  }
+  to {
+    color: var(--ig-ink-primary);
+  }
+}
+
+.ig-phosphor {
+  animation: ig-phosphor var(--ig-motion-phosphor-decay-duration) var(--ig-ease-decay) 80ms both;
+}
+
+/* reduced-motion discrete variant: static amber freshness tick (§3.5) */
+.ig-fresh-tick {
+  display: inline-block;
+  width: var(--ig-space-8);
+  height: var(--ig-space-2);
+  background: var(--ig-accent);
+  margin-left: var(--ig-space-4);
+  vertical-align: middle;
+}
+
+/* --- fleet rows (status tints are the only tinted backgrounds) -------------- */
+
+.ig-fleet-row {
+  display: flex;
+  gap: var(--ig-space-8);
+  align-items: center;
+  min-height: var(--ig-grid-row);
+  padding: 0 var(--ig-space-12);
+  cursor: pointer;
+  border-bottom: var(--ig-line-width) solid var(--ig-line-hairline);
+}
+
+.ig-fleet-row[data-status='ok'] {
+  background: var(--ig-status-ok-tint);
+}
+.ig-fleet-row[data-status='degraded'] {
+  background: var(--ig-status-degraded-tint);
+}
+.ig-fleet-row[data-status='fault'] {
+  background: var(--ig-status-fault-tint);
+}
+
+.ig-fleet-row[data-selected='true'] {
+  outline: var(--ig-focus-outline);
+  outline-offset: calc(0px - var(--ig-focus-offset));
+}
+
+.ig-fleet-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+/* --- work surface ------------------------------------------------------------ */
+
+.ig-work {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.ig-well {
+  flex: 1;
+  min-height: 0;
+  background: var(--ig-surface-well);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ig-well-idle {
+  text-align: center;
+  color: var(--ig-ink-faint);
+}
+
+.ig-island-host {
+  width: 100%;
+  height: 100%;
+}
+
+/* --- approval inbox ------------------------------------------------------------ */
+
+.ig-inbox {
+  flex: none;
+  max-height: calc(var(--ig-grid-row) * 12);
+  overflow-y: auto;
+  border-top: var(--ig-line-width) solid var(--ig-line-emphasis);
+  background: var(--ig-surface-panel);
+}
+
+.ig-inbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: calc(var(--ig-grid-row) + var(--ig-space-4));
+  padding: var(--ig-space-2) var(--ig-space-12);
+  border-bottom: var(--ig-line-width) solid var(--ig-line-hairline);
+}
+
+.ig-inbox-source {
+  min-width: calc(var(--ig-grid-ch) * 5);
+}
+
+.ig-inbox-summary {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ig-inbox-meta {
+  color: var(--ig-ink-muted);
+  font-size: var(--ig-type-label);
+}
+
+.ig-inbox-empty {
+  padding: var(--ig-space-8) var(--ig-space-12);
+}
+
+/* --- buttons: hairline instruments, amber = the one signal ------------------- */
+
+.ig-btn {
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-label);
+  letter-spacing: var(--ig-tracking-engraved);
+  text-transform: uppercase;
+  line-height: var(--ig-type-label-lh);
+  color: var(--ig-ink-secondary);
+  background: transparent;
+  border: var(--ig-line-width) solid var(--ig-line-emphasis);
+  border-radius: var(--ig-radius-1);
+  padding: 0 var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  cursor: pointer;
+  transition: color var(--ig-motion-hover-feedback-duration) var(--ig-ease-mechanical);
+}
+
+.ig-btn:hover {
+  color: var(--ig-ink-primary);
+}
+
+.ig-btn-primary {
+  color: var(--ig-accent);
+  border-color: var(--ig-accent);
+}
+
+.ig-btn-primary:active {
+  color: var(--ig-accent-press);
+  border-color: var(--ig-accent-press);
+}
+
+/* --- command palette (DESIGN.md §6) ------------------------------------------- */
+
+.ig-scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--ig-surface-scrim);
+}
+
+@keyframes ig-palette-open {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(var(--ig-space-8));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+.ig-palette {
+  position: fixed;
+  top: var(--ig-palette-offset-y);
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--ig-palette-width);
+  max-width: calc(100vw - var(--ig-space-32));
+  background: var(--ig-surface-raised);
+  border: var(--ig-line-width) solid var(--ig-line-emphasis);
+  border-radius: var(--ig-radius-2);
+  animation: ig-palette-open var(--ig-motion-palette-open-duration) var(--ig-motion-palette-open-ease);
+}
+
+.ig-palette-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: calc(var(--ig-palette-row) + var(--ig-space-4));
+  padding: 0 var(--ig-space-12);
+  background: transparent;
+  border: none;
+  border-bottom: var(--ig-line-width) solid var(--ig-line-hairline);
+  color: var(--ig-ink-primary);
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-ui);
+}
+
+.ig-palette-input:focus {
+  outline: none; /* the palette frame is the focus context; rows show selection */
+}
+
+.ig-palette-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: calc(var(--ig-palette-row) * var(--ig-palette-max-rows));
+  overflow-y: auto;
+}
+
+.ig-palette-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  height: var(--ig-palette-row);
+  padding: 0 var(--ig-space-12);
+  color: var(--ig-ink-secondary);
+  cursor: pointer;
+}
+
+.ig-palette-row[data-selected='true'] {
+  background: var(--ig-surface-panel);
+  color: var(--ig-ink-primary);
+}
+
+.ig-palette-marker {
+  color: var(--ig-accent);
+  visibility: hidden;
+}
+
+.ig-palette-row[data-selected='true'] .ig-palette-marker {
+  visibility: visible;
+}
+
+.ig-palette-empty {
+  padding: var(--ig-space-8) var(--ig-space-12);
+  color: var(--ig-ink-faint);
+}
+
+/* --- settings (raised dialog, palette geometry family) ------------------------- */
+
+.ig-settings {
+  position: fixed;
+  top: var(--ig-palette-offset-y);
+  left: 50%;
+  transform: translateX(-50%);
+  width: var(--ig-palette-width);
+  max-width: calc(100vw - var(--ig-space-32));
+  background: var(--ig-surface-raised);
+  border: var(--ig-line-width) solid var(--ig-line-emphasis);
+  border-radius: var(--ig-radius-2);
+  padding: var(--ig-space-12);
+}
+
+.ig-settings-row {
+  display: flex;
+  gap: var(--ig-space-16);
+  min-height: var(--ig-grid-row);
+  align-items: baseline;
+}
+
+.ig-settings-key {
+  width: calc(var(--ig-grid-ch) * 18);
+  flex: none;
+}
+
+.ig-settings-value {
+  color: var(--ig-ink-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

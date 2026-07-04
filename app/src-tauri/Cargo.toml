@@ -1,0 +1,34 @@
+# FE-2 · Tauri v2 shell for the aibender cockpit.
+# Native affordances ONLY (tray, notifications, window, bootstrap-file read);
+# streaming never rides Tauri IPC (blueprint §2). Sidecar wiring for
+# aibender-core is PREPARED behind the `sidecar` feature but OFF in v0 —
+# core runs separately (see README.md).
+
+[package]
+name = "aibender-app"
+version = "0.0.0"
+description = "the-last-aibender cockpit shell (Tauri v2)"
+license = "UNLICENSED"
+edition = "2021"
+rust-version = "1.77.2"
+publish = false
+
+# Standalone crate — never absorbed into a parent Cargo workspace.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# v1 flip: `--features sidecar` spawns aibender-core as a managed child.
+# Deliberately OFF by default (v0 runs core separately — plan §0).
+sidecar = []
+
+[profile.release]
+strip = true

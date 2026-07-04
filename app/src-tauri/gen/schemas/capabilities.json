@@ -1,0 +1,1 @@
+{"default":{"identifier":"default","description":"Cockpit main window baseline: core APIs + notifications. Custom commands (read_bootstrap, notify_native) are app-defined; no fs/shell plugin surface is granted.","local":true,"windows":["main"],"permissions":["core:default","notification:default"]}}

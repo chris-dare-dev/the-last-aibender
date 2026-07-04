@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "the-last-aibender",
+  "version": "0.0.0",
+  "identifier": "dev.aibender.app",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "the-last-aibender",
+        "width": 1600,
+        "height": 1000,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "backgroundColor": "#111110"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://127.0.0.1:* http://127.0.0.1:*; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["icons/icon.png"]
+  }
+}

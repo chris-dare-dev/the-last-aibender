@@ -115,7 +115,11 @@ live procedures are scripted and runbooked up to the owner's go-ahead
    [hooks-telemetry.md](hooks-telemetry.md), driven via `infra/ci/live-check.sh`.
 6. **Tier-1 allowlist for `app/src-tauri/target/`** (SI-ORCH, value-free
    path rule) so full-dir scans stay clean on machines that built the shell
-   without requiring `cargo clean` (D4).
+   without requiring `cargo clean` (D4). — **Resolved post-gate, same day:**
+   global path allowlist landed in `.gitleaks.toml` with a SECURITY.md §2
+   tuning-log entry; full-dir Tier-1 scan re-verified clean with the shell
+   build present, and a seeded fabricated email outside `target/` still
+   fired + the pre-commit hook still blocked it. Not an owner item anymore.
 
 M2 gate verdict: **PASS (synthetic edition)** — every synthetic-provable DoD
 item green at HEAD; live-host items scripted, runbooked, and owner-gated.

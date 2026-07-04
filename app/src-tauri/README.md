@@ -30,18 +30,13 @@ The feature carries a `compile_error!` so it cannot be half-flipped.
 ## Hygiene: `target/` vs the milestone-gate dir scan
 
 `cargo` output under `app/src-tauri/target/` (gitignored) embeds dependency
-metadata (`.rmeta`) containing crate-author emails, which trips the
-full-tree `gitleaks dir . --config .gitleaks.toml` scan HANDOFF §12 expects
-to be clean — the staged pre-commit scan is unaffected (the directory is
-never staged). **Pre-gate step on any machine that built the shell:**
-
-```sh
-cargo clean --manifest-path app/src-tauri/Cargo.toml
-```
-
-A durable value-free path allowlist for `app/src-tauri/target/` in Tier-1
-is with SI-ORCH (.gitleaks.toml is SI-owned); until it lands, `cargo clean`
-before the gate is the documented mitigation.
+metadata (`.rmeta`) containing crate-author emails. Tier-1 carries a global
+**path allowlist** for this directory (see `.gitleaks.toml` and the
+SECURITY.md §2 tuning log, 2026-07-04 M2 entry), so full-tree
+`gitleaks dir . --config .gitleaks.toml` scans stay clean on machines that
+built the shell — no `cargo clean` needed before a gate. The staged
+pre-commit scan was never affected (the directory is gitignored and can
+never be staged), and CI scans fresh checkouts that have no `target/`.
 
 ## Icons
 

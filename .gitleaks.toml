@@ -71,6 +71,22 @@ id = "generic-api-key"
     '''^bmV3LWJvb3QtdG9rZW4$''',
   ]
 
+# --- Global path allowlist: cargo build output ------------------------------
+# app/src-tauri/target/ (gitignored, never tracked) is machine-generated
+# cargo output whose .rmeta metadata embeds THIRD-PARTY crate-author emails
+# (tokio, serde, zerocopy, …), tripping the email rules on any machine that
+# has built the Tauri shell (M2 DoD §4 D4 / §5 item 6). No stable value-shape
+# exists to allowlist — upstream content churns every build/bump — and naming
+# third-party identities in a committed rule would itself violate the
+# value-free doctrine, so this is the sanctioned path exception. Coverage
+# loss is nil for commits: the dir is gitignored so it can never be staged
+# (the pre-commit hook scans staged files) and CI scans fresh checkouts that
+# have no target/. Only local full-dir scans are affected. See SECURITY.md §2
+# tuning log (2026-07-04 M2 entry).
+[[allowlists]]
+description = "cargo build output — gitignored third-party artifacts (app/src-tauri/target/)"
+paths = ['''(?:^|/)app/src-tauri/target/''']
+
 # --- Rule 3: catch-all email with placeholder allowlist ---------------------
 # Deliberately broad: ANY email that is not a sanctioned placeholder form is
 # flagged. If this proves too noisy once real code lands (package metadata,

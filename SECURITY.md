@@ -75,6 +75,22 @@ recording the three blocked commits — see
 
 **Tier-1 allowlist tuning log** (every entry must stay value-free):
 
+- *2026-07-04 (M2 gate follow-up):* added a **global path allowlist** for
+  `app/src-tauri/target/` (cargo build output, gitignored, never tracked).
+  Rust `.rmeta` artifacts embed third-party crate-author emails (tokio,
+  serde, zerocopy, …), tripping the email rules on any machine that has
+  built the Tauri shell (M2 DoD §4 D4 / §5 item 6). Unlike the M0 PixiJS
+  case below there is no stable value-shape to allowlist — the content is
+  upstream-generated and churns on every build/bump — and naming third-party
+  identities in a committed rule would itself violate the value-free
+  doctrine. The path rule is value-free and the coverage loss is nil for
+  commits: the directory is gitignored (never stageable, so the pre-commit
+  staged scan is unaffected) and CI scans fresh checkouts that have no
+  `target/`. Replaces the `cargo clean` pre-gate mitigation that was
+  documented in `app/src-tauri/README.md`. Re-proof on landing: full-dir
+  Tier-1 scan clean with the shell build present; a seeded fabricated
+  personal email outside `target/` still fired both email rules in the dir
+  scan AND was blocked by the staged pre-commit hook.
 - *2026-07-04 (M0 gate):* added `@\dx\.(png|webp|…)$` to the catch-all email
   rule's allowlist. Retina-suffix asset filenames (`bar@2x.webp`) in the
   vendored PixiJS JSDoc inside the spike bundle

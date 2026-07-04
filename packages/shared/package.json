@@ -1,0 +1,17 @@
+{
+  "name": "@aibender/shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cross-cutting utilities: harness id generation, monotonic clock, structured logging with redaction filters keyed off schema secret/identifier tags. Freeze M1.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

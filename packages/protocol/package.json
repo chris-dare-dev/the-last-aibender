@@ -1,0 +1,17 @@
+{
+  "name": "@aibender/protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "WS envelope, channel, and message types shared by the aibender-core gateway and every frontend client. PRE-FREEZE FIRST DRAFT (freeze: M1 core, M2 full).",
+  "license": "UNLICENSED",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

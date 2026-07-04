@@ -1,0 +1,16 @@
+{
+  "name": "aibender-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The aibender-core broker daemon (blueprint §2): session kernel, gateway, adapters, collector, workstreams, pipelines. M0 skeleton: composition-root placeholder only.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "tsx src/main/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

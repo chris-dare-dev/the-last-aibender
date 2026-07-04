@@ -1,0 +1,23 @@
+{
+  "name": "the-last-aibender",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Multi-account Claude Code harness for macOS — broker daemon (aibender-core), Tauri cockpit, pipelines, workstream lineage. M0 monorepo scaffold.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "test": "vitest run",
+    "test:packages": "pnpm -r test",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.2.0"
+  }
+}

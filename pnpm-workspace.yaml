@@ -1,0 +1,11 @@
+# the-last-aibender pnpm workspace (plan §2).
+# spikes/ is deliberately NOT a workspace member — spike harnesses are
+# quarantined (see spikes/README.md) and must never be importable by prod code.
+packages:
+  - packages/*
+  - core
+  - app
+# Dependency build scripts must be approved explicitly (pnpm 11 supply-chain
+# guard). esbuild's postinstall only places its platform binary — approved.
+allowBuilds:
+  esbuild: true

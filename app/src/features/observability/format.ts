@@ -70,3 +70,27 @@ export function fmtMs(ms: number): string {
   if (ms >= 10_000) return `${(ms / 1000).toFixed(1)}S`;
   return `${Math.round(ms)}MS`;
 }
+
+/**
+ * Memory footprint from MB (blueprint §11 phys_footprint is reported in MB):
+ * 512 → "512MB"; 3200 → "3.1GB". GB uses the binary 1024 divisor to match the
+ * watchdog thresholds (claude warn 3 GB / recycle 6 GB) which are physical.
+ */
+export function fmtMb(mb: number): string {
+  if (!Number.isFinite(mb)) return '—';
+  if (Math.abs(mb) >= 1024) return `${(mb / 1024).toFixed(1)}GB`;
+  return `${Math.round(mb)}MB`;
+}
+
+/**
+ * Memory from bytes (swap, local-model residency): 0 → "0B"; 27917287424 →
+ * "26.0GB". Binary divisors so "26 GB swap" matches the §11 red threshold.
+ */
+export function fmtBytes(bytes: number): string {
+  if (!Number.isFinite(bytes)) return '—';
+  const abs = Math.abs(bytes);
+  if (abs >= 1_073_741_824) return `${(bytes / 1_073_741_824).toFixed(1)}GB`;
+  if (abs >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)}MB`;
+  if (abs >= 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${Math.round(bytes)}B`;
+}

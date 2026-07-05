@@ -85,7 +85,14 @@ describe('registerObservability + ObservabilityDock', () => {
       root.render(<ObservabilityDock />);
     });
     expect(host.querySelector('[data-testid="observability-deck"]')).not.toBeNull();
-    expect(host.querySelectorAll('[data-instrument]')).toHaveLength(10);
+    // Ten §6.3 deck leads + the M6 supervision sibling (resource-health),
+    // both mounted in the one observability island (register.tsx).
+    expect(host.querySelectorAll('[data-instrument]')).toHaveLength(11);
+    expect(host.querySelector('[data-instrument="resource-health"]')).not.toBeNull();
+    // The deck still owns exactly the ten §6.3 leads.
+    expect(
+      host.querySelectorAll('[data-testid="observability-deck"] [data-instrument]'),
+    ).toHaveLength(10);
 
     // Wire → binding → store → deck, one frame later.
     feed.listener?.onMessage?.({

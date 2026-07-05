@@ -10,6 +10,7 @@ import type {
   EventSource,
   QuotaGaugesSnapshot,
   ReadModelSnapshot,
+  ResourceHealthSnapshot,
   SessionOutcomesSnapshot,
   SkillLeaderboardSnapshot,
   SourceFreshness,
@@ -169,6 +170,68 @@ export function fullDeckSnapshots(): ReadModelSnapshot[] {
       data: { offloadRatioPct: 22.2, localTokens: 200, totalTokens: 900, windowDays: 7 },
     },
   ];
+}
+
+/**
+ * A resource-health snapshot (M6 supervision instrument). Defaults to a
+ * healthy baseline (normal pressure, no sessions, no notices); callers
+ * override `data` for pressure/session/notice scenarios. Labels + numbers
+ * only [X2] — accounts are frozen placeholders, `slot` is a display ordinal.
+ */
+export function resourceHealthSnap(
+  sources: readonly SourceFreshness[] = [src('fresh', 'lmstudio', T0 - 1000)],
+  data: Partial<ResourceHealthSnapshot['data']> = {},
+  capturedAt = T0,
+): ResourceHealthSnapshot {
+  return {
+    kind: 'read-model-snapshot',
+    readModel: 'resource-health',
+    capturedAt,
+    sources,
+    data: {
+      pressureLevel: 0,
+      pressureState: 'normal',
+      freeRamPct: 62.5,
+      swapUsedBytes: 0,
+      residentSessionCount: 0,
+      sessions: [],
+      notices: [],
+      ...data,
+    },
+  };
+}
+
+/**
+ * A red-pressure snapshot with the sacrifice order playing out (mirrors the
+ * corpus `events-readmodel-resource-health-full-valid` fixture shape).
+ */
+export function resourceHealthRedSnap(
+  sources: readonly SourceFreshness[] = [src('lmstudio-down', 'lmstudio')],
+  capturedAt = T0 + 500,
+): ResourceHealthSnapshot {
+  return resourceHealthSnap(
+    sources,
+    {
+      pressureLevel: 4,
+      pressureState: 'red',
+      freeRamPct: 9.5,
+      swapUsedBytes: 27_917_287_424,
+      residentSessionCount: 3,
+      localModelResidentBytes: 0,
+      sessions: [
+        { account: 'MAX_A', backend: 'claude_code', slot: 0, footprintMb: 2100, band: 'ok' },
+        { account: 'MAX_A', backend: 'claude_code', slot: 1, footprintMb: 3200, band: 'warn' },
+        { account: 'AWS_DEV', backend: 'opencode', slot: 0, footprintMb: 1600, band: 'recycle', hibernated: false },
+        { account: 'LOCAL', backend: 'lmstudio', slot: 0, footprintMb: 6400, band: 'ok', hibernated: true },
+      ],
+      notices: [
+        { action: 'shed-local-model', at: T0 + 400 },
+        { action: 'hibernate-non-account', at: T0 + 450, account: 'AWS_DEV', backend: 'opencode' },
+        { action: 'recycle-session', at: T0 + 480, account: 'MAX_A', backend: 'claude_code' },
+      ],
+    },
+    capturedAt,
+  );
 }
 
 /** Identity-shaped adversarial strings (runtime-built — never literals). */

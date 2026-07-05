@@ -23,6 +23,20 @@ import {
   type QuotaWindow,
   type ReadModelId,
 } from '@aibender/protocol';
+
+/**
+ * The §6.3 dashboard leads this deck renders, in blueprint order. This is the
+ * ten-lead PREFIX of the frozen `READ_MODEL_IDS` registry: the eleventh entry,
+ * `resource-health` (M6), is the supervision/governor instrument and is
+ * produced + rendered SEPARATELY (ResourceHealthInstrument.tsx) — it rides the
+ * same wire union but is not a §6.3 dashboard. Slicing the frozen registry
+ * keeps this list in lock-step: if a future §6.3 lead is appended BEFORE
+ * resource-health the slice widens automatically; the trailing supervision
+ * kind is excluded by name so the deck's fixed geometry stays the ten leads.
+ */
+export const DASHBOARD_READ_MODEL_IDS: readonly ReadModelId[] = Object.freeze(
+  READ_MODEL_IDS.filter((id) => id !== 'resource-health'),
+);
 import { connectionStore, quotaStore } from '../../lib/index.ts';
 import { Phosphor } from '../../chrome/phosphor.tsx';
 import './observability.css';
@@ -42,19 +56,24 @@ import {
 } from './instruments.ts';
 import { latestSnapshot, observabilityStore } from './store.ts';
 
-/** Engraved instrument labels, keyed by the frozen read-model registry. */
-export const INSTRUMENT_LABELS: Readonly<Record<ReadModelId, string>> = Object.freeze({
-  'quota-gauges': 'QUOTA',
-  'burn-rate': 'BURN RATE',
-  'bedrock-cost': 'BEDROCK USD',
-  'api-equivalent-usd': 'API-EQUIV USD',
-  'cache-hit-rate': 'CACHE HIT',
-  latency: 'LATENCY',
-  health: 'ERR/THROTTLE',
-  'skill-leaderboard': 'SKILLS',
-  'session-outcomes': 'OUTCOMES',
-  'local-offload': 'LOCAL OFFLOAD',
-});
+/**
+ * Engraved instrument labels for the ten §6.3 dashboard leads. Excludes the
+ * M6 `resource-health` kind (rendered by ResourceHealthInstrument.tsx) — this
+ * deck owns only the §6.3 leads. Keyed by every DASHBOARD_READ_MODEL_ID.
+ */
+export const INSTRUMENT_LABELS: Readonly<Record<Exclude<ReadModelId, 'resource-health'>, string>> =
+  Object.freeze({
+    'quota-gauges': 'QUOTA',
+    'burn-rate': 'BURN RATE',
+    'bedrock-cost': 'BEDROCK USD',
+    'api-equivalent-usd': 'API-EQUIV USD',
+    'cache-hit-rate': 'CACHE HIT',
+    latency: 'LATENCY',
+    health: 'ERR/THROTTLE',
+    'skill-leaderboard': 'SKILLS',
+    'session-outcomes': 'OUTCOMES',
+    'local-offload': 'LOCAL OFFLOAD',
+  });
 
 const WINDOW_LABELS: Readonly<Record<QuotaWindow, string>> = Object.freeze({
   '5h': '5H',
@@ -95,7 +114,7 @@ function statusClass(status: InstrumentHealth['status']): string {
 // ---------------------------------------------------------------------------
 
 interface InstrumentProps {
-  readonly id: ReadModelId;
+  readonly id: Exclude<ReadModelId, 'resource-health'>;
   readonly health: InstrumentHealth;
   readonly detail?: string;
   readonly copyText: (text: string) => void;
@@ -220,10 +239,10 @@ export function ObservabilityDeck({ now, copyText }: ObservabilityDeckProps): Re
   if (!connected) {
     return (
       <div className="ig-obs-deck" data-testid="observability-deck">
-        {READ_MODEL_IDS.map((id) => (
+        {DASHBOARD_READ_MODEL_IDS.map((id) => (
           <Instrument
             key={id}
-            id={id}
+            id={id as Exclude<ReadModelId, 'resource-health'>}
             health={absentHealth()}
             detail={phase === 'auth-rejected' ? 'GATEWAY AUTH FAULT' : 'NO GATEWAY'}
             copyText={copy}

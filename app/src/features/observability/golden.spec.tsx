@@ -69,10 +69,20 @@ describe('golden events corpus → deck rendering', () => {
       const payload = decodeEventsPayload(fixture.frame);
       if (payload !== undefined) snapshots.push(payload);
     }
-    // The M3 corpus carries exactly one valid fixture per §6.3 read model.
-    expect(new Set(snapshots.map((s) => s.readModel)).size).toBe(10);
+    // The corpus carries one valid fixture per read model: the ten §6.3
+    // leads (M3) plus the M6 supervision instrument `resource-health` (11).
+    // The deck itself renders ONLY the ten §6.3 leads; the resource-health
+    // snapshot lands in the store for its sibling instrument to consume.
+    const readModels = new Set(snapshots.map((s) => s.readModel));
+    expect(readModels.size).toBe(11);
+    expect(readModels.has('resource-health')).toBe(true);
     act(() => observabilityStore.getState().applyBatch(snapshots));
     renderDeck();
+
+    // Deck geometry stays fixed at the ten §6.3 leads (resource-health is a
+    // sibling, not a deck instrument).
+    expect(host.querySelectorAll('[data-instrument]')).toHaveLength(10);
+    expect(host.querySelector('[data-instrument="resource-health"]')).toBeNull();
 
     // 1 · QUOTA — 41.5% gauge; 100% with resetsAt in the past reads DUE+FAULT.
     expect(textOf('quota-MAX_A-5h')).toContain('41.5%');

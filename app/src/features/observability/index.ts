@@ -43,7 +43,9 @@ export {
 
 export {
   fmtAge,
+  fmtBytes,
   fmtCountdown,
+  fmtMb,
   fmtMs,
   fmtPct,
   fmtTokens,
@@ -82,12 +84,32 @@ export {
 } from './instruments.ts';
 
 export {
+  DASHBOARD_READ_MODEL_IDS,
   DECK_TICK_MS,
   INSTRUMENT_LABELS,
   MAX_LEADERBOARD_ROWS,
   ObservabilityDeck,
   type ObservabilityDeckProps,
 } from './ObservabilityDeck.tsx';
+
+export {
+  BAND_STATUS,
+  MAX_NOTICE_ROWS,
+  PRESSURE_STATUS,
+  SHED_ACTION_LABELS,
+  resourceHealthVM,
+  type PressureVM,
+  type ResourceHealthVM,
+  type SessionFootprintRow,
+  type ShedNoticeRow,
+} from './resourceHealth.ts';
+
+export {
+  RESOURCE_HEALTH_LABEL,
+  RESOURCE_TICK_MS,
+  ResourceHealthInstrument,
+  type ResourceHealthInstrumentProps,
+} from './ResourceHealthInstrument.tsx';
 
 export {
   FOCUS_DASHBOARDS_COMMAND_ID,

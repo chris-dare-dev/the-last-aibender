@@ -13,7 +13,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { SOURCE_FRESHNESS_STATES, type SourceFreshnessState } from '@aibender/protocol';
 import { connectionStore, quotaStore } from '../../lib/index.ts';
 import { deriveInstrumentHealth, remediationFor } from './freshness.ts';
-import { ObservabilityDeck } from './ObservabilityDeck.tsx';
+import { DASHBOARD_READ_MODEL_IDS, ObservabilityDeck } from './ObservabilityDeck.tsx';
 import { observabilityStore } from './store.ts';
 import { quotaGaugesSnap, src, T0 } from './specHelpers.ts';
 
@@ -159,7 +159,9 @@ describe('deck NO SIGNAL rendering per freshness state', () => {
     act(() => connectionStore.getState().setPhase('no-broker'));
     renderDeck();
     const instruments = [...host.querySelectorAll('[data-instrument]')];
-    expect(instruments).toHaveLength(10);
+    // The deck renders exactly the §6.3 dashboard leads — the M6
+    // resource-health kind is a sibling, excluded from DASHBOARD_READ_MODEL_IDS.
+    expect(instruments).toHaveLength(DASHBOARD_READ_MODEL_IDS.length);
     for (const el of instruments) {
       expect(el.getAttribute('data-status')).toBe('nosignal');
       expect(el.textContent).toContain('NO GATEWAY');

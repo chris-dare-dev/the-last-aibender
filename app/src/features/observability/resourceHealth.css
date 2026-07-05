@@ -1,0 +1,18 @@
+/*
+ * Resource-health instrument (FE M6). Token-locked: every value is a
+ * var(--ig-*) custom property or a plain layout primitive — no literals
+ * (DESIGN.md §8.5). It reuses the shared engraved instrument primitives
+ * (.ig-panel / .ig-status-* / .ig-gauge-* / .ig-obs-*) from chrome.css +
+ * observability.css; only the two layout-only rules below are new.
+ */
+
+/* the supervision instrument sits below the deck on the same 20px rhythm */
+.ig-rh {
+  margin-top: var(--ig-space-8);
+}
+
+/* a shed/recycle notice is a STATE row — a leading tick marks it, never an
+   alarm color (the tick is a layout box; hue comes from the status class) */
+.ig-rh-notice {
+  padding-left: var(--ig-space-4);
+}

@@ -77,10 +77,13 @@ const VALID_LAUNCH_FIXTURES = [
 
 describe('FE-5 wire — golden corpus (positive)', () => {
   it('pins the same protocol freeze as the corpus', () => {
-    // Literal advanced by the BE-ORCH M5 freeze steward (pipelines channel +
-    // DAG schema landed; FE-ORCH co-sign pending, bundled with the M5 freeze
-    // co-sign). The M5 additions are forward-tolerant on the FE inbound path.
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M5');
+    // Literal advanced by the FE M6 supervision-instrument agent as the
+    // FE-ORCH co-sign of the M6 freeze (ws-protocol.md §13.4: the eleventh
+    // read model `resource-health` landed; the FE resource/pressure
+    // instrument consumes it under the §6.3 store seam). The M6 addition is
+    // an additive read-model kind — the launch wire shapes are unchanged and
+    // this freeze-literal simply tracks the corpus (`FROZEN-M6`).
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M6');
   });
 
   for (const name of VALID_LAUNCH_FIXTURES) {

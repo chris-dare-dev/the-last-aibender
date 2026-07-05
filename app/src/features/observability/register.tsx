@@ -20,23 +20,31 @@ import { registerCommand } from '../../chrome/commands.ts';
 import { registerIsland, type IslandMount } from '../../chrome/islandRegistry.ts';
 import { bindObservability, type EventsFeed, type ObservabilityBindOptions } from './bind.ts';
 import { ObservabilityDeck, type ObservabilityDeckProps } from './ObservabilityDeck.tsx';
+import { ResourceHealthInstrument } from './ResourceHealthInstrument.tsx';
 
 export type RegisterObservabilityOptions = ObservabilityBindOptions &
   Pick<ObservabilityDeckProps, 'now' | 'copyText'>;
 
-/** The deck as an island mount (chrome/islandRegistry seam). */
+/**
+ * The observability instruments as an island mount (chrome/islandRegistry
+ * seam): the ten §6.3 dashboard leads (ObservabilityDeck), then the M6
+ * supervision/governor instrument (ResourceHealthInstrument) as a SIBLING —
+ * separate producer, separate read model, same engraved shell + store seam.
+ * Both consume the one rAF-projected observability store; nothing here
+ * reaches into the deck's internals.
+ */
 export function observabilityIsland(
   options: Pick<ObservabilityDeckProps, 'now' | 'copyText'> = {},
 ): IslandMount {
+  const now = options.now !== undefined ? { now: options.now } : {};
+  const copyText = options.copyText !== undefined ? { copyText: options.copyText } : {};
   return {
     mount(host) {
       const root = createRoot(host);
       root.render(
         <StrictMode>
-          <ObservabilityDeck
-            {...(options.now !== undefined ? { now: options.now } : {})}
-            {...(options.copyText !== undefined ? { copyText: options.copyText } : {})}
-          />
+          <ObservabilityDeck {...now} {...copyText} />
+          <ResourceHealthInstrument {...now} {...copyText} />
         </StrictMode>,
       );
       // Deferred: the dock calls this from a React effect cleanup — a nested
@@ -68,7 +76,8 @@ export function registerObservability(
   const unregisterCommand = registerCommand({
     id: FOCUS_DASHBOARDS_COMMAND_ID,
     title: 'focus dashboards',
-    keywords: 'observability instruments quota burn cost cache latency skills offload',
+    keywords:
+      'observability instruments quota burn cost cache latency skills offload resource pressure supervision memory footprint shed recycle',
     run: () => {
       document.getElementById('ig-observability')?.scrollIntoView();
     },

@@ -1,5 +1,21 @@
 # WS protocol contract — envelope, channels, PTY frames, flow control
 
+> ## 🔒 FROZEN-M7 — 2026-07-05 (account-registry generalization, ICR-0013)
+> **Owner: BE-ORCH · Co-sign: FE-ORCH (pending).** The M7 amendment generalizes
+> the account-label vocabulary for [X1] scalability: the CLOSED 5-label set
+> becomes an OPEN, validated FORM so a newly provisioned Claude Max subscription
+> (`MAX_C`, `MAX_D`, …) is admitted WITHOUT a code change. Two concepts split:
+> **fixed backend labels** `{AWS_DEV, LOCAL}` (closed) vs **Claude account
+> labels** (open — `^MAX_[A-Z]$` for Max accounts + the exact `ENT`). `vocab.ts`
+> `isAccountLabel` now keys off the FORM, and `LABEL_BACKENDS` (a Record) became
+> `backendForLabel()` (a function; the label↔backend pairing invariant is
+> preserved verbatim). This is validation-WIDENING and additive — every M1–M6
+> label is still valid and NO wire SHAPE changed — so a minor bump: `1.4.0` →
+> `1.5.0`, `FROZEN-M6` → `FROZEN-M7`. Schema CHECK constraints relaxed to the
+> same form via migrations 0005 (kernel) / 0006 (events) — see §4.1 and
+> [sqlite-ddl.md](sqlite-ddl.md). Details:
+> [icr/icr-0013-account-registry.md](icr/icr-0013-account-registry.md).
+>
 > ## 🔒 FROZEN-M5 — 2026-07-04
 > **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M5 freeze adds the features-4/5
 > surfaces: the **`pipelines` channel** (§18 — the catalog palette snapshot,
@@ -15,7 +31,7 @@
 > co-signs.
 >
 > The machine-checkable half of this contract is `packages/protocol`
-> (`PROTOCOL_VERSION = '1.3.0'`, `PROTOCOL_FREEZE = 'FROZEN-M5'`). **This
+> (`PROTOCOL_VERSION = '1.5.0'`, `PROTOCOL_FREEZE = 'FROZEN-M7'`). **This
 > document is the prose of record when the two disagree — file an ICR, never
 > a silent divergence.**
 
@@ -109,14 +125,35 @@ an ICR.
 ```jsonc
 { "kind": "launch", "id": "req_01",
   "params": {
-    "accountLabel": "MAX_A",       // MAX_A | MAX_B | ENT | AWS_DEV | LOCAL  [X2 placeholders]
-    "backend": "claude_code",      // must match the label: MAX_*/ENT→claude_code, AWS_DEV→opencode, LOCAL→lmstudio
+    "accountLabel": "MAX_A",       // account-label FORM (below) — MAX_<X> | ENT | AWS_DEV | LOCAL  [X2 placeholders]
+    "backend": "claude_code",      // must match the label: MAX_<X>/ENT→claude_code, AWS_DEV→opencode, LOCAL→lmstudio
     "substrate": "sdk",            // sdk | pty — pty is claude_code-only (blueprint §4.1)
     "cwd": "/abs/path",            // absolute, byte-stable (blueprint §3 rule 2)
     "purpose": "one-off prompt",   // lands in the resume ledger row-before-spawn
     "workstreamHint": "ws_…",      // optional, X4 ledger hint
     "prompt": "…" } }              // optional, headless one-off (feature 2)
 ```
+
+**Account-label FORM — FROZEN-M7 (ICR-0013, [X1] scalability).** `accountLabel`
+is validated by SHAPE, not membership in a closed set, so the owner can add
+Claude Max subscriptions without a contract change. Two disjoint concepts:
+
+| Concept | Values | Set | Backend (`backendForLabel`) |
+|---|---|---|---|
+| Claude **Max** account | `^MAX_[A-Z]$` (`MAX_A`, `MAX_B`, `MAX_C`, `MAX_D`, …) | **OPEN** | `claude_code` |
+| Claude **enterprise** account | exact `ENT` | closed literal | `claude_code` |
+| **Fixed backend** labels (not accounts) | `AWS_DEV`, `LOCAL` | **CLOSED** | `opencode`, `lmstudio` |
+
+The machine-checkable gate is `isAccountLabel` (matches the MAX form OR `ENT` OR
+a fixed backend label) + `backendForLabel` (the pairing) in
+`packages/protocol/vocab.ts`. A NON-sanctioned label (`HACKER`, an email shape,
+`MAX_AB`, lowercase `max_a`) is **rejected** with `bad-request` — the widening
+is a real gate, not anything-goes. Golden fixtures:
+`control-launch-max-c-open-form`, `control-launch-max-d-open-form-pty` (valid),
+`control-launch-nonsanctioned-label`, `control-launch-lowercase-max-label`
+(rejected). The label→real-account map stays machine-local [X2]; enumeration
+(the FE picker) renders the runtime REGISTRY discovered from
+`infra/profiles/*.profile.json`, never a hardcoded count.
 
 Response result: `{ "verb": "launch", "sessionId": "ses_…", "state": "spawning" }`
 (the row-before-spawn row exists **before** the response is sent; the process

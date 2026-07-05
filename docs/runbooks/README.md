@@ -19,6 +19,8 @@ tier-2 scanner literals, tokens) live under `~/.aibender/` and the Keychain,
 | [m6-dod.md](m6-dod.md) | **record** | M6 (FINAL Stage-2) definition-of-done gate record: BE-9 supervision (induced-bloat watchdog, amber/red sacrifice order, accelerated `soak:m6` mechanism proof, composed recycle→lineage-continuity), packaging (dry-run bundle config + `--smoke-test`, NOT signed/flipped), the §9.3/§9.4 integration suites, co-sign flips, gate deviations, pending-owner ledger (real 24 h soak, real signed clean-account launch, LaunchAgent flip). |
 | [stage2-complete.md](stage2-complete.md) | **record** | Stage-2 completion record (M0–M6): what each milestone shipped, the M6 gate evidence re-run at HEAD, the consolidated pending-owner ledger across all of Stage 2, and the hand-off to Stage 3 (adversarial review + rendered-frontend screen capture, which needs the owner's live logins). |
 | [login-bootstrap.md](login-bootstrap.md) | **live** | One interactive `claude /login` per account, ever — per-account config dirs + Keychain isolation (SI-2). |
+| [add-an-account.md](add-an-account.md) | **live** | Add a new Claude subscription account — the [X1] scalability procedure: write one manifest (open `MAX_<X>`/`ENT` form), provision, one login, probe. No code change (SI, ICR-0013). |
+| [account-registry.md](account-registry.md) | **record** | Account-registry generalization change record (Stage 3): the closed 5-set → open `MAX_<X>`/`ENT` form + runtime registry, schema migrations 0005/0006, [X2] doctrine generalization, ICR-0013/0014 co-sign, and the N-account extensibility proof citations (ICR-0013). |
 | [version-gate.md](version-gate.md) | **live** | Mandatory checks before any SDK bump, incl. the keychain-deletion canary (SI-2). |
 | [kernel-live-spawn.md](kernel-live-spawn.md) | **live** | Enabling the kernel's real claude spawn path (T3, owner-gated) — the [X1] live acceptance run. |
 | [launchd.md](launchd.md) | **live** (render) / T3 (bootstrap) | Broker + lms LaunchAgents: Aqua rule, KeepAlive crash check, Background expected-failure probe (SI-3). |
@@ -33,7 +35,8 @@ tier-2 scanner literals, tokens) live under `~/.aibender/` and the Keychain,
 
 ```
 ~/.aibender/
-├── accounts/{max-a,max-b,ent}/   # per-account CLAUDE_CONFIG_DIR + CLAUDE_SECURESTORAGE_CONFIG_DIR
+├── accounts/<stem>/              # one per profile manifest (max-a, max-b, max-c, max-d, ent, …)
+│                                 #   per-account CLAUDE_CONFIG_DIR + CLAUDE_SECURESTORAGE_CONFIG_DIR
 ├── bin/                           # installed helper scripts (statusline quota tee)
 ├── db/                            # SQLite ledgers
 ├── bootstrap/                     # gateway port/token discovery file

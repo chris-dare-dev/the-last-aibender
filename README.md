@@ -7,7 +7,9 @@ top. Built by agents, reviewed by orchestrators, specified by the research
 under [`docs/research/`](docs/research/).
 
 > **Identity policy [X2]:** this repo is public. Account identities appear only
-> as the placeholders **MAX_A / MAX_B / ENT / AWS_DEV_ACCOUNT_ID** — in code,
+> as sanctioned placeholders — Claude Max accounts as the OPEN form **`MAX_<X>`**
+> (`^MAX_[A-Z]$`: MAX_A, MAX_B, MAX_C, …), the enterprise account as **ENT**, the
+> fixed backend labels **AWS_DEV / LOCAL**, and **AWS_DEV_ACCOUNT_ID** — in code,
 > tests, fixtures, docs, and every stored row. Real mappings live machine-local
 > under `~/.aibender/`, never in the tree. See [SECURITY.md](SECURITY.md).
 
@@ -28,8 +30,10 @@ lock. The normative specs are:
 1. **Usage & cost observability** — per-account 5h/weekly quota gauges with
    reset countdowns, burn rate, Bedrock actual-vs-estimate USD, cache hit
    rates, latency, skill leaderboard — one SQLite events store behind it all.
-2. **One-off prompts against a *specified* account** — launch a prompt on
-   MAX_A, MAX_B, ENT, AWS_DEV (Bedrock), or LOCAL, explicitly.
+2. **One-off prompts against a *specified* account** — launch a prompt on any
+   provisioned Claude Max account (`MAX_<X>`), ENT, AWS_DEV (Bedrock), or LOCAL,
+   explicitly. The account set is an open, validated form (ICR-0013), so adding
+   a new Max subscription needs no code change.
 3. **Skill launches from a specified account** — `/skill-name args` composition
    with a catalog-driven picker.
 4. **Multi-agent workflows with per-step account/Bedrock routing** — a

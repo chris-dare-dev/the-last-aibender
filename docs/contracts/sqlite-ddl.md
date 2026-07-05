@@ -10,8 +10,21 @@
 > here with its own freeze banner.
 >
 > The machine-checkable half is `packages/schema` (migrations 0001/0002/0003/
-> 0004 + accessors). **This document is the prose of record when the two
-> disagree — file an ICR, never a silent divergence.**
+> 0004/0005/0006 + accessors). **This document is the prose of record when the
+> two disagree — file an ICR, never a silent divergence.**
+>
+> **AMENDED FROZEN-M7 (2026-07-05, ICR-0013) — account-registry relaxation.**
+> The account-label CHECK constraints below (shown verbatim from the frozen
+> migrations 0001/0002/0003/0004) were pinned to the CLOSED 5-literal set
+> `('MAX_A','MAX_B','ENT','AWS_DEV','LOCAL')`. Migrations **0005** (kernel) and
+> **0006** (events) RELAX them to the OPEN, validated FORM — see §11. Wherever a
+> CHECK below reads `account[_label] IN ('MAX_A','MAX_B','ENT','AWS_DEV','LOCAL')`
+> the LIVE constraint after 0005/0006 reads
+> `account[_label] GLOB 'MAX_[A-Z]' OR account[_label] IN ('ENT','AWS_DEV','LOCAL')`,
+> and the pairing CHECK's `IN ('MAX_A','MAX_B','ENT')` clause becomes
+> `(… GLOB 'MAX_[A-Z]' OR … = 'ENT')`. The label↔backend pairing is preserved
+> verbatim. The frozen migrations are NOT edited (SQLite table-rebuild lands in
+> the new 0005/0006).
 
 Blueprint anchors: §4.1 (resume ledger), §6.2 (one SQLite/WAL store), plan §3
 (freeze schedule). State-machine mechanics were proven by SPIKE-D (vii): real
@@ -747,6 +760,51 @@ retry-safe re-ingest dedupes. The pipeline runner (BE-8) records these directly
 (NOT via the LineageRecorder port, which is for kernel session actions —
 ws-protocol.md §15.1 / dag-schema.md §6).
 
+## 10.7. Migrations 0005 / 0006 `account-registry-open-form` — the [X1] relaxation — FROZEN (M7)
+
+**Why.** The account-label CHECK constraints were pinned to the CLOSED 5-literal
+set. The owner can provision arbitrarily many Claude Max subscriptions (the
+keychain isolation scales automatically), so the closed set made a new account
+invisible without a schema change. ICR-0013 RELAXES the label CHECK to the OPEN,
+validated FORM — mirroring the protocol's `CLAUDE_ACCOUNT_LABEL_RE` (`^MAX_[A-Z]$`).
+
+**The relaxed predicate** (SQLite `GLOB`, which treats `_` literally and `[A-Z]`
+as a case-sensitive char class — a faithful SQL mirror of the regex):
+
+```sql
+account GLOB 'MAX_[A-Z]' OR account IN ('ENT','AWS_DEV','LOCAL')   -- the label form
+-- pairing (unchanged rule, GLOB form):
+((account GLOB 'MAX_[A-Z]' OR account = 'ENT') AND backend = 'claude_code')
+  OR (account = 'AWS_DEV' AND backend = 'opencode')
+  OR (account = 'LOCAL'   AND backend = 'lmstudio')
+```
+
+- **Migration 0005** (kernel DB, `KERNEL_MIGRATIONS`) rebuilds `account_profiles`,
+  `resume_ledger`, `session_node`, and `step_attempt` (nullable account) with the
+  relaxed CHECK. Bumps `schema_meta` `ddl_version=5`, `frozen_milestone=M7`.
+- **Migration 0006** (events DB, `EVENTS_STORE_MIGRATIONS`) rebuilds `events`
+  (pairing preserved), `quota_snapshots`, `session_outcomes`. Bumps
+  `events_ddl_version=2`, `frozen_milestone=M7`.
+
+**Why a table rebuild + WHY it is safe.** SQLite cannot `ALTER` a CHECK, so each
+affected table is recreated / copied / dropped / renamed. The migrate runner
+wraps `up` in `BEGIN…COMMIT` with `foreign_keys=ON`, where `PRAGMA foreign_keys`
+is a no-op — so 0005 uses `PRAGMA defer_foreign_keys=ON` (which DOES apply inside
+a txn, deferring enforcement to COMMIT). For the one inbound-FK table
+(`session_node ← session_edge`), the OLD table is renamed aside first (SQLite
+auto-rewrites `session_edge`'s FK to the temp name), its indexes are dropped so
+the rebuilt table can reclaim the names, the new table is built under the real
+name + copied, then `session_edge` is rebuilt to re-point its FK at the real
+name, and the temp is dropped. `PRAGMA foreign_key_check` is clean at COMMIT.
+The seed rows, all indexes, and the label↔backend pairing are preserved; the
+frozen migrations 0001–0004 are NOT edited. Proven by the `migrate.spec` /
+`kernel.spec` / `events.spec` suites (seeded-with-FK-data apply; MAX_C admitted;
+HACKER + pairing-violation rejected post-migration).
+
+**Defense-in-depth, preserved.** The app-layer accessors already enforce the
+form + pairing (`isAccountLabel` + `backendForLabel`); the DB CHECK is the
+second line so even a bypassing writer cannot land `HACKER` or a mispaired row.
+
 ## 11. Amendment record
 
 | Date | Change | ICR |
@@ -757,3 +815,4 @@ ws-protocol.md §15.1 / dag-schema.md §6).
 | 2026-07-04 | §7.4 **usage-data mapping clarification** (prose only, NO DDL change; the interpretation question raised in the BE-5 M3 return): facets → `session_outcomes` (the assessment row); session-meta → `events` with `event_type 'session_meta'` (token totals, no outcome — never mirrored into `session_outcomes`, whose `outcome` is NOT NULL by design). Blesses the landed normalizer (core/src/collector/jsonl/usageData.ts). | — (BE-ORCH steward, prose pin) |
 | 2026-07-04 | **M4 lineage freeze (§8).** Migration 0003 `lineage-tables-init`: `workstream` (status enum, JSON tags) + `session_node` (HARNESS id PRIMARY — the resume-ledger id for kernel launches, reconciler-minted for external; native id a nullable write-once ATTRIBUTE; label-enum + pairing CHECKs [X2]; lineage state/origin/confidence enums; mutable `native_scope` for `/cd`; token/cost snapshots) + `brief` (kind session-end·pre-compact·session-start-injection·merge; provenance native-summary·local-draft·refined; body `identifier`-tagged) + `session_edge` (edge_type EXACTLY continue·fork·merge_parent·compact·sidechain·handoff·import·workflow; from/import + handoff-brief CHECK matrices; continue self-edges legal). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§8.1 — action-time recording shares the kernel's commit boundary; lineage writes are resume-ledger-rate; the SessionIdResolver join is single-db; repo-wide-unique migration ids 0001/0002/0003); epoch-ms integers for lineage times (§8.1); accessor-enforced edge legality + ATOMIC `recordMerge` (§8.5); naming-column identity screen + `LINEAGE_FIELD_TAGS` (§8.6). `schema_meta` gains lineage keys, M1 seeds untouched. Migrations 0001/0002 untouched; `openKernelStore` now also hands back the `lineage` accessors. | — (M4 freeze; plan §3 schema row) |
 | 2026-07-04 | **M5 pipeline freeze (§10).** Migration 0004 `pipeline-tables-init`: `pipeline_definition` (the saved versioned JSON DAG document verbatim + schema_version re-validated on load + schema_hash for drift) + `pipeline_run` (status enum pending·running·paused·completed·failed·cancelled; pinned schema_hash; inputs/workstream) + `step_attempt` = **THE memoization journal** (append-only via UNIQUE (run_id, step_id, iteration, attempt); the resume lookup `findMemoized(run,step,iteration,input_hash)` returns a COMPLETED/`memoized` attempt's cached output → no re-execution, the M5 DoD; state enum incl. `blocked`/`awaiting-approval`/`memoized`/`skipped`; nullable session_id = the spawned node / workflow-edge target; label-enum account CHECK [X2]). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§10.1 — same commit boundary + query plan as the `workflow`-edge session_nodes each attempt produces; journal writes are resume-ledger-rate; repo-wide-unique migration ids 0001/0002/0003/0004); epoch-ms integers (§10.1); `PIPELINES_FIELD_TAGS` on document/inputs/output JSON, definition name identity-screened (§10.4). Verified sufficient, NO change: the `workflow` edge type (in the frozen §8.5 vocabulary since M4) + the events `(backend, raw_ref)` dedupe key carry the per-step lineage + cost seams (§10.5). `schema_meta` gains pipeline keys, M1/M4 seeds untouched. Migrations 0001/0002/0003 untouched; `openKernelStore` now also hands back the `pipelines` accessors. | — (M5 freeze; plan §3 schema row) |
+| 2026-07-05 | **M7 account-registry relaxation (§10.7).** Migrations **0005** `account-registry-open-form` (kernel: `account_profiles`, `resume_ledger`, `session_node` [inbound-FK table-rebuild with `defer_foreign_keys` + child re-point], `step_attempt`) and **0006** `account-registry-open-form-events` (events: `events`, `quota_snapshots`, `session_outcomes`) RELAX the account-label CHECK from the CLOSED 5-literal set to the OPEN form `account[_label] GLOB 'MAX_[A-Z]' OR IN ('ENT','AWS_DEV','LOCAL')` — the SQL mirror of `CLAUDE_ACCOUNT_LABEL_RE` — so a newly provisioned Claude Max account (MAX_C, MAX_D, …) is admitted WITHOUT a schema change ([X1]). The label↔backend pairing CHECK is preserved verbatim (GLOB form); seed rows + all indexes preserved; frozen migrations 0001–0004 untouched. `schema_meta`: kernel `ddl_version=5`/`frozen_milestone=M7`, events `events_ddl_version=2`/`frozen_milestone=M7`. | [ICR-0013](icr/icr-0013-account-registry.md) |

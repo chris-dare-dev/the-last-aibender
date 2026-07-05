@@ -17,18 +17,29 @@ discipline plus local scanning is the enforcement.
 
 | Real thing | Only form allowed anywhere in this tree |
 |---|---|
-| Claude Max account #1 | `MAX_A` |
-| Claude Max account #2 | `MAX_B` |
+| Any Claude **Max** account (arbitrarily many) | `MAX_<X>` — `MAX_` + a single uppercase letter, i.e. `^MAX_[A-Z]$` (`MAX_A`, `MAX_B`, `MAX_C`, `MAX_D`, … `MAX_Z`) |
 | Claude enterprise/work account | `ENT` |
+| The two fixed backend labels (not accounts) | `AWS_DEV`, `LOCAL` |
 | AWS dev account (12-digit ID, SSO profile name, ARNs) | `AWS_DEV_ACCOUNT_ID` |
 | Any human email | `*@example.com|org|net`, `*@users.noreply.github.com`, or `noreply@anthropic.com` |
 | Git author identity | `<id>+<username>@users.noreply.github.com` |
 
+**The Max-account form is OPEN by design ([X1] scalability, ICR-0013).** The
+owner may provision arbitrarily many Claude Max subscriptions; each new one is a
+new sanctioned placeholder of the shape `MAX_<X>` — using it in code, fixtures,
+or docs is fine (it is the SAME class as `MAX_A`/`MAX_B`). `MAX_C` and `MAX_D`
+are already provisioned and first-class. The single machine-checkable regex of
+record is `CLAUDE_ACCOUNT_LABEL_RE = ^MAX_[A-Z]$` (packages/protocol/vocab.ts);
+`ENT` is the one exact enterprise literal. What stays out of the tree is the
+label→**real account** mapping, never the label form itself.
+
 Rules:
 
 - The label→real-account mapping exists only in machine-local files (under
-  `~/.aibender/`) and the owner's head. It is never serialized into the tree,
-  the DBs, logs, or exports (UI-time join only).
+  `~/.aibender/`, keyed by the `MAX_<X>`/`ENT`/backend-label form) and the
+  owner's head. It is never serialized into the tree, the DBs, logs, or exports
+  (UI-time join only). Adding a newly provisioned Max account is a new
+  machine-local KEY under the sanctioned form — never a tree change.
 - `AWS_PROFILE`-style values **embed the AWS account ID** (SSO profile names
   are `<account-id>_<RoleName>`), so real profile names are treated as the
   account ID itself. See the warning in `.env.example`.
@@ -110,6 +121,15 @@ recording the three blocked commits — see
   be clean. A filename-extension suffix is not an identity form, so the
   exception is generic and value-free; the alternative (path-allowlisting the
   whole bundle) would have stopped scanning that file for real leaks.
+- *2026-07-05 (M7 account-registry, ICR-0013):* **doctrine generalization, NO
+  Tier-1 rule change.** The sanctioned placeholder for a Claude Max account was
+  generalized from the fixed `MAX_A`/`MAX_B` to the OPEN form `^MAX_[A-Z]$`
+  (§1 table above), promoting `MAX_C`/`MAX_D` to first-class placeholders. A
+  `MAX_<X>` label is not secret-shaped (no 12-digit run, no `@`), so no gitleaks
+  rule was added or relaxed — verified: none of the three Tier-1 rules
+  (`aws-account-id-in-context`, `personal-email-provider`,
+  `email-not-a-sanctioned-placeholder`) matches a `MAX_<X>` literal. This entry
+  records the *doctrine of record* only; the enforcement surface is unchanged.
 
 ## 3. Remediation doctrine (when something leaks anyway)
 

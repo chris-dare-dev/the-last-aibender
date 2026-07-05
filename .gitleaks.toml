@@ -10,8 +10,15 @@
 #     Its schema is documented in docs/runbooks/hygiene.md; its contents nowhere.
 #
 # Sanctioned placeholders (and ONLY these identity forms) may appear in the
-# tree: MAX_A, MAX_B, ENT, AWS_DEV_ACCOUNT_ID, *@example.com|org|net,
-# *@users.noreply.github.com, noreply@anthropic.com.
+# tree (SECURITY.md §1 is the doctrine of record):
+#   - Claude Max accounts: the OPEN form MAX_<X> == ^MAX_[A-Z]$ (MAX_A, MAX_B,
+#     MAX_C, MAX_D, … — arbitrarily many; [X1] scalability, ICR-0013),
+#   - the enterprise account: the exact literal ENT,
+#   - the fixed backend labels: AWS_DEV, LOCAL,
+#   - AWS_DEV_ACCOUNT_ID, *@example.com|org|net, *@users.noreply.github.com,
+#     noreply@anthropic.com.
+# A MAX_<X> label is not secret-shaped, so NO Tier-1 rule matches it — the M7
+# doctrine generalization added no rule (verified at the landing).
 
 title = "the-last-aibender tier-1 (generic, value-free)"
 

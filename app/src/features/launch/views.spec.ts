@@ -15,6 +15,8 @@ import { describe, expect, it } from 'vitest';
 
 import { ACCOUNT_LABELS } from '@aibender/protocol';
 
+import { buildAccountRegistry } from '../../lib/accountRegistry.ts';
+import { accountPickerOptions } from './accounts.ts';
 import { stubFeatureDetect, withAccountCapabilities } from './featureDetect.ts';
 import { emptyLaunchDraft } from './launchDraft.ts';
 import type { LauncherState } from './controller.ts';
@@ -42,13 +44,34 @@ const ENT_DEGRADED = withAccountCapabilities(detect, 'ENT', {
 });
 
 describe('accountPickerView (positive)', () => {
-  it('renders exactly five options whose labels are the frozen vocabulary in slot order', () => {
+  it('renders the configured registry + the two backend labels in slot order (seed = 5)', () => {
     const tree = accountPickerView('MAX_A', detect, 'prompt');
     const options = collectNodes(tree, (n) => n.attrs['data-action'] === 'select-account');
     expect(options).toHaveLength(5);
     expect(options.map((o) => o.attrs['data-label'])).toEqual([...ACCOUNT_LABELS]);
     expect(options.map((o) => o.attrs['data-slot'])).toEqual(['1', '2', '3', '4', '5']);
   });
+
+  it.each([
+    ['3-Claude', ['MAX_A', 'MAX_B', 'ENT'], 5],
+    ['4-Claude', ['MAX_A', 'MAX_B', 'ENT', 'MAX_C'], 6],
+    ['5-Claude', ['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D'], 7],
+  ])(
+    'renders N Claude accounts + the two backends for a %s registry, all placeholder-form',
+    (_n, claude, total) => {
+      const options = accountPickerOptions(buildAccountRegistry(claude));
+      const detectN = stubFeatureDetect(buildAccountRegistry(claude));
+      const tree = accountPickerView('MAX_A', detectN, 'prompt', options);
+      const rendered = collectNodes(tree, (n) => n.attrs['data-action'] === 'select-account');
+      expect(rendered).toHaveLength(total);
+      expect(rendered.map((o) => o.attrs['data-label'])).toEqual([...claude, 'AWS_DEV', 'LOCAL']);
+      // Every option label is a sanctioned placeholder — never a raw identifier.
+      for (const o of rendered) {
+        const label = o.attrs['data-label'] ?? '';
+        expect(label).toMatch(/^(MAX_[A-Z]|ENT|AWS_DEV|LOCAL)$/);
+      }
+    },
+  );
 
   it('marks the selected option and only it', () => {
     const tree = accountPickerView('AWS_DEV', detect, 'prompt');
@@ -57,10 +80,16 @@ describe('accountPickerView (positive)', () => {
     expect(checked[0]?.attrs['data-label']).toBe('AWS_DEV');
   });
 
-  it('renders one channel index tick per option (identity hue as token only)', () => {
-    const tree = accountPickerView('MAX_A', detect, 'prompt');
+  it('renders one channel index tick per option (identity hue as token only), any N', () => {
+    const options = accountPickerOptions(
+      buildAccountRegistry(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']),
+    );
+    const detectN = stubFeatureDetect(
+      buildAccountRegistry(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']),
+    );
+    const tree = accountPickerView('MAX_A', detectN, 'prompt', options);
     const ticks = collectNodes(tree, (n) => n.attrs['data-channel-tick'] !== undefined);
-    expect(ticks).toHaveLength(5);
+    expect(ticks).toHaveLength(7);
     for (const tick of ticks) {
       expect(tick.attrs['style']).toMatch(/background: var\(--ig-channel-[a-z-]+\);/);
     }

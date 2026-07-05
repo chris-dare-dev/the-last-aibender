@@ -18,7 +18,7 @@
 
 import type { AccountLabel } from '@aibender/protocol';
 
-import { accountPickerOptions } from '../accounts.ts';
+import { accountPickerOptions, type AccountPickerOption } from '../accounts.ts';
 import { capabilitiesFor, type FeatureDetectSnapshot } from '../featureDetect.ts';
 import type { LauncherState } from '../controller.ts';
 import type { DraftIssue, LaunchMode } from '../launchDraft.ts';
@@ -47,22 +47,26 @@ const engraved = (text: string, extra = ''): VNode =>
   h('span', { style: `${ENGRAVED_LABEL_STYLE}${extra}` }, text);
 
 // ---------------------------------------------------------------------------
-// Account picker (feature 2/3 shared) — EXACTLY the five labels
+// Account picker (feature 2/3 shared) — the configured registry + backends
 // ---------------------------------------------------------------------------
 
 /**
- * The account picker: five fixed slots in frozen order (§2.5 — instruments
- * never reorder or disappear). Option text comes ONLY from the frozen
- * ACCOUNT_LABELS vocabulary via accountPickerOptions(); a restricted account
- * (for the active mode) renders dimmed + engraved RESTRICTED, still in slot.
+ * The account picker: one slot per configured account in registry order
+ * (§2.5 — instruments never reorder or disappear in response to DATA; the set
+ * changes only when the machine's configured accounts change). [X1]: this is
+ * the CONFIGURED registry (N Claude accounts + the two fixed backend labels),
+ * not a hardcoded five. Option text comes ONLY from `accountPickerOptions()`,
+ * whose every label is a sanctioned placeholder — a restricted account (for the
+ * active mode) renders dimmed + engraved RESTRICTED, still in slot.
  */
 export function accountPickerView(
   selected: AccountLabel,
   detect: FeatureDetectSnapshot,
   mode: LaunchMode,
+  options: readonly AccountPickerOption[] = accountPickerOptions(),
 ): VNode {
   const feature = mode === 'prompt' ? 'oneOffPrompts' : 'skills';
-  const options = accountPickerOptions().map((option) => {
+  const renderedOptions = options.map((option) => {
     const capabilities = capabilitiesFor(detect, option.label);
     const restricted = !capabilities[feature];
     const isSelected = !restricted && option.label === selected;
@@ -115,7 +119,7 @@ export function accountPickerView(
       'data-part': 'account-picker',
     },
     engraved('ACCOUNT'),
-    ...options,
+    ...renderedOptions,
   );
 }
 
@@ -371,6 +375,7 @@ export function launchPanelView(
   detect: FeatureDetectSnapshot,
   history: readonly LaunchHistoryEntry[],
   catalog: SkillCatalogSlot = FREE_TEXT_CATALOG_SLOT,
+  options: readonly AccountPickerOption[] = accountPickerOptions(),
 ): VNode {
   const issues = state.dispatch.phase === 'refused' ? state.dispatch.issues : [];
   const modeButton = (mode: LaunchMode, text: string): VNode =>
@@ -406,7 +411,7 @@ export function launchPanelView(
       },
       'LAUNCH',
     ),
-    accountPickerView(state.draft.account, detect, state.draft.mode),
+    accountPickerView(state.draft.account, detect, state.draft.mode, options),
     h(
       'div',
       { role: 'tablist', 'aria-label': 'LAUNCH MODE', 'data-part': 'mode-toggle' },

@@ -33,7 +33,7 @@ import {
   type SessionOutcomesSnapshot,
   type SkillLeaderboardSnapshot,
 } from '@aibender/protocol';
-import { QUOTA_DEGRADED_PCT, quotaKey, type QuotaStoreState } from '../../lib/index.ts';
+import { accountRegistry, QUOTA_DEGRADED_PCT, quotaKey, type QuotaStoreState } from '../../lib/index.ts';
 import { maskIdentityShapedText } from '../launch/index.ts';
 import {
   absentHealth,
@@ -48,13 +48,33 @@ import {
 // 1 · QUOTA — per-account 5h + weekly gauges with reset countdowns
 // ---------------------------------------------------------------------------
 
-/** The six fixed gauge slots (Claude accounts × the two primary windows). */
-export const FIXED_GAUGE_SLOTS: readonly { account: AccountLabel; window: QuotaWindow }[] =
-  Object.freeze(
-    (['MAX_A', 'MAX_B', 'ENT'] as const).flatMap((account) =>
-      (['5h', '7d'] as const).map((window) => ({ account, window })),
-    ),
+export interface GaugeSlot {
+  readonly account: AccountLabel;
+  readonly window: QuotaWindow;
+}
+
+/**
+ * The primary gauge slots (Claude accounts × the two primary windows).
+ * [X1] scalability (ICR-0013): derived from the CONFIGURED registry's Claude
+ * accounts, not a hardcoded three — a 4th/5th Max account gets its 5h+7d
+ * gauges with no code change. Defaults to the currently-configured registry.
+ */
+export function gaugeSlots(
+  claudeAccounts: readonly AccountLabel[] = accountRegistry().claudeAccounts.map((e) => e.label),
+): readonly GaugeSlot[] {
+  return claudeAccounts.flatMap((account) =>
+    (['5h', '7d'] as const).map((window) => ({ account, window })),
   );
+}
+
+/**
+ * Back-compat constant: the six gauge slots for the SEED three placeholders.
+ * Live rendering uses {@link gaugeSlots} (registry-driven); this stays for
+ * tests/tools that pin the seed baseline.
+ */
+export const FIXED_GAUGE_SLOTS: readonly GaugeSlot[] = Object.freeze(
+  gaugeSlots(['MAX_A', 'MAX_B', 'ENT']),
+);
 
 export interface QuotaGaugeRow {
   readonly account: AccountLabel;
@@ -130,7 +150,7 @@ export function quotaGaugesVM(
 }
 
 function fixedRows(merged: ReadonlyMap<string, GaugeValue>): QuotaGaugeRow[] {
-  return FIXED_GAUGE_SLOTS.map((slot) => {
+  return gaugeSlots().map((slot) => {
     const value = merged.get(quotaKey(slot.account, slot.window));
     return {
       account: slot.account,
@@ -142,14 +162,21 @@ function fixedRows(merged: ReadonlyMap<string, GaugeValue>): QuotaGaugeRow[] {
   });
 }
 
-/** Gauges beyond the fixed six (e.g. 7d_sonnet) append in stable label order. */
+/**
+ * Gauges beyond the primary slots (e.g. 7d_sonnet) append in stable label
+ * order. Scans the CONFIGURED registry's Claude accounts (registry order),
+ * with the KNOWN seed set as a fallback superset so a snapshot for a not-yet-
+ * configured account still surfaces rather than vanishing.
+ */
 function extraRows(merged: ReadonlyMap<string, GaugeValue>): QuotaGaugeRow[] {
-  const fixed = new Set(FIXED_GAUGE_SLOTS.map((s) => quotaKey(s.account, s.window)));
+  const primary = new Set(gaugeSlots().map((s) => quotaKey(s.account, s.window)));
+  const claude = accountRegistry().claudeAccounts.map((e) => e.label);
+  const scanAccounts: readonly AccountLabel[] = [...new Set([...claude, ...ACCOUNT_LABELS])];
   const rows: QuotaGaugeRow[] = [];
-  for (const account of ACCOUNT_LABELS) {
+  for (const account of scanAccounts) {
     for (const window of QUOTA_WINDOWS) {
       const key = quotaKey(account, window);
-      if (fixed.has(key)) continue;
+      if (primary.has(key)) continue;
       const value = merged.get(key);
       if (value === undefined) continue;
       rows.push({
@@ -184,7 +211,7 @@ export interface BurnRateVM {
 
 export function burnRateVM(snapshot: BurnRateSnapshot | undefined): BurnRateVM {
   if (snapshot === undefined) return { health: absentHealth(), rows: [] };
-  const order = new Map(ACCOUNT_LABELS.map((label, i) => [label, i]));
+  const order = new Map<string, number>(ACCOUNT_LABELS.map((label, i) => [label, i]));
   const rows = [...snapshot.data.entries]
     .sort((a, b) => (order.get(a.account) ?? 99) - (order.get(b.account) ?? 99))
     .map((entry) => ({
@@ -265,7 +292,7 @@ export function apiEquivalentVM(snapshot: ApiEquivalentUsdSnapshot | undefined):
   if (snapshot === undefined || snapshot.data.basis !== 'api-equivalent') {
     return { health: absentHealth(), rows: [], windowDays: undefined };
   }
-  const order = new Map(ACCOUNT_LABELS.map((label, i) => [label, i]));
+  const order = new Map<string, number>(ACCOUNT_LABELS.map((label, i) => [label, i]));
   const rows = [...snapshot.data.entries]
     .sort((a, b) => (order.get(a.account) ?? 99) - (order.get(b.account) ?? 99))
     .map((entry) => ({
@@ -299,7 +326,7 @@ export interface CacheHitVM {
 
 export function cacheHitVM(snapshot: CacheHitRateSnapshot | undefined): CacheHitVM {
   if (snapshot === undefined) return { health: absentHealth(), rows: [] };
-  const order = new Map(ACCOUNT_LABELS.map((label, i) => [label, i]));
+  const order = new Map<string, number>(ACCOUNT_LABELS.map((label, i) => [label, i]));
   const rows = [...snapshot.data.entries].sort(
     (a, b) => (order.get(a.account) ?? 99) - (order.get(b.account) ?? 99),
   );

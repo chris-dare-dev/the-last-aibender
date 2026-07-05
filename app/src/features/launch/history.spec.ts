@@ -107,7 +107,11 @@ describe('LaunchHistoryStore (negative — [X2] discipline)', () => {
     assertSynthesizedSafeText(JSON.stringify(store.list()));
   });
 
-  it('drops persisted rows whose label is not one of the five placeholders', () => {
+  it('drops persisted rows whose label is not a sanctioned placeholder FORM', () => {
+    // [X1] ICR-0013: MAX_C is now a VALID sanctioned Max-account label — so the
+    // tamper label must be a genuine NON-FORM string (an identity-shaped value)
+    // to prove the gate still drops non-placeholders. MAX_C itself is KEPT (see
+    // the next test) — the form is a real gate, not anything-goes.
     const storage = new FakeStorage();
     const good = {
       at: 1,
@@ -120,11 +124,34 @@ describe('LaunchHistoryStore (negative — [X2] discipline)', () => {
       promptPreview: 'p',
       outcome: 'accepted',
     };
-    const tampered = { ...good, accountLabel: 'MAX_C' };
-    storage.setItem(LAUNCH_HISTORY_STORAGE_KEY, JSON.stringify([tampered, good]));
+    const nonForm = { ...good, accountLabel: 'REAL_NAME' }; // not MAX_<X>/ENT/backend
+    const lowercase = { ...good, at: 3, accountLabel: 'max_c' }; // form is case-sensitive
+    storage.setItem(
+      LAUNCH_HISTORY_STORAGE_KEY,
+      JSON.stringify([nonForm, good, lowercase]),
+    );
     const store = new LaunchHistoryStore({ storage });
     expect(store.list()).toHaveLength(1);
     expect(store.list()[0]?.accountLabel).toBe('MAX_B');
+  });
+
+  it('KEEPS a persisted row for a newly provisioned Max account (MAX_C) — the form is admitted', () => {
+    const storage = new FakeStorage();
+    const row = {
+      at: 1,
+      kind: 'prompt',
+      accountLabel: 'MAX_C',
+      backend: 'claude_code',
+      substrate: 'sdk',
+      cwd: '/synthetic/x',
+      purpose: 'ok row',
+      promptPreview: 'p',
+      outcome: 'accepted',
+    };
+    storage.setItem(LAUNCH_HISTORY_STORAGE_KEY, JSON.stringify([row]));
+    const store = new LaunchHistoryStore({ storage });
+    expect(store.list()).toHaveLength(1);
+    expect(store.list()[0]?.accountLabel).toBe('MAX_C');
   });
 
   it('re-masks tampered persisted free text at load time', () => {

@@ -5,6 +5,7 @@
  */
 
 export {
+  configuredClaudeAccountsFromBootstrap,
   discoverGateway,
   gatewayWsUrl,
   isGatewayBootstrap,
@@ -115,3 +116,16 @@ export {
 } from './entCapabilities.ts';
 
 export { isTauri, nativeBootstrapProvider, notifyNative } from './native/tauriBridge.ts';
+
+export {
+  SEED_CLAUDE_ACCOUNTS,
+  accountRegistry,
+  buildAccountRegistry,
+  channelHueForLabel,
+  currentConfiguredClaudeAccounts,
+  normalizeClaudeAccounts,
+  setConfiguredClaudeAccounts,
+  type AccountKind,
+  type AccountRegistry,
+  type AccountRegistryEntry,
+} from './accountRegistry.ts';

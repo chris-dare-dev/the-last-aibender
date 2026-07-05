@@ -5,7 +5,7 @@
  */
 
 import { createStore } from 'zustand/vanilla';
-import type { ChannelId } from './theme/tokens.ts';
+import type { AccountLabel } from '@aibender/protocol';
 
 /**
  * Center-zone work-surface views (DESIGN.md §4.1: "Center — work: active
@@ -22,7 +22,8 @@ export interface UiState {
   readonly paletteOpen: boolean;
   readonly settingsOpen: boolean;
   readonly selectedSessionId: string | undefined;
-  readonly focusedChannel: ChannelId | undefined;
+  /** The focused channel panel's account label (open form), or none. */
+  readonly focusedChannel: AccountLabel | undefined;
   /** Compact-breakpoint overlay toggle for the instruments zone. */
   readonly instrumentsOverlayOpen: boolean;
   /** Which view occupies the center work surface. */
@@ -33,7 +34,7 @@ export interface UiState {
   openSettings(): void;
   closeSettings(): void;
   selectSession(sessionId: string | undefined): void;
-  focusChannel(channel: ChannelId | undefined): void;
+  focusChannel(channel: AccountLabel | undefined): void;
   toggleInstrumentsOverlay(): void;
   setWorkSurfaceView(view: WorkSurfaceView): void;
   toggleGraphView(): void;

@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ACCOUNT_LABELS,
-  LABEL_BACKENDS,
+  backendForLabel,
   validateControlRequest,
   validateEnvelope,
   type LaunchParams,
@@ -77,13 +77,14 @@ const VALID_LAUNCH_FIXTURES = [
 
 describe('FE-5 wire — golden corpus (positive)', () => {
   it('pins the same protocol freeze as the corpus', () => {
-    // Literal advanced by the FE M6 supervision-instrument agent as the
-    // FE-ORCH co-sign of the M6 freeze (ws-protocol.md §13.4: the eleventh
-    // read model `resource-health` landed; the FE resource/pressure
-    // instrument consumes it under the §6.3 store seam). The M6 addition is
-    // an additive read-model kind — the launch wire shapes are unchanged and
-    // this freeze-literal simply tracks the corpus (`FROZEN-M6`).
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M6');
+    // Literal tracks the corpus freeze. Advanced to `FROZEN-M7` as the FE-ORCH
+    // co-sign of the M7 account-registry generalization (ICR-0013): the
+    // account-label set became an OPEN validated FORM and `LABEL_BACKENDS`
+    // became `backendForLabel()`. This is a validation-WIDENING change — the
+    // launch wire SHAPES are unchanged (every prior golden fixture replays
+    // byte-identically) and the corpus gained valid MAX_C/MAX_D launch fixtures
+    // + rejected non-sanctioned fixtures. This literal simply tracks it.
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M7');
   });
 
   for (const name of VALID_LAUNCH_FIXTURES) {
@@ -149,7 +150,7 @@ describe('FE-5 wire — golden corpus (positive)', () => {
       );
       expect(verdict.ok).toBe(true);
       if (verdict.ok) {
-        expect(verdict.params.backend).toBe(LABEL_BACKENDS[label]);
+        expect(verdict.params.backend).toBe(backendForLabel(label));
         expect(verdict.params.substrate).toBe('sdk');
       }
     }

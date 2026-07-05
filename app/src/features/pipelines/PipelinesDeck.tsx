@@ -32,14 +32,19 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import {
-  ACCOUNT_LABELS,
-  LABEL_BACKENDS,
+  backendForLabel,
   type AccountLabel,
   type CatalogEntry,
   type PipelineRunStatusRecord,
   type StepKind,
 } from '@aibender/protocol';
-import { connectionStore, approvalsStore, type PendingApproval } from '../../lib/index.ts';
+import {
+  accountRegistry,
+  channelHueForLabel,
+  connectionStore,
+  approvalsStore,
+  type PendingApproval,
+} from '../../lib/index.ts';
 import { maskIdentityShapedText } from '../launch/index.ts';
 import './pipelines.css';
 import {
@@ -91,8 +96,12 @@ import type { Clock, PipelineVerbSender, RequestIdSource } from './ports.ts';
 // Tokens + helpers
 // ---------------------------------------------------------------------------
 
-/** Frozen account label → channel index-hue token (DESIGN.md §2.5), the
- * WorkstreamsDeck CHANNEL_HUE precedent — identity tick only, never a fill. */
+/**
+ * Seed account label → channel index-hue token (DESIGN.md §2.5) — identity
+ * tick only, never a fill. Back-compat constant for the seed five; the
+ * per-step chip derives its hue from the registry via `channelHueForLabel`
+ * ([X1]) so a MAX_<X> account routes+ticks with no new token.
+ */
 export const CHANNEL_HUE: Readonly<Record<AccountLabel, string>> = Object.freeze({
   MAX_A: 'var(--ig-channel-max-a)',
   MAX_B: 'var(--ig-channel-max-b)',
@@ -154,11 +163,13 @@ interface AccountChipProps {
  * Every executable step wears this chip PROMINENTLY: the frozen placeholder
  * label + a channel index-hue tick (identity tick — hairline scale, never a
  * fill, DESIGN.md §2.5). This is the whole [X1] point — per-step routing is
- * glanceable. Only the five frozen labels can ever render here ([X2]).
+ * glanceable, and the chooser lists the CONFIGURED registry (N accounts + the
+ * two backends), not a hardcoded five. Only sanctioned placeholder labels can
+ * ever render here ([X2]).
  */
 function AccountChip({ account, onChange, testId }: AccountChipProps): ReactNode {
   const label = account ?? 'MAX_A';
-  const hue = CHANNEL_HUE[label];
+  const hue = channelHueForLabel(label);
   if (onChange === undefined) {
     return (
       <span
@@ -186,13 +197,13 @@ function AccountChip({ account, onChange, testId }: AccountChipProps): ReactNode
         value={label}
         onChange={(e) => onChange(e.target.value as AccountLabel)}
       >
-        {ACCOUNT_LABELS.map((a) => (
-          <option key={a} value={a}>
-            {a}
+        {accountRegistry().entries.map((entry) => (
+          <option key={entry.label} value={entry.label}>
+            {entry.label}
           </option>
         ))}
       </select>
-      <span className="ig-engraved">{LABEL_BACKENDS[label].toUpperCase()}</span>
+      <span className="ig-engraved">{backendForLabel(label).toUpperCase()}</span>
     </span>
   );
 }

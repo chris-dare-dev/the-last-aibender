@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { buildAccountRegistry } from '../lib/accountRegistry.ts';
 import { deriveChannelReadings } from '../lib/stores/channelHealth.ts';
 import { connectionStore } from '../lib/stores/connectionStore.ts';
 import { quotaStore } from '../lib/stores/quotaStore.ts';
@@ -22,10 +23,10 @@ import { InstrumentStack } from './InstrumentStack.tsx';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-function snapshot(account: 'MAX_A' | 'MAX_B' | 'ENT', usedPct: number, capturedAt = 90100000) {
+function snapshot(account: string, usedPct: number, capturedAt = 90100000) {
   return {
     kind: 'quota-snapshot' as const,
-    account,
+    account: account as 'MAX_A',
     window: '5h' as const,
     usedPct,
     resetsAt: 90200000,
@@ -49,17 +50,45 @@ describe('deriveChannelReadings (selectors)', () => {
       quota: quotaStore.getState().snapshots,
       sessions: {},
     });
+    // [X1] the reading identity is now the ACCOUNT LABEL (open form) — the two
+    // backend channels read AWS_DEV / LOCAL, not the old BEDROCK / LMSTUDIO ids.
     expect(readings.map((r) => `${r.channel}:${r.status}`)).toEqual([
       'MAX_A:ok',
       'MAX_B:degraded',
       'ENT:fault',
-      'BEDROCK:nosignal',
-      'LMSTUDIO:nosignal',
+      'AWS_DEV:nosignal',
+      'LOCAL:nosignal',
     ]);
     // ENT carries the stub feature-detect degrade note (edge).
     expect(readings[2]?.detail).toContain('FEATURE-DETECT PENDING');
     // LM Studio down offers the one-click remediation (NO SIGNAL doctrine).
     expect(readings[4]?.remediation).toBe('LMS SERVER START');
+  });
+
+  it('[X1] a 5-Claude registry yields N Claude quota channels + the two backends', () => {
+    const registry = buildAccountRegistry(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']);
+    quotaStore.getState().apply(snapshot('MAX_C', 12));
+    quotaStore.getState().apply(snapshot('MAX_D', 88));
+    const readings = deriveChannelReadings(
+      { phase: 'connected', quota: quotaStore.getState().snapshots, sessions: {} },
+      registry,
+    );
+    expect(readings.map((r) => r.channel)).toEqual([
+      'MAX_A',
+      'MAX_B',
+      'ENT',
+      'MAX_C',
+      'MAX_D',
+      'AWS_DEV',
+      'LOCAL',
+    ]);
+    // MAX_C / MAX_D are Claude quota-gauge channels, driven by DATA.
+    expect(readings.find((r) => r.channel === 'MAX_C')?.status).toBe('ok');
+    expect(readings.find((r) => r.channel === 'MAX_D')?.status).toBe('degraded');
+    for (const r of readings.filter((x) => x.channel.startsWith('MAX_'))) {
+      expect(r.kind).toBe('claude');
+      expect(r.hueVar).toMatch(/^var\(--ig-channel-[a-z-]+\)$/);
+    }
   });
 
   it('gateway down ⇒ every instrument reads NO SIGNAL (negative)', () => {
@@ -95,7 +124,7 @@ describe('InstrumentStack component', () => {
   }
 
   it('renders the five fixed slots in order even with zero data', () => {
-    expect(panelOrder()).toEqual(['MAX_A', 'MAX_B', 'ENT', 'BEDROCK', 'LMSTUDIO']);
+    expect(panelOrder()).toEqual(['MAX_A', 'MAX_B', 'ENT', 'AWS_DEV', 'LOCAL']);
     expect(host.querySelector('[data-testid="readout-MAX_A"]')?.textContent).toBe('NO SIGNAL');
   });
 
@@ -106,7 +135,7 @@ describe('InstrumentStack component', () => {
       quotaStore.getState().apply(snapshot('ENT', 10));
       quotaStore.getState().apply(snapshot('MAX_A', 99));
     });
-    expect(panelOrder()).toEqual(['MAX_A', 'MAX_B', 'ENT', 'BEDROCK', 'LMSTUDIO']);
+    expect(panelOrder()).toEqual(['MAX_A', 'MAX_B', 'ENT', 'AWS_DEV', 'LOCAL']);
     expect(host.querySelector('[data-testid="readout-MAX_A"]')?.textContent).toBe('DEGRADED');
     expect(host.querySelector('[data-testid="readout-ENT"]')?.textContent).toBe('OK');
     expect(host.querySelector('[data-testid="readout-MAX_B"]')?.textContent).toBe('NO SIGNAL');

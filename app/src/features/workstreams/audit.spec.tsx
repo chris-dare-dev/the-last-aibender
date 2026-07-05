@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { ACCOUNT_LABELS } from '@aibender/protocol';
+import { isAccountLabel } from '@aibender/protocol';
 import { assertSynthesizedSafeText } from '@aibender/testkit';
 import { connectionStore } from '../../lib/index.ts';
 import { workstreamsStore } from './store.ts';
@@ -121,7 +121,9 @@ describe('render audit — no raw identifier can ever render [X2]', () => {
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       const account = row.querySelectorAll('span')[2]?.textContent ?? '';
-      expect(ACCOUNT_LABELS as readonly string[]).toContain(account);
+      // [X1]: a sanctioned account FORM (any MAX_<X>/ENT/backend), never a raw
+      // identifier — the audit admits MAX_C/MAX_D without weakening [X2].
+      expect(isAccountLabel(account)).toBe(true);
     }
   });
 

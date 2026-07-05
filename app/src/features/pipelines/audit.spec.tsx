@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { ACCOUNT_LABELS } from '@aibender/protocol';
+import { isAccountLabel } from '@aibender/protocol';
 import { connectionStore } from '../../lib/index.ts';
 import { pipelinesStore } from './store.ts';
 import { PipelinesDeck } from './PipelinesDeck.tsx';
@@ -27,7 +27,13 @@ import {
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const FROZEN_LABELS = new Set<string>([...ACCOUNT_LABELS, 'DEFAULT']);
+/**
+ * [X1] ICR-0013: an account chip is safe iff its text is a sanctioned account
+ * FORM (`isAccountLabel` — any MAX_<X>/ENT/backend) or the `DEFAULT` sentinel.
+ * This admits MAX_C/MAX_D without weakening the [X2] guard: a raw identifier
+ * (email, id, HACKER) still fails the form check.
+ */
+const isSafeChipText = (v: string): boolean => v === 'DEFAULT' || isAccountLabel(v);
 
 describe('[X2] account-routing render audit', () => {
   let root: Root;
@@ -76,9 +82,9 @@ describe('[X2] account-routing render audit', () => {
     expect(chips.length).toBe(5);
     for (const chip of chips) {
       const account = chip.getAttribute('data-account') ?? '';
-      expect(FROZEN_LABELS.has(account)).toBe(true);
-      // The visible text is exactly the frozen label — nothing else.
-      expect(FROZEN_LABELS.has((chip.textContent ?? '').trim())).toBe(true);
+      expect(isSafeChipText(account)).toBe(true);
+      // The visible text is exactly a sanctioned placeholder — nothing else.
+      expect(isSafeChipText((chip.textContent ?? '').trim())).toBe(true);
     }
   });
 

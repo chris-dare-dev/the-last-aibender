@@ -191,8 +191,16 @@ describe('LaunchController (negative)', () => {
       kind: 'select-account',
       label: 'MAX_A',
     });
-    // A DOM-injected non-placeholder label NEVER becomes a selection.
-    expect(parseLaunchAction({ action: 'select-account', label: 'MAX_C' })).toBeUndefined();
+    // [X1] ICR-0013: MAX_C is now a VALID sanctioned Max-account label by FORM,
+    // so it DOES decode — the open form admits it without a code change.
+    expect(parseLaunchAction({ action: 'select-account', label: 'MAX_C' })).toEqual({
+      kind: 'select-account',
+      label: 'MAX_C',
+    });
+    // A DOM-injected NON-FORM label (identity-shaped / lowercase) NEVER becomes
+    // a selection — the form is a real gate.
+    expect(parseLaunchAction({ action: 'select-account', label: 'REAL_NAME' })).toBeUndefined();
+    expect(parseLaunchAction({ action: 'select-account', label: 'max_c' })).toBeUndefined();
     expect(parseLaunchAction({ action: 'select-account' })).toBeUndefined();
     expect(parseLaunchAction({ action: 'set-mode', mode: 'skill' })).toEqual({
       kind: 'set-mode',

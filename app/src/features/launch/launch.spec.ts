@@ -12,8 +12,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ACCOUNT_LABELS, LABEL_BACKENDS, type AccountLabel } from '@aibender/protocol';
+import { ACCOUNT_LABELS, backendForLabel, type AccountLabel } from '@aibender/protocol';
 
+import { buildAccountRegistry } from '../../lib/accountRegistry.ts';
 import { accountPickerOptions } from './accounts.ts';
 import {
   capabilitiesFor,
@@ -46,21 +47,46 @@ const validPromptDraft = (account: AccountLabel = 'MAX_A'): LaunchDraft => ({
 // ---------------------------------------------------------------------------
 
 describe('accountPickerOptions (positive)', () => {
-  it('offers EXACTLY the five frozen labels, in slot order 1→5', () => {
+  it('offers the configured registry + the two backend labels, in slot order (seed = 5)', () => {
+    // [X1] the DEFAULT registry (seed three Claude + two backends) still renders
+    // the same five options in the same order as the pre-ICR-0013 build.
     const options = accountPickerOptions();
     expect(options).toHaveLength(5);
     expect(options.map((o) => o.label)).toEqual([...ACCOUNT_LABELS]);
     expect(options.map((o) => o.slot)).toEqual([1, 2, 3, 4, 5]);
   });
 
-  it('derives every backend from the frozen pairing', () => {
-    for (const option of accountPickerOptions()) {
-      expect(option.backend).toBe(LABEL_BACKENDS[option.label]);
+  it.each([
+    ['3-Claude', ['MAX_A', 'MAX_B', 'ENT'], 5],
+    ['4-Claude', ['MAX_A', 'MAX_B', 'ENT', 'MAX_C'], 6],
+    ['5-Claude', ['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D'], 7],
+  ])(
+    'renders N Claude accounts + the two backends for a %s registry',
+    (_n, claude, total) => {
+      const options = accountPickerOptions(buildAccountRegistry(claude));
+      expect(options).toHaveLength(total);
+      // Claude accounts first (registry order), then the two fixed backends.
+      expect(options.map((o) => o.label)).toEqual([...claude, 'AWS_DEV', 'LOCAL']);
+      expect(options.map((o) => o.slot)).toEqual(
+        Array.from({ length: total }, (_v, i) => i + 1),
+      );
+    },
+  );
+
+  it('derives every backend from the frozen pairing (any N)', () => {
+    const options = accountPickerOptions(
+      buildAccountRegistry(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']),
+    );
+    for (const option of options) {
+      expect(option.backend).toBe(backendForLabel(option.label));
     }
   });
 
-  it('references channel index hues as tokens only', () => {
-    for (const option of accountPickerOptions()) {
+  it('references channel index hues as tokens only, for any N (never a raw color)', () => {
+    const options = accountPickerOptions(
+      buildAccountRegistry(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']),
+    );
+    for (const option of options) {
       expect(option.channelTokenVar).toMatch(/^var\(--ig-channel-[a-z-]+\)$/);
     }
   });

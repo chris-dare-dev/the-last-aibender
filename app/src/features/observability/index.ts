@@ -55,6 +55,8 @@ export {
 
 export {
   FIXED_GAUGE_SLOTS,
+  gaugeSlots,
+  type GaugeSlot,
   apiEquivalentVM,
   bedrockCostVM,
   burnRateVM,

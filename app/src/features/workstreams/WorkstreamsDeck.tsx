@@ -30,14 +30,13 @@
 import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { useStore } from 'zustand';
 import {
-  ACCOUNT_LABELS,
-  LABEL_BACKENDS,
+  backendForLabel,
   type AccountLabel,
   type BranchAdvisory,
   type WorkstreamBriefPayload,
   type WorkstreamStatus,
 } from '@aibender/protocol';
-import { connectionStore } from '../../lib/index.ts';
+import { accountRegistry, channelHueForLabel, connectionStore } from '../../lib/index.ts';
 import { usePrefersReducedMotion } from '../../chrome/phosphor.tsx';
 import { maskIdentityShapedText } from '../launch/index.ts';
 import './workstreams.css';
@@ -69,7 +68,11 @@ export const RAIL_LANE_PX = 12;
 /** Ceremony wall-clock budget — mirrors --ig-latency-ceremony-budget. */
 export const CEREMONY_BUDGET_MS = 1200;
 
-/** Frozen account label → channel index-hue token (DESIGN.md §2.5). */
+/**
+ * Seed account label → channel index-hue token (DESIGN.md §2.5). Back-compat
+ * constant for the seed five; lineage rows derive their hue from the registry
+ * via `channelHueForLabel` ([X1]) so a MAX_<X> node still ticks a token.
+ */
 export const CHANNEL_HUE: Readonly<Record<AccountLabel, string>> = Object.freeze({
   MAX_A: 'var(--ig-channel-max-a)',
   MAX_B: 'var(--ig-channel-max-b)',
@@ -224,7 +227,7 @@ function LineageGraph({
       <div className="ig-ws-rows">
         {rows.map((row) => {
           const ringCeremony = row.sessionId === ceremony.nodeId;
-          const hue = CHANNEL_HUE[row.node.account];
+          const hue = channelHueForLabel(row.node.account);
           return (
             <div
               key={row.sessionId}
@@ -504,7 +507,7 @@ export function WorkstreamsDeck({ now, sender, newMergeId }: WorkstreamsDeckProp
     const draft: MergeDraft = {
       parents: selectionOrder,
       accountLabel: account,
-      backend: LABEL_BACKENDS[account],
+      backend: backendForLabel(account),
       cwd: effectiveCwd,
       purpose,
       briefBody,
@@ -624,13 +627,13 @@ export function WorkstreamsDeck({ now, sender, newMergeId }: WorkstreamsDeckProp
               value={account}
               onChange={(e) => setAccount(e.target.value as AccountLabel)}
             >
-              {ACCOUNT_LABELS.map((label) => (
-                <option key={label} value={label}>
-                  {label}
+              {accountRegistry().entries.map((entry) => (
+                <option key={entry.label} value={entry.label}>
+                  {entry.label}
                 </option>
               ))}
             </select>
-            <span className="ig-engraved">{LABEL_BACKENDS[account].toUpperCase()}</span>
+            <span className="ig-engraved">{backendForLabel(account).toUpperCase()}</span>
           </div>
           <div className="ig-ws-merge-row">
             <span className="ig-engraved">CWD</span>

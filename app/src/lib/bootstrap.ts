@@ -20,6 +20,8 @@
  * never lands in a zustand store, and never appears in a log line.
  */
 
+import { isClaudeAccountLabel } from '@aibender/protocol';
+
 export interface GatewayBootstrap {
   /** TCP port of the WS server on 127.0.0.1 (1–65535, broker-advertised). */
   readonly port: number;
@@ -29,6 +31,17 @@ export interface GatewayBootstrap {
   readonly pid: number;
   /** ISO-8601 broker boot wall-clock. */
   readonly startedAt: string;
+  /**
+   * OPTIONAL (ICR-0014): the sanctioned placeholder labels of the Claude
+   * accounts the broker discovered from `infra/profiles/*.profile.json` — the
+   * [X1] account-registry carrier. `MAX_<X>`/`ENT` FORM labels ONLY; never a
+   * real identity or a machine-local path [X2]. Absent means "no configured
+   * set advertised" — the cockpit falls back to its seed set. NOT part of the
+   * boot-identity triple. Read it with
+   * {@link configuredClaudeAccountsFromBootstrap}, which re-validates each
+   * label FORM and drops non-form entries fail-closed.
+   */
+  readonly claudeAccounts?: readonly string[];
 }
 
 /** The boot-identity triple (bootstrap-file.md §2). */
@@ -55,6 +68,17 @@ export function isGatewayBootstrap(value: unknown): value is GatewayBootstrap {
   if (typeof pid !== 'number' || !Number.isInteger(pid) || pid < 1) return false;
   const startedAt = v['startedAt'];
   if (typeof startedAt !== 'string' || Number.isNaN(Date.parse(startedAt))) return false;
+  // ICR-0014: `claudeAccounts` is OPTIONAL. Absent is valid (back-compat with
+  // every M1–M6 file). Present must be an array of strings — a foreign
+  // non-array or a non-string element makes the WHOLE file "no broker
+  // advertised" (a reader never partially trusts a torn/foreign body). The
+  // per-element FORM check is applied by
+  // {@link configuredClaudeAccountsFromBootstrap}, fail-closed [X2].
+  const claudeAccounts = v['claudeAccounts'];
+  if (claudeAccounts !== undefined) {
+    if (!Array.isArray(claudeAccounts)) return false;
+    if (!claudeAccounts.every((entry) => typeof entry === 'string')) return false;
+  }
   return true;
 }
 
@@ -97,4 +121,24 @@ export async function discoverGateway(
     return undefined; // unreadable ⇒ no broker advertised (§4.1)
   }
   return isGatewayBootstrap(raw) ? raw : undefined;
+}
+
+/**
+ * ICR-0014 — the FE consumer of the account-registry carrier. One discovery
+ * pass, then extract the CONFIGURED Claude-account placeholder labels from
+ * `claudeAccounts`, FAIL-CLOSED per [X2]: every element is re-validated by
+ * {@link isClaudeAccountLabel} (the `MAX_<X>`/`ENT` FORM) and a non-form entry
+ * (email, real name, `MAX_AB`, lowercase `max_c`, a fixed backend label, a
+ * non-string) is DROPPED. Returns an empty array when nothing is advertised or
+ * nothing survives — the composition root then leaves the FE registry on its
+ * seed set. Never throws (a torn/foreign file collapses to "no broker
+ * advertised" upstream). The label list feeds `setConfiguredClaudeAccounts`.
+ */
+export async function configuredClaudeAccountsFromBootstrap(
+  provider: BootstrapProvider,
+): Promise<readonly string[]> {
+  const bootstrap = await discoverGateway(provider);
+  const advertised = bootstrap?.claudeAccounts;
+  if (advertised === undefined) return [];
+  return advertised.filter((label) => isClaudeAccountLabel(label));
 }

@@ -19,7 +19,9 @@
  *     of what the DOM allowed (belt and braces — controller.ts).
  */
 
-import { ACCOUNT_LABELS, isAccountLabel, type AccountLabel } from '@aibender/protocol';
+import { isAccountLabel, type AccountLabel } from '@aibender/protocol';
+
+import { accountRegistry, type AccountRegistry } from '../../lib/accountRegistry.ts';
 
 export interface AccountCapabilities {
   /** Headless one-off SDK launches with a prompt (feature 2). */
@@ -30,8 +32,13 @@ export interface AccountCapabilities {
   readonly restrictedReason?: 'managed-policy' | 'undetected';
 }
 
-/** One capabilities row per frozen label — the map is total by construction. */
-export type FeatureDetectSnapshot = Readonly<Record<AccountLabel, AccountCapabilities>>;
+/**
+ * A capabilities row per configured label. [X1] scalability (ICR-0013): the
+ * label set is OPEN, so the snapshot is a PARTIAL record over the configured
+ * registry, not total over a hardcoded five. {@link capabilitiesFor} is the
+ * fail-closed reader for any label not present (impossible via the picker).
+ */
+export type FeatureDetectSnapshot = Readonly<Partial<Record<AccountLabel, AccountCapabilities>>>;
 
 const FULLY_CAPABLE: AccountCapabilities = Object.freeze({
   oneOffPrompts: true,
@@ -39,12 +46,16 @@ const FULLY_CAPABLE: AccountCapabilities = Object.freeze({
 });
 
 /**
- * The M2 stub: every account fully capable. Restrictions appear only when a
- * real detector reports them — nothing is hidden by default.
+ * The M2 stub: every CONFIGURED account fully capable. Restrictions appear only
+ * when a real detector reports them — nothing is hidden by default. Covers the
+ * registry's entries (N Claude accounts + the two backends), so a 4th/5th
+ * Claude account is fully capable by default without a code change.
  */
-export function stubFeatureDetect(): FeatureDetectSnapshot {
-  const snapshot = {} as Record<AccountLabel, AccountCapabilities>;
-  for (const label of ACCOUNT_LABELS) snapshot[label] = FULLY_CAPABLE;
+export function stubFeatureDetect(
+  registry: AccountRegistry = accountRegistry(),
+): FeatureDetectSnapshot {
+  const snapshot: Partial<Record<AccountLabel, AccountCapabilities>> = {};
+  for (const entry of registry.entries) snapshot[entry.label] = FULLY_CAPABLE;
   return Object.freeze(snapshot);
 }
 
@@ -63,17 +74,19 @@ export function withAccountCapabilities(
 
 /**
  * Capability lookup that FAILS CLOSED: an unknown label (impossible via the
- * picker, representable only through tampered state) reads as fully
- * restricted rather than throwing mid-render or silently passing.
+ * picker, representable only through tampered state) OR a form-valid label with
+ * no row in this snapshot (a configured account whose detection has not landed)
+ * reads as fully restricted rather than throwing mid-render or silently passing.
  */
 export function capabilitiesFor(
   snapshot: FeatureDetectSnapshot,
   label: string,
 ): AccountCapabilities {
-  if (!isAccountLabel(label)) {
+  const row = isAccountLabel(label) ? snapshot[label] : undefined;
+  if (row === undefined) {
     return { oneOffPrompts: false, skills: false, restrictedReason: 'undetected' };
   }
-  return snapshot[label];
+  return row;
 }
 
 /** Is `feature` available for `label` under `snapshot`? Fail-closed. */

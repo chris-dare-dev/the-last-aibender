@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bootIdentityOf,
+  configuredClaudeAccountsFromBootstrap,
   discoverGateway,
   gatewayWsUrl,
   isGatewayBootstrap,
@@ -79,5 +80,75 @@ describe('discoverGateway', () => {
         throw new Error('unreadable');
       }),
     ).resolves.toBeUndefined();
+  });
+});
+
+describe('ICR-0014 claudeAccounts carrier (FE reader)', () => {
+  // -- structural validation of the optional field -----------------------------
+
+  it('accepts an absent field and an array-of-strings; rejects non-array / non-string', () => {
+    expect(isGatewayBootstrap(fakeBootstrap())).toBe(true); // absent ⇒ still valid
+    expect(isGatewayBootstrap({ ...fakeBootstrap(), claudeAccounts: [] })).toBe(true);
+    expect(isGatewayBootstrap({ ...fakeBootstrap(), claudeAccounts: ['MAX_A', 'ENT'] })).toBe(true);
+    expect(isGatewayBootstrap({ ...fakeBootstrap(), claudeAccounts: 'MAX_A' })).toBe(false);
+    expect(isGatewayBootstrap({ ...fakeBootstrap(), claudeAccounts: ['MAX_A', 7] })).toBe(false);
+    expect(isGatewayBootstrap({ ...fakeBootstrap(), claudeAccounts: [null] })).toBe(false);
+  });
+
+  // -- positive: extract the configured labels ---------------------------------
+
+  it('returns the advertised sanctioned labels, in order', async () => {
+    const labels = await configuredClaudeAccountsFromBootstrap(async () =>
+      fakeBootstrap({ claudeAccounts: ['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D'] }),
+    );
+    expect(labels).toEqual(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']);
+  });
+
+  // -- fail-closed [X2] --------------------------------------------------------
+
+  it('drops non-form entries fail-closed (email, MAX_AB, lowercase, backend labels, non-string)', async () => {
+    const labels = await configuredClaudeAccountsFromBootstrap(async () =>
+      fakeBootstrap({
+        claudeAccounts: [
+          'MAX_A',
+          'attacker@example.com',
+          'MAX_AB',
+          'max_c',
+          'AWS_DEV',
+          'LOCAL',
+          'ENT',
+        ],
+      }),
+    );
+    // Only the sanctioned Claude forms survive — AWS_DEV/LOCAL are BACKENDS,
+    // not Claude accounts, and never render as a Claude picker entry.
+    expect(labels).toEqual(['MAX_A', 'ENT']);
+  });
+
+  it('a torn/foreign claudeAccounts collapses the whole file to "no accounts"', async () => {
+    // A non-string element fails isGatewayBootstrap ⇒ discoverGateway yields
+    // undefined ⇒ no labels (never a partial trust of a corrupt body).
+    const labels = await configuredClaudeAccountsFromBootstrap(async () => ({
+      ...fakeBootstrap(),
+      claudeAccounts: ['MAX_A', 42],
+    }));
+    expect(labels).toEqual([]);
+  });
+
+  // -- edge: absent field, empty list, absent/throwing provider ----------------
+
+  it('returns [] when the field is absent, empty, or nothing is advertised', async () => {
+    expect(await configuredClaudeAccountsFromBootstrap(async () => fakeBootstrap())).toEqual([]);
+    expect(
+      await configuredClaudeAccountsFromBootstrap(async () =>
+        fakeBootstrap({ claudeAccounts: [] }),
+      ),
+    ).toEqual([]);
+    expect(await configuredClaudeAccountsFromBootstrap(async () => undefined)).toEqual([]);
+    expect(
+      await configuredClaudeAccountsFromBootstrap(async () => {
+        throw new Error('unreadable');
+      }),
+    ).toEqual([]);
   });
 });

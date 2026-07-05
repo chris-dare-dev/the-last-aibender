@@ -10,13 +10,14 @@
  *
  * Pairing violations the golden corpus rejects on the wire
  * (`control-launch-label-backend-mismatch`, `control-launch-pty-non-claude`)
- * are UNREPRESENTABLE here: backend derives from the frozen LABEL_BACKENDS
- * map and the M2 one-off/skill slice pins substrate `sdk` (both features are
- * headless; attended PTY launches are a different surface).
+ * are UNREPRESENTABLE here: backend derives from the frozen label↔backend
+ * pairing (`backendForLabel`) and the M2 one-off/skill slice pins substrate
+ * `sdk` (both features are headless; attended PTY launches are a different
+ * surface).
  */
 
 import {
-  LABEL_BACKENDS,
+  backendForLabel,
   isAccountLabel,
   type AccountLabel,
   type LaunchParams,
@@ -110,7 +111,8 @@ export function validateLaunchDraft(
   // accountLabel, backend, substrate, cwd, purpose[, workstreamHint][, prompt]
   const params: LaunchParams = {
     accountLabel: draft.account,
-    backend: LABEL_BACKENDS[draft.account],
+    // `draft.account` passed `isAccountLabel` above, so the pairing is total.
+    backend: backendForLabel(draft.account),
     substrate: 'sdk',
     cwd,
     purpose,

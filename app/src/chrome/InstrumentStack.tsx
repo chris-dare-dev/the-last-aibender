@@ -1,7 +1,10 @@
 /**
- * The right-zone channel instrument stack: the five fixed panels in slot
- * order 1→5 (DESIGN.md §2.5 flight-deck principle — the user learns where
- * to glance; panels NEVER reflow or reorder in response to data).
+ * The right-zone channel instrument stack: one panel per CONFIGURED account in
+ * registry order (DESIGN.md §2.5 flight-deck principle + ADR-0001 — the user
+ * learns where to glance; panels NEVER reflow or reorder in response to DATA;
+ * the set changes only when the machine's configured accounts change). [X1]:
+ * N Claude accounts + the two fixed backend panels, driven from
+ * `deriveChannelReadings` over `accountRegistry()`, never a hardcoded five.
  */
 
 import type { ReactNode } from 'react';

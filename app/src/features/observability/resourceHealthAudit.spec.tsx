@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { ACCOUNT_LABELS } from '@aibender/protocol';
+import { isAccountLabel } from '@aibender/protocol';
 import { assertSynthesizedSafeText } from '@aibender/testkit';
 import { connectionStore } from '../../lib/index.ts';
 import { ResourceHealthInstrument } from './ResourceHealthInstrument.tsx';
@@ -64,7 +64,8 @@ describe('supervision render audit — labels + numbers only [X2]', () => {
     expect(sessionRows.length).toBeGreaterThan(0);
     for (const el of sessionRows) {
       const label = (el.getAttribute('data-testid') ?? '').split('-')[2];
-      expect(ACCOUNT_LABELS as readonly string[]).toContain(label ?? '');
+      // [X1]: sanctioned account FORM (admits MAX_C/MAX_D); never a raw id [X2].
+      expect(isAccountLabel(label ?? '')).toBe(true);
     }
     // The recycle notice's account is a frozen label too.
     expect(host.querySelector('[data-testid="rh-notice-recycle-session"]')?.textContent).toContain(

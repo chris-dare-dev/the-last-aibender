@@ -7,7 +7,7 @@
  */
 
 import type { GatewayClient } from '../lib/ws/wsClient.ts';
-import { channelOrder } from './theme/tokens.ts';
+import { accountRegistry } from '../lib/accountRegistry.ts';
 import { uiStore } from './uiStore.ts';
 
 export interface CommandContext {
@@ -170,11 +170,15 @@ export function builtinCommands(): readonly CommandSpec[] {
       keywords: 'pipeline pipelines builder dag run monitor catalog center work surface',
       run: () => ui().togglePipelinesView(),
     },
-    ...channelOrder.map((channel) => ({
-      id: `chrome.channel.focus.${channel}`,
-      title: `focus channel ${channel}`,
+    // [X1]: one focus verb per CONFIGURED account (registry order), not a
+    // hardcoded five — a newly provisioned MAX_<X> account gets its focus verb
+    // with no code change. The verb id + title carry only the sanctioned
+    // placeholder label [X2].
+    ...accountRegistry().entries.map((entry) => ({
+      id: `chrome.channel.focus.${entry.label}`,
+      title: `focus channel ${entry.label}`,
       keywords: 'instrument panel account',
-      run: () => ui().focusChannel(channel),
+      run: () => ui().focusChannel(entry.label),
     })),
   ];
 }

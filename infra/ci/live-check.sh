@@ -71,7 +71,11 @@ CHECKS=(
   "aws-sso-plan|M3|SI-4 terraform plan (owner-run; apply hard-gated)|docs/runbooks/bedrock-iac.md"
   "x4-hook-slots|M4|SI-3 [X4] automation slots M4-active in per-account settings (read-only)|docs/runbooks/hooks-telemetry.md §[X4] automation"
   "colima-probe|M4|SI-5 pod-to-host loopback gate, read-only (GREEN/DOWN/RED to PASS/SKIP/FAIL)|docs/runbooks/colima.md"
-  "signing-dryrun|M6|signed (dry-run) sidecar artifact cold-start|docs/spikes/spike-e-signing-ant.md"
+  "bundle-config|M6|v0 Tauri bundle config shape (active, externalBin sidecar, signing DRY-RUN, entitlements) — offline gate|docs/runbooks/release-packaging.md §1"
+  "signing-dryrun|M6|L8: signed (dry-run) sidecar artifact deep+strict verify + clean-account launch|docs/runbooks/release-packaging.md §2-4"
+  "packaging-coldstart|M6|L6: built .app cold-start boots the sidecar + discovers bootstrap port/token|docs/runbooks/release-packaging.md §4"
+  "launchagent-v1|M6|L8: broker+lms LaunchAgent-v1 plists validated Aqua-side, NOT flipped|docs/runbooks/launchd.md"
+  "soak-24h|M6|L9: 24 h mixed soak within the ~17 GB envelope — accelerated synthetic proves the mechanism; real 24 h is owner/T4|docs/runbooks/recovery.md · blueprint §11"
 )
 MILESTONES="M1 M2 M3 M4 M6"
 
@@ -510,8 +514,86 @@ check_colima_probe() {
   esac
 }
 
+# M6 packaging (SI-6): the v0 bundle config shape is provable OFFLINE — this is
+# the one M6 check that can PASS on a bare host (no build, no signing, no Apple
+# identity). It runs the static bundle-config validator (infra/ci/verify-bundle-config.sh).
+check_bundle_config() {
+  local verifier out rc=0
+  verifier="$ROOT/infra/ci/verify-bundle-config.sh"
+  if [ ! -f "$verifier" ]; then
+    printf 'SKIP\tpending-owner: bundle-config verifier not landed in infra/ci/ — docs/runbooks/release-packaging.md §1\n'; return
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    printf 'SKIP\tpending-owner: jq required to validate the bundle config (brew install jq) — docs/runbooks/release-packaging.md §1\n'; return
+  fi
+  out="$(bash "$verifier" 2>&1)" || rc=$?
+  printf '%s\n' "$out" >&2
+  if [ "$rc" -eq 0 ]; then
+    printf 'PASS\tv0 bundle config shape valid (active, externalBin sidecar, signing DRY-RUN=null, entitlements JIT keys) — docs/runbooks/release-packaging.md §1\n'
+  else
+    printf 'FAIL\tbundle config shape invalid — docs/runbooks/release-packaging.md §1 (do NOT ship until fixed)\n'
+  fi
+}
+
+# M6 L8 (SI-6): the signed (dry-run) sidecar artifact — deep+strict verify of a
+# built .app + clean-user-account launch. The BUILD (`tauri build`) is owner-run
+# (it produces a large signed artifact and is not a hosted-CI step, plan §9.4);
+# this check verifies an EXISTING build when present, else SKIPs pending-owner.
+# It NEVER signs, notarizes, or installs anything.
 check_signing_dryrun() {
-  printf 'SKIP\tpending-owner: packaging lands at M6 — signing dry-run automation follows docs/spikes/spike-e-signing-ant.md; wire the built .app cold-start here when BE-9/packaging exists\n'
+  local app
+  app="$(find "$ROOT/app/src-tauri/target/release/bundle/macos" -maxdepth 1 -name '*.app' -type d 2>/dev/null | head -n 1 || true)"
+  if [ -z "$app" ]; then
+    printf 'SKIP\tpending-owner: no built .app under app/src-tauri/target/release/bundle/macos — run "pnpm -F aibender-app tauri build" (owner, local, T3), then re-run; docs/runbooks/release-packaging.md §2\n'; return
+  fi
+  if ! is_darwin; then
+    printf 'SKIP\tpending-owner: codesign verify is macOS-only (T3) — docs/runbooks/release-packaging.md §2\n'; return
+  fi
+  command -v codesign >/dev/null 2>&1 || { printf 'SKIP\tpending-owner: codesign not available — docs/runbooks/release-packaging.md §2\n'; return; }
+  # Read-only deep+strict verification (spike-e S1: ad-hoc verifies deep+strict).
+  if codesign --verify --deep --strict "$app" >&2 2>&1; then
+    printf 'PASS\tbuilt .app passes codesign --verify --deep --strict (%s); clean-account LAUNCH itself stays owner-run — docs/runbooks/release-packaging.md §4\n' "$(basename "$app")"
+  else
+    printf 'FAIL\tbuilt .app failed codesign --verify --deep --strict — re-sign inside-out (sidecar then app); docs/runbooks/release-packaging.md §3.4\n'
+  fi
+}
+
+# M6 L6 (SI-6): built .app cold-start boots the sidecar + discovers the bootstrap
+# port/token. Launching a windowed app + spawning the real broker is inherently
+# T3 (real Aqua session, real broker) — it never runs from this script. SKIP
+# pending-owner with the runbook pointer; the mechanism is proven synthetically
+# by the Rust --smoke-test (headless boot) + the bootstrap contract matrix.
+check_packaging_coldstart() {
+  printf 'SKIP\tpending-owner: manual — windowed .app cold-start booting the bundled sidecar + bootstrap discovery on a clean user account is T3; the headless mechanism is proven by "cargo run -- --smoke-test" + the bootstrap contract tests; docs/runbooks/release-packaging.md §4\n'
+}
+
+# M6 L8 (SI-6): broker + lms LaunchAgent-v1 plists validated Aqua-side but NOT
+# flipped. Rendering + lint is the SAME device as aqua-launchd (M2) — this M6
+# entry asserts the v1-READY finalization is present (the template carries the
+# M6 finalization marker) without installing anything.
+check_launchagent_v1() {
+  local template
+  template="$ROOT/infra/launchd/templates/com.aibender.broker.plist.template"
+  if [ ! -f "$template" ]; then
+    printf 'SKIP\tpending-owner: SI-3 broker template not landed in infra/launchd/templates/ — docs/runbooks/launchd.md\n'; return
+  fi
+  if ! grep -q 'FINALIZED v1-READY at M6' "$template"; then
+    printf 'FAIL\tbroker template missing the M6 v1-ready finalization marker — docs/runbooks/launchd.md (regression)\n'; return
+  fi
+  # Rendered-plist lint + the not-flipped state is the aqua-launchd device (M2);
+  # this M6 entry defers the live install/flip to the owner (T3).
+  printf 'SKIP\tpending-owner: LaunchAgent-v1 plists are finalized v1-ready + lint-validated (see aqua-launchd + infra/launchd bats); the actual "launchctl bootstrap gui/<UID>" flip is owner-gated T3 and NEVER run here — docs/runbooks/launchd.md · docs/runbooks/release-packaging.md §4b\n'
+}
+
+# M6 L9 (SI-6/BE-9): 24 h mixed soak within the ~17 GB pessimistic envelope. The
+# real 24 h run is inherently owner/T4 (real accounts + real inference cost over
+# a real day) — it is NEVER claimed to have run here. The watchdog/sacrifice
+# MECHANISM is proven by BE-9's fake-process induced-bloat unit tests + the
+# accelerated synthetic soak `pnpm -F aibender-core soak:m6` (2880 governor
+# ticks = a compressed day, minutes not 24 h); this entry SKIPs pending-owner
+# and points at the runbook (recovery.md §4) for the real run.
+check_soak_24h() {
+  printf 'SKIP\tpending-owner: T4/owner — a REAL 24 h mixed soak (3 accounts + 2 OpenCode + local JIT) within the ~17 GB envelope needs real accounts/cost over a real day and is NEVER run from this script; the watchdog + [X1] sacrifice-order MECHANISM is proven by BE-9 unit tests (fake-process induced bloat) + the accelerated synthetic soak "pnpm -F aibender-core soak:m6" — docs/runbooks/recovery.md §4 · blueprint §11 (do not claim a real 24 h soak executed in CI)\n'
 }
 
 # ---------------------------------------------------------------------------

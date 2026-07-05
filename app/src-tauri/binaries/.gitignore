@@ -1,0 +1,11 @@
+# app/src-tauri/binaries/ — the aibender-core sidecar staging dir.
+#
+# The built sidecar artifacts are LARGE (a Node runtime copy) and machine/
+# target-specific — they are produced by scripts/build-sidecar.sh during
+# `tauri build` and MUST NOT be committed. Only this .gitignore and README.md
+# are tracked, so the directory exists in a fresh checkout (Tauri's
+# externalBin resolves the path at bundle time; the debug/--smoke-test build
+# never touches it).
+*
+!.gitignore
+!README.md

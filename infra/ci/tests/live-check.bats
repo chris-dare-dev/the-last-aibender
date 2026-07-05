@@ -34,7 +34,7 @@ setup() {
 }
 
 # Number of rows in the live-check registry — update alongside CHECKS=().
-REGISTRY_COUNT=13
+REGISTRY_COUNT=17
 
 run_livecheck_bare() { # extra args forwarded
   HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
@@ -56,7 +56,8 @@ run_livecheck_bare() { # extra args forwarded
   for id in keychain-probe version-gate auth-status x1-live-demo \
             sigkill-orphan aqua-launchd hooks-installed lmstudio-probe \
             opencode-serve-probe aws-sso-plan x4-hook-slots colima-probe \
-            signing-dryrun; do
+            bundle-config signing-dryrun packaging-coldstart \
+            launchagent-v1 soak-24h; do
     grep -q "^$id	" <<<"$output"
   done
 }
@@ -500,4 +501,130 @@ STUB
   [ "$status" -eq 0 ]
   grep -q 'chromium' "$log"
   grep -q 'webkit' "$log"
+}
+
+# --- M6 packaging: live-check entries + bundle-config verifier + runbook links -
+
+@test "--milestone M6 selects exactly the five M6 checks" {
+  run_livecheck_bare --milestone M6
+  [ "$status" -eq 0 ]
+  [ "$(grep -c $'^check\t' <<<"$output")" -eq 5 ]
+  for id in bundle-config signing-dryrun packaging-coldstart launchagent-v1 soak-24h; do
+    grep -q $'^check\t'"$id"$'\tM6\t' <<<"$output"
+  done
+}
+
+@test "bundle-config: PASS against the real v0 tauri.conf.json (offline, no build)" {
+  # The one M6 check provable on a bare host: the committed bundle config is in
+  # the v0-correct DRY-RUN shape. Runs the real verifier over the real config.
+  HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
+    run bash "$LIVECHECK" --aibender-home "$EMPTY_AIB" --check bundle-config
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tbundle-config\tM6\tPASS\t' <<<"$output"
+  grep -q 'externalBin sidecar' <<<"$output"
+  grep -q 'DRY-RUN' <<<"$output"
+}
+
+@test "signing-dryrun: SKIP pending-owner when no built .app exists (never signs)" {
+  run_livecheck_bare --check signing-dryrun
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tsigning-dryrun\tM6\tSKIP\t' <<<"$output"
+  grep -q 'pending-owner' <<<"$output"
+  grep -q 'release-packaging.md' <<<"$output"
+}
+
+@test "packaging-coldstart + soak-24h are honest SKIPs with runbook pointers" {
+  for id in packaging-coldstart soak-24h; do
+    run_livecheck_bare --check "$id"
+    [ "$status" -eq 0 ]
+    grep -q $'^check\t'"$id"$'\tM6\tSKIP\t' <<<"$output"
+    grep -q 'pending-owner' <<<"$output"
+    grep -Eq 'docs/|blueprint §' <<<"$output"
+  done
+}
+
+@test "soak-24h SKIP never claims a real 24 h soak ran (honest posture)" {
+  run_livecheck_bare --check soak-24h
+  [ "$status" -eq 0 ]
+  # the honest wording is load-bearing: the mechanism is proven, the real run is not
+  grep -q 'MECHANISM is proven' <<<"$output"
+  grep -q 'do not claim a real 24 h soak executed in CI' <<<"$output"
+}
+
+@test "launchagent-v1: SKIP pending-owner, never flips launchctl" {
+  run_livecheck_bare --check launchagent-v1
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tlaunchagent-v1\tM6\tSKIP\t' <<<"$output"
+  grep -q 'owner-gated' <<<"$output"
+  grep -q 'launchd.md' <<<"$output"
+}
+
+# --- verify-bundle-config.sh (the static bundle-shape gate, run directly) ------
+
+@test "verify-bundle-config: PASS on the real committed config" {
+  VERIFY="$REPO_ROOT/infra/ci/verify-bundle-config.sh"
+  run bash "$VERIFY"
+  [ "$status" -eq 0 ]
+  grep -q 'OK — v0 bundle config shape valid' <<<"$output"
+}
+
+@test "verify-bundle-config: FAIL if signingIdentity is a real string (X2 guard)" {
+  # A committed real identity is an X2 leak — the verifier must FAIL it.
+  conf="$BATS_TEST_TMPDIR/bad-conf/tauri.conf.json"
+  mkdir -p "$(dirname "$conf")"
+  jq '.bundle.macOS.signingIdentity = "Developer ID Application: Someone (TEAMID)"' \
+    "$REPO_ROOT/app/src-tauri/tauri.conf.json" > "$conf"
+  run bash "$REPO_ROOT/infra/ci/verify-bundle-config.sh" --conf "$conf"
+  [ "$status" -eq 1 ]
+  grep -q 'signingIdentity must be null' <<<"$output"
+}
+
+@test "verify-bundle-config: FAIL if bundle.active is flipped back to false" {
+  conf="$BATS_TEST_TMPDIR/inactive-conf/tauri.conf.json"
+  mkdir -p "$(dirname "$conf")"
+  jq '.bundle.active = false' \
+    "$REPO_ROOT/app/src-tauri/tauri.conf.json" > "$conf"
+  run bash "$REPO_ROOT/infra/ci/verify-bundle-config.sh" --conf "$conf"
+  [ "$status" -eq 1 ]
+  grep -q 'bundle.active must be true' <<<"$output"
+}
+
+@test "verify-bundle-config: FAIL if the externalBin sidecar is removed" {
+  conf="$BATS_TEST_TMPDIR/nosidecar-conf/tauri.conf.json"
+  mkdir -p "$(dirname "$conf")"
+  jq '.bundle.externalBin = []' \
+    "$REPO_ROOT/app/src-tauri/tauri.conf.json" > "$conf"
+  run bash "$REPO_ROOT/infra/ci/verify-bundle-config.sh" --conf "$conf"
+  [ "$status" -eq 1 ]
+  grep -q 'externalBin must include' <<<"$output"
+}
+
+# --- packaging runbook link integrity -----------------------------------------
+
+@test "packaging runbook links resolve (relative doc/script paths exist)" {
+  # Every relative path the release-packaging runbook points at must exist, so a
+  # renamed contract/script surfaces as a failing test, not a dead link.
+  rb="$REPO_ROOT/docs/runbooks/release-packaging.md"
+  [ -f "$rb" ]
+  base="$(dirname "$rb")"
+  # spike-e, entitlements, bundle config, both sidecar scripts, the verifier.
+  [ -f "$base/../spikes/spike-e-signing-ant.md" ]
+  [ -f "$REPO_ROOT/app/src-tauri/tauri.conf.json" ]
+  [ -f "$REPO_ROOT/app/src-tauri/entitlements.plist" ]
+  [ -f "$REPO_ROOT/app/src-tauri/scripts/build-sidecar.sh" ]
+  [ -f "$REPO_ROOT/app/src-tauri/scripts/ensure-sidecar-placeholder.sh" ]
+  [ -f "$REPO_ROOT/infra/ci/verify-bundle-config.sh" ]
+  [ -f "$base/launchd.md" ]
+}
+
+@test "recovery + quota-exhaustion runbooks exist and are indexed" {
+  [ -f "$REPO_ROOT/docs/runbooks/recovery.md" ]
+  [ -f "$REPO_ROOT/docs/runbooks/quota-exhaustion.md" ]
+  [ -f "$REPO_ROOT/docs/runbooks/release-packaging.md" ]
+  # the README index links each of the three (not the stale 'planned (M6)').
+  idx="$REPO_ROOT/docs/runbooks/README.md"
+  grep -q '(recovery.md)' "$idx"
+  grep -q '(quota-exhaustion.md)' "$idx"
+  grep -q '(release-packaging.md)' "$idx"
+  ! grep -q 'planned (M6)' "$idx"
 }

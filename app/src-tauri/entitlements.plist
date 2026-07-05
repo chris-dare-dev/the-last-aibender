@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  entitlements.plist — hardened-runtime entitlements for the v0 Tauri bundle
+  (SI-6 packaging, M6). Applied by `tauri build` to BOTH the outer app and the
+  aibender-core sidecar under `macOS.hardenedRuntime: true`.
+
+  WHY THESE KEYS (measured, spike-e S7, docs/spikes/spike-e-signing-ant.md):
+  the aibender-core sidecar is a Node/Bun-runtime binary. Under the hardened
+  runtime (required for notarization) a JIT-using runtime is killed at launch
+  unless it carries `allow-jit` + `allow-unsigned-executable-memory`. S7 proved
+  these two keys sign cleanly and pass deep+strict verification even ad-hoc.
+
+  v0 posture: signing is DRY-RUN (macOS.signingIdentity = null → ad-hoc / no
+  signature). Local builds carry no quarantine bit, so Gatekeeper never assesses
+  them and hardened-runtime entitlements cost nothing at launch. These keys are
+  the notarization-READY shape for the day the owner runs the real Developer-ID
+  path (docs/runbooks/release-packaging.md) — they are inert for local use.
+
+  NO network, camera, mic, or file-access entitlements: the cockpit talks only
+  to the loopback broker over a WebSocket (CSP-restricted) and reads the
+  bootstrap file via its own command — there is no outbound-network entitlement
+  to grant, and the sandbox is deliberately NOT enabled (a broker that spawns
+  child CLIs cannot run under App Sandbox).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+  <true/>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>

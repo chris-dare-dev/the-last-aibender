@@ -9,8 +9,11 @@
 #                  (infra/scripts + infra/launchd + infra/hooks + infra/aws
 #                  + infra/colima) + infra/ci
 #   macos-build    BUILD-ONLY macOS job: core tsc, app build (when landed),
-#                  cargo check of src-tauri (when landed — NEVER a full tauri
-#                  bundle in CI), darwin-tagged units, app-build artifact
+#                  the v0 bundle-config gate + a DEBUG cargo build + the
+#                  --smoke-test headless boot proof + bootstrap-matrix cargo
+#                  test of src-tauri (M6 packaging parity — NEVER a full tauri
+#                  bundle / sign / notarize in CI, plan §9.4), darwin-tagged
+#                  units, app-build artifact
 #
 # gitleaks stays in .github/workflows/gitleaks.yml — the [X2] backstop is
 # deliberately a separate workflow so it never shares a failure domain (or a
@@ -83,6 +86,14 @@ jobs:
 
       - name: Test (all workspace packages)
         run: pnpm -r test
+
+      # The INTEG cross-department suite (plan §9.3/§9.4) is a T4/gate device
+      # (plan §9.1: soak/perf at the gate, not folded into every-commit). Its
+      # BE↔FE #2 slice drives the real `soak:m2` harness (6 real node-pty
+      # children); it must run SERIALLY, isolated from the parallel `-r test`
+      # sweep, or the soak's internal drain timeout starves under contention.
+      - name: Integration suite (§9.3 cross-department gate, serial)
+        run: pnpm test:integration
 
   design-tokens:
     name: design-tokens
@@ -215,9 +226,28 @@ jobs:
             ${{ steps.tauri.outputs.dir }}/target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/src-tauri/Cargo.lock', '**/src-tauri/Cargo.toml') }}
 
-      - name: cargo check (src-tauri — NOT a full tauri bundle in CI)
+      # M6 packaging gate (SI-6): the v0 bundle config is flipped ON
+      # (bundle.active=true, externalBin sidecar). This is the parity of the
+      # M2 smoke gate under the ON config: a DEBUG cargo build (build.rs drops a
+      # tiny placeholder sidecar so tauri-build's externalBin existence check
+      # passes — the REAL sidecar + signing only happen at `tauri build`, which
+      # is owner-run and NEVER a hosted-CI step, plan §9.4) + the headless
+      # --smoke-test boot proof (exit 0) + the bootstrap validation matrix.
+      - name: Verify v0 bundle-config shape (offline, no build/sign)
         if: steps.tauri.outputs.present == 'true'
-        run: cargo check --manifest-path "${{ steps.tauri.outputs.dir }}/Cargo.toml"
+        run: bash infra/ci/verify-bundle-config.sh
+
+      - name: cargo build (debug — proves the flipped-ON bundle config compiles)
+        if: steps.tauri.outputs.present == 'true'
+        run: cargo build --manifest-path "${{ steps.tauri.outputs.dir }}/Cargo.toml"
+
+      - name: Tauri --smoke-test (headless boot proof, exit 0)
+        if: steps.tauri.outputs.present == 'true'
+        run: "${{ steps.tauri.outputs.dir }}/target/debug/aibender-app --smoke-test"
+
+      - name: cargo test (src-tauri bootstrap validation matrix)
+        if: steps.tauri.outputs.present == 'true'
+        run: cargo test --manifest-path "${{ steps.tauri.outputs.dir }}/Cargo.toml"
 
       - name: Playwright browser cache (macOS)
         uses: actions/cache@v4

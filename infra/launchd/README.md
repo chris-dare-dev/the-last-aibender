@@ -16,7 +16,7 @@ tests assert the key's absence.
 
 | File | Purpose |
 |---|---|
-| `templates/com.aibender.broker.plist.template` | Broker agent — default (Aqua) session type, `RunAtLoad`, `KeepAlive={SuccessfulExit:false}`. Rendered and lint-validated at M2; **bootstrapping it is the deliberate v1 flip, owner-gated** ([runbook](../../docs/runbooks/launchd.md)). |
+| `templates/com.aibender.broker.plist.template` | Broker agent — default (Aqua) session type, `RunAtLoad`, `KeepAlive={SuccessfulExit:false}`. Rendered and lint-validated at M2; **FINALIZED v1-ready at M6** (shape frozen + lint-asserted; broker-entry points at the M6-packaged broker); **bootstrapping it is the deliberate v1 flip, owner-gated** ([runbook](../../docs/runbooks/launchd.md)). |
 | `templates/com.aibender.lms.plist.template` | `lms server start` at login; retry only on failed start. LM Studio down stays a first-class NO SIGNAL state, never an error. |
 | `templates/com.aibender.broker.background-expected-fail.plist.template` | The forbidden variant, kept as the T3 **expected-failure probe** (plan §9.2 SI-3 negative row). Probes a harness-owned dummy keychain item only [X2]. Render is refused without `--acknowledge-expected-failure`. |
 | `render-launchd.sh` | Substitutes machine-local values, lints (plutil / plistlib), writes to `$AIBENDER_HOME/launchd/`, prints the **owner-run** `launchctl` commands. **Never executes `launchctl` or `security` itself** (proven by a runtime-stub test). |

@@ -7,6 +7,7 @@
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:5173",
     "beforeBuildCommand": "pnpm build",
+    "beforeBundleCommand": "bash scripts/build-sidecar.sh",
     "frontendDist": "../dist"
   },
   "app": {
@@ -26,7 +27,25 @@
     }
   },
   "bundle": {
-    "active": false,
-    "icon": ["icons/icon.png"]
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.png"],
+    "category": "DeveloperTool",
+    "shortDescription": "Multi-account Claude Code cockpit",
+    "longDescription": "the-last-aibender — a local macOS cockpit for supervising multiple Claude Code accounts, OpenCode sessions, and a local model through one broker. The aibender-core broker ships as a bundled sidecar; all session traffic rides a loopback WebSocket, never the network.",
+    "externalBin": ["binaries/aibender-core"],
+    "resources": [],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "entitlements": "entitlements.plist",
+      "hardenedRuntime": true,
+      "dmg": {
+        "appPosition": { "x": 180, "y": 170 },
+        "applicationFolderPosition": { "x": 480, "y": 170 },
+        "windowSize": { "width": 660, "height": 400 }
+      },
+      "signingIdentity": null,
+      "providerShortName": null
+    }
   }
 }

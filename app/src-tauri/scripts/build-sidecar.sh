@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# build-sidecar.sh — produce the aibender-core sidecar binary for the Tauri
+# bundle (SI-6 packaging, M6). Invoked by tauri.conf.json `beforeBundleCommand`
+# so it runs during `tauri build` (the bundle step), NEVER during a plain
+# `cargo build` / `--smoke-test` (those short-circuit before Tauri machinery —
+# the M2/M6 debug-build gate depends on that separation).
+#
+# WHAT IT MAKES
+#   binaries/aibender-core-<target-triple>       ← the sidecar Tauri seals
+#   binaries/aibender-core.mjs                    ← the bundled broker (ESM)
+#   binaries/native/                              ← co-located native addons
+#
+# Tauri's externalBin contract (docs/spikes/spike-e-signing-ant.md S-block):
+#   `externalBin: ["binaries/aibender-core"]` → Tauri copies the binary named
+#   `binaries/aibender-core-<triple>` into `Contents/MacOS/aibender-core-<triple>`
+#   and signs it inside-out with the app. This script therefore names its
+#   output with the triple appended.
+#
+# THE NODE-PTY / node:sqlite REALITY (honest, not glossed): aibender-core uses
+# node-pty (a native N-API addon) and node:sqlite (a built-in of Node ≥ 22.5).
+# A single fully-static SEA that swallows a native addon is NOT reliable across
+# Node versions, so v0's sidecar is a Node **SEA launcher** that carries the
+# bundled JS and execs against the co-located Node runtime + prebuilt .node —
+# exactly the shape spike-e S7 signed (hardened-runtime + JIT entitlements).
+# The release runbook (docs/runbooks/release-packaging.md) documents the T3
+# real-signing step this artifact feeds.
+#
+# [X2]: this script bakes NO identity, token, or account value into the binary.
+# It bundles source only; runtime secrets are read from the Keychain / bootstrap
+# file by the broker at launch, never compiled in.
+#
+# Exit codes: 0 = sidecar produced · 1 = a prerequisite/build step failed
+# (fails LOUDLY — it never emits a placeholder that could ship as if real).
+
+set -euo pipefail
+
+SRC_TAURI_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="$(cd "$SRC_TAURI_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$APP_DIR/.." && pwd)"
+CORE_DIR="$REPO_ROOT/core"
+CORE_ENTRY="$CORE_DIR/src/main/index.ts"
+OUT_DIR="$SRC_TAURI_DIR/binaries"
+BUNDLE_JS="$OUT_DIR/aibender-core.mjs"
+
+log()  { printf 'build-sidecar: %s\n' "$*" >&2; }
+die()  { printf 'build-sidecar: ERROR: %s\n' "$*" >&2; exit 1; }
+
+# --- target triple (matches spike-e's <name>-<target-triple> convention) -----
+if [ -n "${AIBENDER_SIDECAR_TRIPLE:-}" ]; then
+  TRIPLE="$AIBENDER_SIDECAR_TRIPLE"
+elif command -v rustc >/dev/null 2>&1; then
+  TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
+else
+  die "cannot determine target triple: rustc not on PATH and AIBENDER_SIDECAR_TRIPLE unset"
+fi
+[ -n "$TRIPLE" ] || die "empty target triple"
+SIDECAR="$OUT_DIR/aibender-core-$TRIPLE"
+
+command -v node >/dev/null 2>&1 || die "node not on PATH"
+[ -f "$CORE_ENTRY" ] || die "core entry not found: $CORE_ENTRY"
+
+mkdir -p "$OUT_DIR/native"
+
+# --- 1. bundle the broker to a single ESM file (esbuild via app node_modules) -
+ESBUILD="$APP_DIR/node_modules/.bin/esbuild"
+[ -x "$ESBUILD" ] || ESBUILD="$REPO_ROOT/node_modules/.bin/esbuild"
+[ -x "$ESBUILD" ] || die "esbuild not found (expected under app/ or root node_modules) — run pnpm install"
+
+log "bundling $CORE_ENTRY → $BUNDLE_JS (triple=$TRIPLE)"
+# node-pty is a native addon and node:sqlite/node:* are built-ins: keep them
+# external so the launcher resolves them at runtime against the real Node.
+"$ESBUILD" "$CORE_ENTRY" \
+  --bundle \
+  --platform=node \
+  --format=esm \
+  --target=node22 \
+  --external:node-pty \
+  --external:node:* \
+  --external:@anthropic-ai/* \
+  --external:@opencode-ai/* \
+  --outfile="$BUNDLE_JS" \
+  --log-level=warning \
+  || die "esbuild bundling failed"
+
+[ -s "$BUNDLE_JS" ] || die "bundle produced no output: $BUNDLE_JS"
+
+# --- 2. co-locate the node-pty prebuilt native addon (best-effort, warned) ----
+PTY_NODE="$(find "$CORE_DIR/node_modules/node-pty" -name '*.node' -type f 2>/dev/null | head -n 1 || true)"
+if [ -n "$PTY_NODE" ]; then
+  cp -f "$PTY_NODE" "$OUT_DIR/native/"
+  log "co-located node-pty addon: $(basename "$PTY_NODE")"
+else
+  log "WARN: node-pty prebuilt .node not found — the T3 real-build step must rebuild it for the bundle target (docs/runbooks/release-packaging.md)"
+fi
+
+# --- 3. produce the SEA launcher binary (Node Single Executable Application) --
+# The launcher is a copy of the running Node binary with the SEA blob injected;
+# the blob's main script execs the bundled broker. This is the artifact the
+# release runbook signs inside-out (sidecar first, then the app) — spike-e S1/S7.
+NODE_BIN="$(command -v node)"
+SEA_CONFIG="$OUT_DIR/.sea-config.json"
+SEA_MAIN="$OUT_DIR/.sea-main.cjs"
+SEA_BLOB="$OUT_DIR/.aibender-core.blob"
+
+# SEA entry (CommonJS is required for the SEA main): resolve the co-bundled ESM
+# broker relative to the executable and import it. Runtime, not build, secrets.
+cat > "$SEA_MAIN" <<'SEAMAIN'
+// SEA launcher main (generated by build-sidecar.sh). Execs the bundled broker
+// ESM sitting next to this executable. No identity/secret is embedded [X2].
+'use strict';
+const path = require('node:path');
+const { pathToFileURL } = require('node:url');
+const here = path.dirname(process.execPath);
+const broker = path.join(here, 'aibender-core.mjs');
+import(pathToFileURL(broker).href).catch((err) => {
+  console.error('aibender-core sidecar failed to start:', err && err.message);
+  process.exit(1);
+});
+SEAMAIN
+
+cat > "$SEA_CONFIG" <<SEACONF
+{
+  "main": "$SEA_MAIN",
+  "output": "$SEA_BLOB",
+  "disableExperimentalSEAWarning": true,
+  "useSnapshot": false,
+  "useCodeCache": false
+}
+SEACONF
+
+log "generating SEA blob"
+node --experimental-sea-config "$SEA_CONFIG" || die "node --experimental-sea-config failed (Node SEA requires Node >= 20; measured against node $(node --version))"
+[ -s "$SEA_BLOB" ] || die "SEA blob not produced: $SEA_BLOB"
+
+log "assembling launcher $SIDECAR from $NODE_BIN"
+cp -f "$NODE_BIN" "$SIDECAR"
+chmod +w "$SIDECAR"
+
+# Remove any inherited signature on the copied node binary so the injection is
+# valid; the release step re-signs inside-out with the real identity (T3).
+codesign --remove-signature "$SIDECAR" 2>/dev/null || true
+
+if ! command -v npx >/dev/null 2>&1; then
+  die "npx not on PATH — needed for postject (SEA blob injection)"
+fi
+npx --yes postject "$SIDECAR" NODE_SEA_BLOB "$SEA_BLOB" \
+  --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 \
+  --macho-segment-name NODE_SEA \
+  || die "postject injection failed"
+
+chmod +x "$SIDECAR"
+
+# Ad-hoc sign so the freshly-injected Mach-O is launchable locally (spike-e S1:
+# ad-hoc verifies deep+strict; the T3 step replaces this with the real identity).
+codesign --sign - --force "$SIDECAR" 2>/dev/null \
+  || log "WARN: ad-hoc codesign of the sidecar failed (non-macOS host?) — the T3 signing step re-signs regardless"
+
+# clean transient SEA artifacts (keep the launcher + bundle + native addons)
+rm -f "$SEA_CONFIG" "$SEA_MAIN" "$SEA_BLOB"
+
+log "OK — sidecar ready: ${SIDECAR#"$REPO_ROOT"/}"

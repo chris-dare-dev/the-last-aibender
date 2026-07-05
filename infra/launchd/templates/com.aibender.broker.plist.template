@@ -17,8 +17,12 @@
   documented expected-failure probe.
 
   v0 runs the broker as a Tauri sidecar (same Aqua session, keychain-
-  equivalent). This plist is validated at M2 and held ready; the v1 flip is
-  a deliberate, owner-gated step (docs/runbooks/launchd.md).
+  equivalent). This plist is validated at M2 and FINALIZED v1-READY at M6:
+  the KeepAlive/RunAtLoad/Aqua-default shape is frozen and lint-asserted, and
+  {{BROKER_ENTRY}} points at the packaged broker the M6 bundle installs
+  (default $AIBENDER_HOME/bin/aibender-core.mjs). The v1 flip — actually
+  bootstrapping this agent — is a deliberate, owner-gated step and is NOT
+  performed by the harness (docs/runbooks/launchd.md · docs/runbooks/release-packaging.md).
 
   Double-brace tokens are substituted by infra/launchd/render-launchd.sh.
   Bootstrap (owner-run, T3):

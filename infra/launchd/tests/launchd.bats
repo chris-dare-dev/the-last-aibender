@@ -100,6 +100,26 @@ STUB
   ! grep -q '<string>Background</string>' "$plist"
 }
 
+@test "broker plist is FINALIZED v1-ready (M6): frozen shape + packaged broker entry" {
+  # M6 LaunchAgent-v1 finalization: the v1-ready shape is frozen and asserted
+  # here so a drift is a test failure, not a silent regression. The agent is
+  # NOT installed by any test (bootstrapping is the owner-gated v1 flip, T3).
+  broker_entry="$BATS_TEST_TMPDIR/aibender-home/bin/aibender-core.mjs"
+  run render_broker --broker-entry "$broker_entry"
+  [ "$status" -eq 0 ]
+  plist="$AIBENDER_HOME/launchd/com.aibender.broker.plist"
+  plist_lint "$plist"
+  # v1-ready invariants (all four together):
+  [ "$(plist_get "$plist" RunAtLoad)" = "true" ]                    # start at GUI login
+  [ "$(plist_get "$plist" KeepAlive.SuccessfulExit)" = "false" ]    # crash-restart, stay-down-on-clean-exit
+  run plist_get "$plist" LimitLoadToSessionType                     # Aqua default (key ABSENT)
+  [ "$status" -ne 0 ]
+  # broker entry points at the packaged broker artifact the M6 bundle installs
+  [ "$(plist_get "$plist" ProgramArguments.1)" = "$broker_entry" ]
+  # and the template documents the M6 finalization + owner-gated flip
+  grep -q 'FINALIZED v1-READY at M6' "$REPO_ROOT/infra/launchd/templates/com.aibender.broker.plist.template"
+}
+
 @test "broker render output points at gui/\$UID bootstrap and never Background" {
   run render_broker
   [ "$status" -eq 0 ]

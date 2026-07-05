@@ -12,13 +12,16 @@
 > §9.1 (next action), come back for this before launching any workflow.
 >
 > **Last updated:** 2026-07-05 — **Stage 2 (M0–M6) + M7 account-registry + the full Stage-3 code
-> review, fix loop, AND the OS-1 backend registry are all COMPLETE** (HEAD `4a7177a`, 2312 tests,
-> protocol 1.6.0 / FROZEN-M8, schema kernel-ddl 9 / events-ddl 3). Owner has done all five logins; SEC-3
-> composeBroker wiring landed (`5c34978`); rendered-frontend review FIRST PASS done (disconnected state).
-> **Remaining:** the *populated* rendered pass (needs the broker running against the accounts), plus two
-> deferred code items — **OS-2** (projection SQL, design-latent — defer until the publish-cadence timer
-> is wired) and **OS-6** (joiner pending-map cap, LOW). Adding a Claude account OR a backend is now a
-> pure data change (`add-an-account.md` / `add-a-backend.md`).
+> review, fix loop, the OS-1 backend registry, AND the populated rendered pass are all COMPLETE**
+> (HEAD `b656b7e`, 2312 tests, protocol 1.6.0 / FROZEN-M8, schema kernel-ddl 9 / events-ddl 3). Owner has
+> done all five logins; SEC-3 composeBroker wiring landed (`5c34978`); rendered-frontend review is now
+> **BOTH PASSES done** — disconnected (first) + fixture-populated (second, via
+> `core/scripts/demo-populated.ts`): RF-1 confirmed disconnected-only, RF-2 measured (dominant label tier
+> **4.85:1 → AA-pass**), one new LOW (RF-6, status-chip composited contrast). See
+> `docs/reviews/rendered-frontend.md` §"Populated pass".
+> **Remaining:** two deferred code items — **OS-2** (projection SQL, design-latent — defer until the
+> publish-cadence timer is wired) and **OS-6** (joiner pending-map cap, LOW). Adding a Claude account OR a
+> backend is now a pure data change (`add-an-account.md` / `add-a-backend.md`).
 > **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
 > **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo
 > `chris-dare-dev/the-last-aibender`. **Everything is committed LOCAL-ONLY. Nothing has been pushed.
@@ -112,8 +115,9 @@ This handoff summarizes; **these files decide.** If this doc and a spec disagree
 
 The program has three stages: **Stage 1** (research, no code) → **Stage 2** (implement + test,
 milestones M0–M6) → **Stage 3** (adversarial review + fix, incl. mandatory screen-capture of the real
-rendered frontend). You are inside **Stage 3** — the code review + fix loop is done; the rendered-frontend
-screen-capture pass is the last remaining piece.
+rendered frontend). You are inside **Stage 3** — the code review + fix loop is done, and the
+rendered-frontend screen-capture pass is **complete (both disconnected + fixture-populated)**. Only the
+two deferred code items (OS-2, OS-6) remain, and both are optional.
 
 | Milestone | State | What it delivered |
 |---|---|---|

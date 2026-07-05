@@ -35,6 +35,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   ApprovalResolved,
+  DagDocument,
   WorkstreamMergeRequest,
   WorkstreamMergeResolved,
 } from '@aibender/protocol';
@@ -167,4 +168,72 @@ export interface TranscriptSource {
  */
 export interface WorkstreamEnginePort {
   merge(request: WorkstreamMergeRequest): Promise<WorkstreamMergeResolved>;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline engine port (BE-8 adapter target — M5 freeze, ICR-0012)
+// ---------------------------------------------------------------------------
+
+/**
+ * BE-8's pipeline engine as the gateway sees it: the handler for the frozen
+ * `pipelines` client verbs (ws-protocol.md §18.2). The gateway validates the
+ * verb SHAPE (`validatePipelineClientMessage`), then delegates here.
+ *
+ * Contract (mirrors the ICR-0011 `WorkstreamEnginePort` posture):
+ *  - `validate` is PURE static DAG validation — the gateway answers this ITSELF
+ *    when no engine is composed (no engine needed); the port supports it too.
+ *  - Typed rejections use {@link PipelineVerbError} with the frozen §18.4
+ *    codes (`bad-request`, `pipeline-not-found`, `pipeline-run-not-found`,
+ *    `pipeline-invalid`, `step-not-found`, `internal`). For `pipeline-invalid`
+ *    the error carries the validation issue class so the gateway ALSO pushes a
+ *    `pipeline-validation-result` (§18.4: detail rides the validation payload,
+ *    the error stays GENERIC [X2]).
+ *  - The engine PUBLISHES run/step-status + catalog snapshots itself through
+ *    the broker's {@link GatewayHandle.publishPipeline}; the verb handlers here
+ *    only start/steer runs and answer `pipeline-saved` / errors.
+ *  - ABSENT PORT (the every-port-optional rule): the gateway still VALIDATES
+ *    verbs; `pipeline-validate` answers a validation-result directly; every
+ *    other verb answers the runtime degrade `pipeline-not-found` (an empty
+ *    broker has no saved pipelines or runs).
+ */
+export interface PipelineVerbErrorLike {
+  readonly code:
+    | 'bad-request'
+    | 'pipeline-not-found'
+    | 'pipeline-run-not-found'
+    | 'pipeline-invalid'
+    | 'step-not-found'
+    | 'internal';
+  readonly message: string;
+  /** Present for `pipeline-invalid`: the §4 issue class the gateway relays. */
+  readonly validation?: {
+    readonly issueCode: string;
+    readonly issueMessage: string;
+    readonly issuePath: string;
+  };
+}
+
+export interface PipelineValidateResult {
+  readonly valid: boolean;
+  readonly issueCode?: string;
+  readonly issueMessage?: string;
+  readonly issuePath?: string;
+}
+
+export interface PipelineLaunchParams {
+  readonly pipelineId?: string;
+  readonly document?: DagDocument;
+  readonly inputs?: Readonly<Record<string, unknown>>;
+  readonly workstreamId?: string;
+}
+
+export interface PipelineEnginePort {
+  validate(document: unknown): PipelineValidateResult;
+  /** Persist a definition; returns its id (answered `pipeline-saved`). May throw PipelineVerbErrorLike. */
+  save(document: DagDocument): { readonly pipelineId: string };
+  /** Start a run (fire-and-forget; the walk publishes its own status). May throw. */
+  launch(params: PipelineLaunchParams): { readonly runId: string };
+  pause(runId: string): void;
+  resume(runId: string): { readonly runId: string };
+  cancel(runId: string): void;
 }

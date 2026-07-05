@@ -68,6 +68,9 @@ import {
   validateTranscriptPayload,
   validateWorkstreamClientMessage,
   validateWorkstreamServerPayload,
+  validatePipelineClientMessage,
+  validatePipelineServerPayload,
+  validateDagDocument,
   type ChannelName,
   type ContextGraphTouch,
   type ControlRequest,
@@ -76,6 +79,7 @@ import {
   type ErrorCode,
   type ErrorDetail,
   type ErrorPayload,
+  type PipelineServerPayload,
   type PtyClientMessage,
   type QuotaSnapshot,
   type WorkstreamServerPayload,
@@ -95,6 +99,8 @@ import type {
   ApprovalBrokerPort,
   GatewayPtyHost,
   GatewayPtySession,
+  PipelineEnginePort,
+  PipelineVerbErrorLike,
   TranscriptSource,
   Unsubscribe,
   WorkstreamEnginePort,
@@ -137,6 +143,12 @@ export interface GatewayOptions extends BootstrapPathOptions {
    * lineage engine composed = no session nodes; see ports.ts).
    */
   readonly workstreams?: WorkstreamEnginePort;
+  /**
+   * BE-8 pipeline engine port (M5, ICR-0012). Absent → pipeline verbs still
+   * VALIDATE; `pipeline-validate` answers a validation-result directly, every
+   * other verb answers the runtime degrade `pipeline-not-found` (see ports.ts).
+   */
+  readonly pipelines?: PipelineEnginePort;
   /** PTY flow-control tuning (mechanism frozen, values BE-3 config, §6). */
   readonly flowControl?: Partial<PtyFlowControlOptions>;
   /** JSON reconnect-replay journal bound (per channel, §8). */
@@ -178,6 +190,13 @@ export interface GatewayHandle {
    * producer must emit registered kinds only.
    */
   publishWorkstream(payload: WorkstreamServerPayload): void;
+  /**
+   * M5: the `pipelines` fan-out (BE-8's source — ICR-0012). Validated,
+   * journaled (replayable §8) broadcast; refuses invalid AND unregistered-kind
+   * payloads (forward tolerance is a READER rule). The mirror of
+   * publishWorkstream.
+   */
+  publishPipeline(payload: PipelineServerPayload): void;
   /** Stop accepting, close clients (1001), remove the owned bootstrap file. */
   close(): Promise<void>;
 }
@@ -206,6 +225,26 @@ const CLOSE_GOING_AWAY = 1001;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Structural guard for BE-8's PipelineVerbError (avoids importing core's class
+ *  into the gateway — the ICR-0002 structural-check posture). */
+const PIPELINE_VERB_ERROR_CODES: ReadonlySet<string> = new Set([
+  'bad-request',
+  'pipeline-not-found',
+  'pipeline-run-not-found',
+  'pipeline-invalid',
+  'step-not-found',
+  'internal',
+]);
+
+function isPipelineVerbError(value: unknown): value is PipelineVerbErrorLike {
+  return (
+    isRecord(value) &&
+    typeof value['code'] === 'string' &&
+    PIPELINE_VERB_ERROR_CODES.has(value['code']) &&
+    typeof value['message'] === 'string'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -650,8 +689,131 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       handleWorkstreamPayload(conn, payload);
       return;
     }
+    if (channel === CHANNEL.PIPELINES) {
+      handlePipelinesPayload(conn, payload);
+      return;
+    }
     pushError(conn, 'bad-request', `channel ${channel} accepts no client payloads`, {
       channel,
+    });
+  };
+
+  // ---- pipelines slice (ws-protocol.md §18, M5 freeze) -------------------------
+
+  /**
+   * The client verbs on the `pipelines` channel (§18.2). Validate against the
+   * frozen shapes, then delegate to the BE-8 pipeline engine port. With NO
+   * engine composed the verb still VALIDATES (the frozen shape check runs) —
+   * `pipeline-validate` answers a `pipeline-validation-result` directly (pure
+   * static DAG validation needs no engine), every other verb answers the
+   * runtime degrade error `pipeline-not-found` (an empty broker has no saved
+   * pipelines or runs — the approvals/workstream empty-broker posture). BE-8
+   * lands the engine port at M5 implementation; this seam keeps the wire
+   * contract green in the meantime.
+   */
+  const handlePipelinesPayload = (conn: Connection, rawPayload: unknown): void => {
+    const parsed = validatePipelineClientMessage(rawPayload);
+    if (!parsed.ok) {
+      pushError(conn, parsed.code, parsed.message, { channel: CHANNEL.PIPELINES });
+      return;
+    }
+    const verb = parsed.value;
+    // pipeline-validate is pure static validation — answer directly, no engine
+    // (works composed or not; the engine's validate delegates to the same
+    // frozen validator).
+    if (verb.kind === 'pipeline-validate') {
+      const result = validateDagDocument(verb.document);
+      broadcast(
+        CHANNEL.PIPELINES,
+        result.ok
+          ? { kind: 'pipeline-validation-result', requestId: verb.requestId, valid: true }
+          : {
+              kind: 'pipeline-validation-result',
+              requestId: verb.requestId,
+              valid: false,
+              issueCode: result.issue.code,
+              issueMessage: result.issue.message,
+              issuePath: result.issue.path,
+            },
+      );
+      return;
+    }
+
+    const engine = options.pipelines;
+    if (engine === undefined) {
+      // No engine composed: runtime degrade, never a validation error (the
+      // empty-broker posture — an empty broker has no saved pipelines/runs).
+      pushError(conn, 'pipeline-not-found', 'no pipeline engine is composed', {
+        channel: CHANNEL.PIPELINES,
+        correlatesTo: verb.requestId,
+      });
+      return;
+    }
+
+    // Delegate to the BE-8 engine; typed refusals map onto pushed §7 errors
+    // correlated by requestId. For `pipeline-invalid` the validation issue also
+    // rides a `pipeline-validation-result` (§18.4: detail on the payload, the
+    // error stays GENERIC [X2]).
+    try {
+      switch (verb.kind) {
+        case 'pipeline-save': {
+          const { pipelineId } = engine.save(verb.document);
+          broadcast(CHANNEL.PIPELINES, { kind: 'pipeline-saved', requestId: verb.requestId, pipelineId });
+          return;
+        }
+        case 'pipeline-launch': {
+          engine.launch({
+            ...(verb.pipelineId !== undefined ? { pipelineId: verb.pipelineId } : {}),
+            ...(verb.document !== undefined ? { document: verb.document } : {}),
+            ...(verb.inputs !== undefined ? { inputs: verb.inputs } : {}),
+            ...(verb.workstreamId !== undefined ? { workstreamId: verb.workstreamId } : {}),
+          });
+          // The run's status fans out through publishPipeline; no direct answer.
+          return;
+        }
+        case 'pipeline-pause':
+          engine.pause(verb.runId);
+          return;
+        case 'pipeline-resume':
+          engine.resume(verb.runId);
+          return;
+        case 'pipeline-cancel':
+          engine.cancel(verb.runId);
+          return;
+      }
+    } catch (error: unknown) {
+      handlePipelineVerbError(conn, verb.requestId, error);
+    }
+  };
+
+  /** Map a PipelineVerbErrorLike onto a pushed §18.4 error (+ optional
+   *  validation-result for `pipeline-invalid`). Unknown throws → GENERIC internal [X2]. */
+  const handlePipelineVerbError = (conn: Connection, requestId: string, error: unknown): void => {
+    if (isPipelineVerbError(error)) {
+      if (error.code === 'pipeline-invalid' && error.validation !== undefined) {
+        // The issue detail rides the validation-result payload; the pushed
+        // error is GENERIC.
+        broadcast(CHANNEL.PIPELINES, {
+          kind: 'pipeline-validation-result',
+          requestId,
+          valid: false,
+          issueCode: error.validation.issueCode,
+          issueMessage: error.validation.issueMessage,
+          issuePath: error.validation.issuePath,
+        });
+      }
+      pushError(conn, error.code, error.message, {
+        channel: CHANNEL.PIPELINES,
+        correlatesTo: requestId,
+      });
+      return;
+    }
+    log.error('pipeline engine threw a non-typed error', {
+      detail: error instanceof Error ? scrub(error.message) : String(typeof error),
+    });
+    pushError(conn, 'internal', 'internal broker error while handling a pipeline verb', {
+      channel: CHANNEL.PIPELINES,
+      correlatesTo: requestId,
     });
   };
 
@@ -905,6 +1067,20 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
         );
       }
       broadcast(CHANNEL.WORKSTREAM, checked.value);
+    },
+    publishPipeline: (payload) => {
+      const checked = validatePipelineServerPayload(payload);
+      if (!checked.ok) {
+        throw new RangeError(`refusing to publish an invalid pipelines payload: ${checked.message}`);
+      }
+      if ('opaque' in checked.value) {
+        // Forward tolerance is a READER rule — our producer emits registered
+        // kinds only (a typo'd kind here is a BE-8 bug).
+        throw new RangeError(
+          `refusing to publish unregistered pipelines kind ${JSON.stringify(checked.value.kind)}`,
+        );
+      }
+      broadcast(CHANNEL.PIPELINES, checked.value);
     },
     close,
   };

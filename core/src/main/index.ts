@@ -48,6 +48,7 @@ import {
   type ContextGraphTouch,
   type EventSummary,
   type LineageRecorder,
+  type PipelineServerPayload,
   type QuotaSnapshot,
   type ReadModelSnapshot,
   type SessionIdResolver,
@@ -55,14 +56,22 @@ import {
   type WorkstreamHookRouting,
   type WorkstreamServerPayload,
 } from '@aibender/protocol';
-import { openKernelStore, type KernelStore, type ResumeLedgerStore } from '@aibender/schema';
+import { openKernelStore, type EventsTableStore, type KernelStore, type ResumeLedgerStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 
 import {
   createWorkstreamSlice,
   type BriefSynthesizer,
+  type WorkstreamPublisher,
   type WorkstreamSlice,
 } from '../workstreams/index.js';
+import {
+  createPipelineSlice,
+  type CatalogResolver,
+  type PipelineApprovalGate,
+  type PipelineSlice,
+  type StepExecutor,
+} from '../pipelines/index.js';
 
 import {
   KernelVerbError,
@@ -453,6 +462,35 @@ export interface ComposeBrokerOptions extends ComposeKernelOptions {
     readonly logger?: Logger;
     readonly nowMs?: () => number;
   };
+  /**
+   * M5 [features 4/5]: the BE-8 pipeline slice. Present → composeBroker builds
+   * the pipeline engine + memoization journal over the SAME kernel store
+   * (migration 0004 lives in the kernel database, sqlite-ddl.md §10.1), wires
+   * step-attempt `workflow` edges onto the workstream lineage store + cost onto
+   * the events store, feeds gates through the shared ApprovalBroker (the M2
+   * one-inbox precedent), and injects the engine into the gateway's frozen
+   * pipeline verbs (ICR-0012). Absent → M1–M4 behavior exactly (the gateway's
+   * documented empty-broker `pipeline-not-found` degrade). The `executor` is
+   * the injection seam ([X1] per-step account routing): a fake in tests; the
+   * real adapter fan-out (kernel QueryRunner / OpenCode / LM Studio) is bound
+   * at the operator-config slice (the BrokerPublisherStarter seam-status
+   * posture — the executor needs the same adapter+config surface).
+   */
+  readonly pipelines?: {
+    /** THE per-step account-routing seam. Required to run steps. */
+    readonly executor: StepExecutor;
+    /** Plan-time capability resolver (from a catalog scan). Absent → prompt-only. */
+    readonly resolver?: CatalogResolver;
+    /** Approval-gate port (defaults to the composed ApprovalBroker — see below). */
+    readonly gate?: PipelineApprovalGate;
+    /** The collector events store for per-step cost (§18.5). Absent → no cost rows. */
+    readonly events?: EventsTableStore;
+    /** The run's workspace (`${workspace}` + project-scope resolution). */
+    readonly workspace?: string;
+    readonly logger?: Logger;
+    readonly nowMs?: () => number;
+    readonly sleep?: (ms: number) => Promise<void>;
+  };
 }
 
 export interface ComposedBroker extends ComposedKernel {
@@ -474,6 +512,14 @@ export interface ComposedBroker extends ComposedKernel {
    * builds on these; tests drive them directly.
    */
   readonly workstreams?: WorkstreamSlice;
+  /**
+   * M5 [features 4/5]: the composed BE-8 pipeline slice (present iff
+   * `options.pipelines` was given) — the engine (gateway verb handler), the
+   * reaper, and `publishCatalogSnapshot`. Operator wiring (catalog scan +
+   * FSEvents publish, the real executor) builds on this; tests drive it
+   * directly.
+   */
+  readonly pipelines?: PipelineSlice;
 }
 
 /**
@@ -515,8 +561,15 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
   // -- gateway boots after it; payloads published before the bind (none in
   // -- practice: nothing spawns during composition) drop silently. -----------
   let workstreamSink: ((payload: WorkstreamServerPayload) => void) | undefined;
-  const publishWorkstream = (payload: WorkstreamServerPayload): void => {
+  const publishWorkstream: WorkstreamPublisher = (payload) => {
     workstreamSink?.(payload);
+  };
+
+  // -- [M5] pipeline slice publisher (BE-8): LATE-BOUND — same posture as the
+  // -- workstream sink; payloads published before the gateway is up drop. -----
+  let pipelineSink: ((payload: PipelineServerPayload) => void) | undefined;
+  const publishPipeline = (payload: PipelineServerPayload): void => {
+    pipelineSink?.(payload);
   };
 
   // -- transcript tee (ICR-0009): ONE kernel tap fans raw messages out to ----
@@ -632,6 +685,32 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     });
   }
 
+  // -- [M5] pipeline slice (BE-8): built over the SAME kernel store (migration
+  // -- 0004 journal), the workstream lineage store (`workflow` edges), and the
+  // -- shared ApprovalBroker (gates ride the M2 one-inbox). The executor is the
+  // -- injected [X1] account-routing seam. -----------------------------------
+  let pipelineSlice: PipelineSlice | undefined;
+  if (options.pipelines !== undefined) {
+    const gate: PipelineApprovalGate =
+      options.pipelines.gate ?? approvalGateFromBroker(approvals);
+    pipelineSlice = createPipelineSlice({
+      store: composed.store.pipelines,
+      executor: options.pipelines.executor,
+      gate,
+      // Step-attempt `workflow` edges land on the SAME kernel lineage store
+      // (dag-schema.md §6) and fan out through the shared workstream publisher.
+      lineage: composed.store.lineage,
+      publish: publishPipeline,
+      publishWorkstream,
+      ...(options.pipelines.resolver !== undefined ? { resolver: options.pipelines.resolver } : {}),
+      ...(options.pipelines.events !== undefined ? { events: options.pipelines.events } : {}),
+      ...(options.pipelines.workspace !== undefined ? { workspace: options.pipelines.workspace } : {}),
+      ...(options.pipelines.logger !== undefined ? { logger: options.pipelines.logger } : {}),
+      ...(options.pipelines.nowMs !== undefined ? { nowMs: options.pipelines.nowMs } : {}),
+      ...(options.pipelines.sleep !== undefined ? { sleep: options.pipelines.sleep } : {}),
+    });
+  }
+
   // -- gateway over every port ------------------------------------------------
   const port = adaptSessionKernel(composed.kernel, composed.store.resumeLedger);
   let gateway: GatewayHandle;
@@ -643,6 +722,9 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       // [X4] M4 (ICR-0011): the frozen merge verb goes live when the BE-7
       // engine is composed; absent → the documented empty-broker degrade.
       ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice.engine } : {}),
+      // [M5] ICR-0012: the pipeline verbs go live when the BE-8 engine is
+      // composed; absent → the documented empty-broker `pipeline-not-found`.
+      ...(pipelineSlice !== undefined ? { pipelines: pipelineSlice.engine } : {}),
       ...(ptyHost !== undefined ? { ptyHost: toGatewayPtyHostPort(ptyHost) } : {}),
       ...(options.gateway?.aibenderHome !== undefined
         ? { aibenderHome: options.gateway.aibenderHome }
@@ -678,6 +760,11 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
         detail: (cause as Error).message,
       });
     }
+  }
+
+  // -- [M5] bind the late pipeline publisher (run/step status + catalog) -----
+  if (pipelineSlice !== undefined) {
+    pipelineSink = (payload) => gateway.publishPipeline(payload);
   }
 
   // -- M3 publisher lanes over the frozen-typed sinks -------------------------
@@ -731,16 +818,50 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     approvals,
     ...(ptyHost !== undefined ? { ptyHost } : {}),
     ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice } : {}),
+    ...(pipelineSlice !== undefined ? { pipelines: pipelineSlice } : {}),
     close: async () => {
       await closePublishers();
       // [X4]: drain in-flight brief automation before the wire goes down
       // (fire-and-forget work settles; late publishes still fan out).
       await workstreamSlice?.automation.settle();
+      // [M5]: cancel any in-flight runs + reap their process groups before the
+      // wire goes down (no orphan children survive a broker shutdown).
+      pipelineSlice?.reaper.reapAll();
       await gateway.close();
       workstreamSink = undefined; // the wire is gone; late publishes drop
+      pipelineSink = undefined;
       await ptyHost?.shutdown();
       await composed.close();
       approvals.close();
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// [M5] approval-gate adapter: the ApprovalBroker → PipelineApprovalGate
+// ---------------------------------------------------------------------------
+
+/**
+ * Adapt the composed ApprovalBroker onto the pipeline runner's gate port. A
+ * pipeline `approval` step rides the M2 approvals channel as a
+ * `workflow-gate`-source request (§18.3 / §10.1: runId/stepId REQUIRED,
+ * toolName/toolUseId forbidden — the broker's per-source matrix enforces it).
+ * The one-inbox precedent: no new gate wire.
+ */
+function approvalGateFromBroker(broker: ApprovalBroker): PipelineApprovalGate {
+  return {
+    request: (input) => {
+      const handle = broker.request({
+        source: 'workflow-gate',
+        summary: input.summary,
+        accountLabel: input.accountLabel,
+        runId: input.runId,
+        stepId: input.stepId,
+        ...(input.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
+      });
+      return {
+        resolution: handle.resolution.then((r) => ({ outcome: r.outcome })),
+      };
     },
   };
 }

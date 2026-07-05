@@ -40,12 +40,12 @@ const PERMISSION_REQUEST_BODY = JSON.stringify({
   tool_use_id: 'toolu_synth_9',
 });
 
-describe('startHooksServer — golden corpus replay (FROZEN-M4)', () => {
+describe('startHooksServer — golden corpus replay (FROZEN-M5)', () => {
   let store: EventsStore;
   let server: HooksServer;
 
   beforeEach(async () => {
-    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M4');
+    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M5');
     store = await openEventsStore({ path: ':memory:' });
     server = await startHooksServer({ events: store.events, port: 0, nowMs: () => 4242 });
     expect(server.state).toBe('listening');

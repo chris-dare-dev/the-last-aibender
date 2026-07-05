@@ -105,6 +105,10 @@ interface GaugeValue {
 export function quotaGaugesVM(
   snapshot: QuotaGaugesSnapshot | undefined,
   live: QuotaStoreState['snapshots'],
+  // FE-1: the configured Claude accounts to lay out primary gauge rows for.
+  // Defaults to the currently-configured registry; the deck passes the
+  // reactive set so a broker-restart re-sync re-lays the gauges immediately.
+  claudeAccounts: readonly AccountLabel[] = accountRegistry().claudeAccounts.map((e) => e.label),
 ): QuotaGaugesVM {
   const merged = new Map<string, GaugeValue>();
   if (snapshot !== undefined) {
@@ -130,10 +134,10 @@ export function quotaGaugesVM(
   }
 
   if (snapshot === undefined && merged.size === 0) {
-    return { health: absentHealth(), rows: fixedRows(merged) };
+    return { health: absentHealth(), rows: fixedRows(merged, claudeAccounts) };
   }
 
-  const rows = [...fixedRows(merged), ...extraRows(merged)];
+  const rows = [...fixedRows(merged, claudeAccounts), ...extraRows(merged, claudeAccounts)];
   let worst: InstrumentStatus = 'ok';
   for (const row of rows) {
     if (row.usedPct === undefined) continue;
@@ -149,8 +153,11 @@ export function quotaGaugesVM(
   return { health: escalate(base, worst), rows };
 }
 
-function fixedRows(merged: ReadonlyMap<string, GaugeValue>): QuotaGaugeRow[] {
-  return gaugeSlots().map((slot) => {
+function fixedRows(
+  merged: ReadonlyMap<string, GaugeValue>,
+  claudeAccounts?: readonly AccountLabel[],
+): QuotaGaugeRow[] {
+  return gaugeSlots(claudeAccounts).map((slot) => {
     const value = merged.get(quotaKey(slot.account, slot.window));
     return {
       account: slot.account,
@@ -168,9 +175,12 @@ function fixedRows(merged: ReadonlyMap<string, GaugeValue>): QuotaGaugeRow[] {
  * with the KNOWN seed set as a fallback superset so a snapshot for a not-yet-
  * configured account still surfaces rather than vanishing.
  */
-function extraRows(merged: ReadonlyMap<string, GaugeValue>): QuotaGaugeRow[] {
-  const primary = new Set(gaugeSlots().map((s) => quotaKey(s.account, s.window)));
-  const claude = accountRegistry().claudeAccounts.map((e) => e.label);
+function extraRows(
+  merged: ReadonlyMap<string, GaugeValue>,
+  claudeAccounts?: readonly AccountLabel[],
+): QuotaGaugeRow[] {
+  const primary = new Set(gaugeSlots(claudeAccounts).map((s) => quotaKey(s.account, s.window)));
+  const claude = claudeAccounts ?? accountRegistry().claudeAccounts.map((e) => e.label);
   const scanAccounts: readonly AccountLabel[] = [...new Set([...claude, ...ACCOUNT_LABELS])];
   const rows: QuotaGaugeRow[] = [];
   for (const account of scanAccounts) {

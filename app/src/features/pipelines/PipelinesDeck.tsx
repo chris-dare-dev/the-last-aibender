@@ -39,10 +39,10 @@ import {
   type StepKind,
 } from '@aibender/protocol';
 import {
-  accountRegistry,
   channelHueForLabel,
   connectionStore,
   approvalsStore,
+  useAccountRegistry,
   type PendingApproval,
 } from '../../lib/index.ts';
 import { maskIdentityShapedText } from '../launch/index.ts';
@@ -170,6 +170,9 @@ interface AccountChipProps {
 function AccountChip({ account, onChange, testId }: AccountChipProps): ReactNode {
   const label = account ?? 'MAX_A';
   const hue = channelHueForLabel(label);
+  // FE-1: reactive registry — a broker-restart re-sync re-renders the routing
+  // options so a newly-provisioned account appears without a reload.
+  const registry = useAccountRegistry();
   if (onChange === undefined) {
     return (
       <span
@@ -197,7 +200,7 @@ function AccountChip({ account, onChange, testId }: AccountChipProps): ReactNode
         value={label}
         onChange={(e) => onChange(e.target.value as AccountLabel)}
       >
-        {accountRegistry().entries.map((entry) => (
+        {registry.entries.map((entry) => (
           <option key={entry.label} value={entry.label}>
             {entry.label}
           </option>

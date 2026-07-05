@@ -36,7 +36,7 @@ import {
   type WorkstreamBriefPayload,
   type WorkstreamStatus,
 } from '@aibender/protocol';
-import { accountRegistry, channelHueForLabel, connectionStore } from '../../lib/index.ts';
+import { channelHueForLabel, connectionStore, useAccountRegistry } from '../../lib/index.ts';
 import { usePrefersReducedMotion } from '../../chrome/phosphor.tsx';
 import { maskIdentityShapedText } from '../launch/index.ts';
 import './workstreams.css';
@@ -439,6 +439,11 @@ export function WorkstreamsDeck({ now, sender, newMergeId }: WorkstreamsDeckProp
   const merges = useStore(workstreamsStore, (s) => s.merges);
   const ceremonyMarker = useStore(workstreamsStore, (s) => s.ceremony);
 
+  // FE-1: reactive registry — a broker-restart re-sync re-renders the merge
+  // "RUN ON" account options so a newly-provisioned account is selectable
+  // without a reload.
+  const registry = useAccountRegistry();
+
   const [scopeChoice, setScopeChoice] = useState<string | undefined>(undefined);
   const [selectionOrder, setSelectionOrder] = useState<readonly string[]>([]);
   const [focused, setFocused] = useState<string | undefined>(undefined);
@@ -627,7 +632,7 @@ export function WorkstreamsDeck({ now, sender, newMergeId }: WorkstreamsDeckProp
               value={account}
               onChange={(e) => setAccount(e.target.value as AccountLabel)}
             >
-              {accountRegistry().entries.map((entry) => (
+              {registry.entries.map((entry) => (
                 <option key={entry.label} value={entry.label}>
                   {entry.label}
                 </option>

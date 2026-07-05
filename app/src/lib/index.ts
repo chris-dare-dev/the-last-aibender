@@ -119,13 +119,27 @@ export { isTauri, nativeBootstrapProvider, notifyNative } from './native/tauriBr
 
 export {
   SEED_CLAUDE_ACCOUNTS,
+  accountConfigStore,
   accountRegistry,
   buildAccountRegistry,
   channelHueForLabel,
+  currentAccountConfigSource,
   currentConfiguredClaudeAccounts,
   normalizeClaudeAccounts,
   setConfiguredClaudeAccounts,
+  useAccountRegistry,
+  type AccountConfigSource,
+  type AccountConfigState,
   type AccountKind,
   type AccountRegistry,
   type AccountRegistryEntry,
 } from './accountRegistry.ts';
+
+export {
+  installAccountRegistrySync,
+  syncAccountRegistry,
+  type AccountSyncOptions,
+  type AccountSyncReason,
+  type AccountSyncResult,
+  type RestartTrigger,
+} from './accountConfig.ts';

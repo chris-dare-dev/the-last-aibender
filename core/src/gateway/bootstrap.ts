@@ -39,9 +39,17 @@
  *    if a caller hands it garbage.
  */
 
-import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { chmod, link, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+
+/** node:fs error shape narrow — total over unknown (never throws). */
+function errnoCode(cause: unknown): string | undefined {
+  return typeof cause === 'object' && cause !== null && 'code' in cause
+    ? String((cause as { code?: unknown }).code)
+    : undefined;
+}
 
 import { isClaudeAccountLabel } from '@aibender/protocol';
 
@@ -70,6 +78,30 @@ export interface BootstrapPathOptions {
   readonly aibenderHome?: string;
   /** Environment to consult (default process.env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+}
+
+/** SEC-1: the outcome of an ownership-checked removal, for the caller/logs. */
+export type BootstrapRemovalOutcome =
+  /** The file carried this boot's token and was unlinked. */
+  | 'removed'
+  /** No file present (never written, or a concurrent boot already replaced+unlinked it). */
+  | 'absent'
+  /**
+   * A file was present but carried a DIFFERENT token — a newer boot owns it now,
+   * so this (stale) broker left it untouched. NOT an error; the expected §3.4
+   * outcome when a newer boot raced in. Worth a warning: a stale broker exited
+   * late enough that a successor already published.
+   */
+  | 'foreign';
+
+export interface RemoveBootstrapFileOptions extends BootstrapPathOptions {
+  /**
+   * SEC-1: invoked when a file is present at unlink time but carries a token
+   * other than `expectedToken` (outcome `'foreign'`) — the concurrent-newer-boot
+   * signal. The gateway wires its (token-scrubbing) logger here. Optional; the
+   * removal is safe with or without it.
+   */
+  readonly onForeign?: () => void;
 }
 
 export const BOOTSTRAP_FILE_NAME = 'gateway.json';
@@ -233,20 +265,89 @@ export async function readBootstrapFile(
 }
 
 /**
- * Remove the bootstrap file iff it still belongs to this boot (token match).
- * Returns true when the file was removed, false when it was absent, foreign,
- * or unreadable (all left untouched).
+ * Remove the bootstrap file iff it still belongs to this boot (token match) —
+ * SEC-1: an ATOMIC re-validate-before-unlink, closing the read-then-rm TOCTOU.
+ *
+ * The old shape (read → token-check → unconditional `rm(path)`) had a window:
+ * a newer Boot B could publish a fresh file at the same path between the check
+ * and the `rm`, and the `rm` would then delete B's file — violating
+ * bootstrap-file.md §3.4 ("a stale broker exiting late can never delete a
+ * newer boot's discovery file").
+ *
+ * The fix moves the ownership check onto a private, per-token marker path:
+ *   1. atomically `rename(path → marker)` — a single fs operation. After it,
+ *      the canonical path is empty; a racing Boot B write lands on the empty
+ *      canonical path and is NEVER what we inspect.
+ *   2. read+validate the MARKER in isolation. If it carries `expectedToken`,
+ *      unlink the marker (`removed`). If not, it was a newer boot's file we
+ *      moved out from under it → `rename(marker → path)` to RESTORE it and
+ *      report `foreign` (untouched, per §3.4).
+ * ENOENT at step 1 is idempotent success (`absent`) — the file was never
+ * written or a concurrent boot already replaced+unlinked it.
+ *
+ * The catch-all is gone: only ENOENT is swallowed (as `absent`); any other fs
+ * error propagates rather than being masked as a benign non-removal.
  */
 export async function removeBootstrapFile(
   expectedToken: string,
-  options: BootstrapPathOptions = {},
-): Promise<boolean> {
-  const current = await readBootstrapFile(options);
-  if (current === undefined || current.token !== expectedToken) return false;
+  options: RemoveBootstrapFileOptions = {},
+): Promise<BootstrapRemovalOutcome> {
+  const path = bootstrapPath(options);
+  // Private marker in the SAME directory (rename must stay intra-filesystem to
+  // be atomic). Keyed on pid + per-call randomness so two overlapping removals
+  // — even in one process — never collide on the marker path.
+  const marker = join(
+    bootstrapDir(options),
+    `.${BOOTSTRAP_FILE_NAME}.remove.${process.pid}.${randomBytes(6).toString('hex')}.mark`,
+  );
+
   try {
-    await rm(bootstrapPath(options));
-    return true;
-  } catch {
-    return false;
+    await rename(path, marker);
+  } catch (cause) {
+    if (errnoCode(cause) === 'ENOENT') return 'absent';
+    throw cause;
   }
+
+  // The file is now isolated on `marker`; the canonical path is free for any
+  // concurrent newer boot. Validate ownership on the MARKER alone (never the
+  // canonical path — a racing write there is not ours to inspect).
+  let ours = false;
+  try {
+    const raw = await readFile(marker, 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    ours = isGatewayBootstrap(parsed) && parsed.token === expectedToken;
+  } catch {
+    ours = false; // torn/foreign marker content is treated as not-ours
+  }
+
+  if (ours) {
+    // Ours — unlink the marker. ENOENT here is still success (someone else
+    // cleaned it, impossible in practice but idempotent regardless).
+    try {
+      await rm(marker);
+    } catch (cause) {
+      if (errnoCode(cause) !== 'ENOENT') throw cause;
+    }
+    return 'removed';
+  }
+
+  // A newer boot's file — restore it exactly where it was, WITHOUT clobbering
+  // an even-newer re-publish. `rename` overwrites on POSIX, so use exclusive
+  // `link` (fails EEXIST if the canonical path is already re-occupied): a
+  // successor's file always wins. Either way our marker is then unlinked, so a
+  // live token never lingers on a stale marker path.
+  try {
+    await link(marker, path); // exclusive: EEXIST if a successor already wrote
+  } catch (cause) {
+    // EEXIST = an even-newer boot re-published at `path`; its file is strictly
+    // newer, so we keep it and just drop our stale copy (done below). Any other
+    // fs error is unexpected — surface it after cleaning up the marker.
+    if (errnoCode(cause) !== 'EEXIST') {
+      await rm(marker).catch(() => undefined);
+      throw cause;
+    }
+  }
+  await rm(marker).catch(() => undefined);
+  options.onForeign?.();
+  return 'foreign';
 }

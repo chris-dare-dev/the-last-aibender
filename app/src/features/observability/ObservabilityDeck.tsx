@@ -37,7 +37,7 @@ import {
 export const DASHBOARD_READ_MODEL_IDS: readonly ReadModelId[] = Object.freeze(
   READ_MODEL_IDS.filter((id) => id !== 'resource-health'),
 );
-import { connectionStore, quotaStore } from '../../lib/index.ts';
+import { connectionStore, quotaStore, useAccountRegistry } from '../../lib/index.ts';
 import { Phosphor } from '../../chrome/phosphor.tsx';
 import './observability.css';
 import { fmtCountdown, fmtMs, fmtPct, fmtTokens, fmtTokensPerHour, fmtUsd } from './format.ts';
@@ -226,6 +226,12 @@ export function ObservabilityDeck({ now, copyText }: ObservabilityDeckProps): Re
   const phase = useStore(connectionStore, (s) => s.phase);
   const slots = useStore(observabilityStore, (s) => s.snapshots);
   const quota = useStore(quotaStore, (s) => s.snapshots);
+  // FE-1: subscribe to the reactive registry so a broker-restart re-sync (a
+  // newly-provisioned Claude account gaining its quota gauges / chips)
+  // re-renders the deck immediately; the quota/offload VMs read the fresh
+  // configured set on this render, not on the next DECK_TICK.
+  const registry = useAccountRegistry();
+  const claudeAccounts = registry.claudeAccounts.map((e) => e.label);
   const [, setTick] = useState(0);
   useEffect(() => {
     const handle = setInterval(() => setTick((t) => t + 1), DECK_TICK_MS);
@@ -252,7 +258,7 @@ export function ObservabilityDeck({ now, copyText }: ObservabilityDeckProps): Re
     );
   }
 
-  const quotaVm = quotaGaugesVM(latestSnapshot(slots, 'quota-gauges'), quota);
+  const quotaVm = quotaGaugesVM(latestSnapshot(slots, 'quota-gauges'), quota, claudeAccounts);
   const burnVm = burnRateVM(latestSnapshot(slots, 'burn-rate'));
   const bedrockVm = bedrockCostVM(latestSnapshot(slots, 'bedrock-cost'));
   const equivVm = apiEquivalentVM(latestSnapshot(slots, 'api-equivalent-usd'));

@@ -126,23 +126,93 @@ describe('removeBootstrapFile (ownership-checked)', () => {
   it('removes the file when the token matches', async () => {
     const body = sample();
     await writeBootstrapFile(body, { aibenderHome: home });
-    expect(await removeBootstrapFile(body.token, { aibenderHome: home })).toBe(true);
+    expect(await removeBootstrapFile(body.token, { aibenderHome: home })).toBe('removed');
     expect(await readBootstrapFile({ aibenderHome: home })).toBeUndefined();
   });
 
   // -- negative ---------------------------------------------------------------
 
-  it('leaves a newer boot file in place (token mismatch) and reports false', async () => {
+  it('leaves a newer boot file in place (token mismatch) and reports foreign', async () => {
     const newer = sample({ token: 'a-newer-boots-synthesized-token' });
     await writeBootstrapFile(newer, { aibenderHome: home });
-    expect(await removeBootstrapFile('the-old-boots-token', { aibenderHome: home })).toBe(false);
+    expect(await removeBootstrapFile('the-old-boots-token', { aibenderHome: home })).toBe('foreign');
+    // The newer boot's file (incl. every field) is byte-preserved, not touched.
+    expect(await readBootstrapFile({ aibenderHome: home })).toEqual(newer);
+  });
+
+  it('fires onForeign when it declines to remove a newer boot file', async () => {
+    const newer = sample({ token: 'yet-another-newer-synthesized-token' });
+    await writeBootstrapFile(newer, { aibenderHome: home });
+    let fired = 0;
+    const outcome = await removeBootstrapFile('the-old-boots-token', {
+      aibenderHome: home,
+      onForeign: () => {
+        fired += 1;
+      },
+    });
+    expect(outcome).toBe('foreign');
+    expect(fired).toBe(1);
     expect((await readBootstrapFile({ aibenderHome: home }))?.token).toBe(newer.token);
   });
 
   // -- edge ---------------------------------------------------------------------
 
-  it('is a no-op on an absent file', async () => {
-    expect(await removeBootstrapFile('anything', { aibenderHome: home })).toBe(false);
+  it('is idempotent (absent) on a missing file', async () => {
+    expect(await removeBootstrapFile('anything', { aibenderHome: home })).toBe('absent');
+  });
+
+  it('leaves no marker residue behind after any outcome', async () => {
+    const { readdir } = await import('node:fs/promises');
+    // removed
+    await writeBootstrapFile(sample(), { aibenderHome: home });
+    await removeBootstrapFile(sample().token, { aibenderHome: home });
+    expect(await readdir(bootstrapDir({ aibenderHome: home }))).toEqual([]);
+    // foreign
+    const newer = sample({ token: 'newer-token-for-residue-check' });
+    await writeBootstrapFile(newer, { aibenderHome: home });
+    await removeBootstrapFile('stale-token', { aibenderHome: home });
+    expect(await readdir(bootstrapDir({ aibenderHome: home }))).toEqual(['gateway.json']);
+    // absent
+    await rm(bootstrapPath({ aibenderHome: home }));
+    await removeBootstrapFile('whatever', { aibenderHome: home });
+    expect(await readdir(bootstrapDir({ aibenderHome: home }))).toEqual([]);
+  });
+
+  // -- SEC-1: the two-broker removal TOCTOU regression ------------------------
+
+  it('SEC-1: a stale broker never deletes a newer boot file that lands mid-removal', async () => {
+    // Boot A published, then a NEWER Boot B replaced the file with its own
+    // token (the atomic temp+rename write). Boot A's late shutdown must NOT
+    // delete Boot B's discovery file (bootstrap-file.md §3.4).
+    const bootA = sample({ token: 'boot-A-synthesized-token-000000000000000000' });
+    const bootB = sample({ port: 51000, token: 'boot-B-synthesized-token-000000000000000000' });
+    await writeBootstrapFile(bootA, { aibenderHome: home });
+    // B replaces the file before A's removal runs.
+    await writeBootstrapFile(bootB, { aibenderHome: home });
+
+    // A's stale removal: it validates its OWN token, finds the file is B's,
+    // and leaves B's file exactly in place.
+    const outcome = await removeBootstrapFile(bootA.token, { aibenderHome: home });
+    expect(outcome).toBe('foreign');
+    const survivor = await readBootstrapFile({ aibenderHome: home });
+    expect(survivor).toEqual(bootB); // B's file survived, byte-for-byte
+    expect(survivor?.token).not.toBe(bootA.token);
+  });
+
+  it('SEC-1: interleaved removals — only the owning boot removes, the other is a no-op', async () => {
+    // Two overlapping removals of the SAME (matching-token) file: the first
+    // takes it (removed); the second finds nothing (absent). Neither ever
+    // deletes a file it does not own.
+    const body = sample();
+    await writeBootstrapFile(body, { aibenderHome: home });
+    const [first, second] = await Promise.all([
+      removeBootstrapFile(body.token, { aibenderHome: home }),
+      removeBootstrapFile(body.token, { aibenderHome: home }),
+    ]);
+    // Exactly one 'removed', the other 'absent' — order is nondeterministic.
+    expect([first, second].filter((o) => o === 'removed')).toHaveLength(1);
+    expect([first, second].filter((o) => o === 'absent')).toHaveLength(1);
+    expect(await readBootstrapFile({ aibenderHome: home })).toBeUndefined();
   });
 });
 

@@ -43,6 +43,8 @@
  * caller-supplied identity text reaches a rendered account name.
  */
 
+import { useStore } from 'zustand';
+import { createStore } from 'zustand/vanilla';
 import {
   ENTERPRISE_ACCOUNT_LABEL,
   FIXED_BACKEND_LABELS,
@@ -195,34 +197,90 @@ export function buildAccountRegistry(configured: Iterable<unknown>): AccountRegi
 }
 
 // ---------------------------------------------------------------------------
-// Module-level configured set (composition-root injection seam)
+// Reactive configured set (composition-root injection seam)
 // ---------------------------------------------------------------------------
 
-let configuredClaudeAccounts: readonly ClaudeAccountLabel[] = SEED_CLAUDE_ACCOUNTS;
+/**
+ * FE-1/FE-4: why the registry holds the set it does. `seed` = never synced (or
+ * the advertised list was empty/all-dropped/unreadable). `bootstrap` = the
+ * broker carrier supplied it. `shim` = the browser-dev global. This drives the
+ * FE-4 fallback log AND lets a re-sync (FE-1) distinguish "broker now advertises
+ * MAX_C" from "still no carrier".
+ */
+export type AccountConfigSource = 'seed' | 'bootstrap' | 'shim';
+
+export interface AccountConfigState {
+  /** The live configured Claude-account labels (never empty — seed is the floor). */
+  readonly configured: readonly ClaudeAccountLabel[];
+  /** Provenance of {@link configured} — drives the FE-4 fallback log. */
+  readonly source: AccountConfigSource;
+}
+
+/**
+ * FE-1: the configured Claude accounts live in a REACTIVE store, not a module
+ * closure. This is THE fix for "account registry lost on broker restart": the
+ * old closure was written once at boot and never re-synced, so a
+ * newly-provisioned account (MAX_C) surfaced by a restarted broker stayed
+ * invisible cockpit-wide until a manual reload. Backing it with a store means
+ * (1) a re-sync on `onBrokerRestart` (see {@link resyncAccountRegistry}) updates
+ * every account surface reactively, and (2) React consumers can `useStore` it to
+ * re-render when the set changes. The value is normalized fail-closed [X2].
+ */
+export const accountConfigStore = createStore<AccountConfigState>()(() => ({
+  configured: SEED_CLAUDE_ACCOUNTS,
+  source: 'seed',
+}));
 
 /**
  * Set the live configured Claude-account list (the composition root calls this
- * ONCE at boot with the broker-surfaced set — ICR-0014 interim). Input is
- * normalized fail-closed. Passing nothing configured resets to the seed three.
+ * at boot AND on every broker restart with the broker-surfaced set — ICR-0014).
+ * Input is normalized fail-closed. Passing an empty/all-garbage list resets to
+ * the seed three. `source` records provenance for the FE-4 fallback log; it
+ * defaults to `bootstrap` (the authoritative carrier path).
  */
-export function setConfiguredClaudeAccounts(configured: Iterable<unknown>): void {
+export function setConfiguredClaudeAccounts(
+  configured: Iterable<unknown>,
+  source: AccountConfigSource = 'bootstrap',
+): void {
   const normalized = normalizeClaudeAccounts(configured);
-  configuredClaudeAccounts =
-    normalized.length > 0 ? normalized : SEED_CLAUDE_ACCOUNTS;
+  if (normalized.length > 0) {
+    accountConfigStore.setState({ configured: normalized, source });
+  } else {
+    accountConfigStore.setState({ configured: SEED_CLAUDE_ACCOUNTS, source: 'seed' });
+  }
 }
 
 /**
  * The currently-configured registry (seed three until the composition root
  * injects the broker set). This is the reader the picker / panels / decks
  * consume — they render whatever N accounts this returns, never a hardcoded 5.
+ * Reads the reactive {@link accountConfigStore} so a re-sync is visible here.
  */
 export function accountRegistry(): AccountRegistry {
-  return buildAccountRegistry(configuredClaudeAccounts);
+  return buildAccountRegistry(accountConfigStore.getState().configured);
 }
 
 /** Test/composition helper: the current configured Claude-label list. */
 export function currentConfiguredClaudeAccounts(): readonly ClaudeAccountLabel[] {
-  return configuredClaudeAccounts;
+  return accountConfigStore.getState().configured;
+}
+
+/** Test/composition helper: the current configured-set provenance (FE-4). */
+export function currentAccountConfigSource(): AccountConfigSource {
+  return accountConfigStore.getState().source;
+}
+
+/**
+ * FE-1 React seam: the account registry as a REACTIVE value. A component that
+ * enumerates accounts (picker, channel stack, chips, palette) calls this so a
+ * broker-restart re-sync — which updates {@link accountConfigStore} — re-renders
+ * it with the fresh N accounts, no manual reload. Prefer this over the bare
+ * {@link accountRegistry} call inside React render paths. The registry object is
+ * rebuilt only when the configured label list changes (store equality).
+ */
+export function useAccountRegistry(): AccountRegistry {
+  const configured = useStore(accountConfigStore, (s) => s.configured);
+  return buildAccountRegistry(configured);
 }
 
 /**

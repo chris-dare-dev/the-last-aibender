@@ -13,8 +13,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   SEED_CLAUDE_ACCOUNTS,
+  accountConfigStore,
   accountRegistry,
   buildAccountRegistry,
+  currentAccountConfigSource,
   currentConfiguredClaudeAccounts,
   normalizeClaudeAccounts,
   setConfiguredClaudeAccounts,
@@ -167,6 +169,28 @@ describe('module-level configured set (composition-root injection)', () => {
 
   it('injecting an all-garbage set falls back to the seed three (never empty-claude)', () => {
     setConfiguredClaudeAccounts([emailish, 'HACKER']);
+    expect(currentConfiguredClaudeAccounts()).toEqual([...SEED_CLAUDE_ACCOUNTS]);
+  });
+});
+
+describe('FE-1 reactive config store + source provenance', () => {
+  it('is a subscribable store — a set() notifies subscribers with the new value', () => {
+    const seen: (readonly string[])[] = [];
+    const off = accountConfigStore.subscribe((s) => seen.push(s.configured));
+    setConfiguredClaudeAccounts(['MAX_A', 'MAX_B', 'ENT', 'MAX_C']);
+    off();
+    expect(seen.at(-1)).toEqual(['MAX_A', 'MAX_B', 'ENT', 'MAX_C']);
+  });
+
+  it('records provenance: bootstrap on a real set, seed on empty/garbage fallback', () => {
+    setConfiguredClaudeAccounts(['MAX_A', 'MAX_C'], 'bootstrap');
+    expect(currentAccountConfigSource()).toBe('bootstrap');
+    // A dev-shim set records the shim provenance.
+    setConfiguredClaudeAccounts(['MAX_A'], 'shim');
+    expect(currentAccountConfigSource()).toBe('shim');
+    // An empty/all-garbage set forces the seed source regardless of the arg.
+    setConfiguredClaudeAccounts([emailish, 'HACKER'], 'bootstrap');
+    expect(currentAccountConfigSource()).toBe('seed');
     expect(currentConfiguredClaudeAccounts()).toEqual([...SEED_CLAUDE_ACCOUNTS]);
   });
 });

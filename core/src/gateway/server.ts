@@ -84,7 +84,14 @@ import {
   type QuotaSnapshot,
   type WorkstreamServerPayload,
 } from '@aibender/protocol';
-import { createLineScrubber, createLogger, type Logger } from '@aibender/shared';
+import {
+  createLineScrubber,
+  createLogger,
+  emptyIdentityMap,
+  loadIdentityMap,
+  type IdentityMap,
+  type Logger,
+} from '@aibender/shared';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
 
 import {
@@ -155,6 +162,20 @@ export interface GatewayOptions extends BootstrapPathOptions {
   readonly replayJournal?: { readonly maxEntriesPerChannel?: number };
   /** Structured logger; defaults to @aibender/shared createLogger(). */
   readonly logger?: Logger;
+  /**
+   * SEC-2 [X2]: loads the machine-local identity map whose account identities
+   * (emails, org/account UUIDs, AWS ids) must be scrubbed to their placeholder
+   * label from EVERY log line. Called at boot and again on each
+   * {@link GatewayHandle.reloadIdentityScrub} (the account-registry / boot-
+   * identity-change trigger — shared with the FE registry re-sync, FE-1). The
+   * default reads `$AIBENDER_HOME/identity-map.json` via
+   * `loadIdentityMap()`; a missing file degrades to an empty map (redaction
+   * stays fail-closed elsewhere — the scrubber only ADDS identity patterns it
+   * knows). Tests inject a fixture map. A loader that THROWS is caught and
+   * degrades to the previously-active map (a bad reload never crashes the boot
+   * or drops the existing protection).
+   */
+  readonly loadIdentityMap?: () => IdentityMap;
   /** Wall clock for `startedAt` (tests). */
   readonly clock?: () => Date;
   /** Skip writing the bootstrap file (tests that exercise the server alone). */
@@ -207,6 +228,15 @@ export interface GatewayHandle {
    * publishWorkstream.
    */
   publishPipeline(payload: PipelineServerPayload): void;
+  /**
+   * SEC-2 [X2]: re-load the identity map and rebuild the line scrubber so a
+   * newly provisioned account's identities are redacted from logs going
+   * forward. The composition root calls this on the account-registry-change /
+   * boot-identity trigger (the same event that re-syncs the FE registry —
+   * FE-1). Returns the number of identity entries now active (for observability
+   * / tests). Never throws: a failing reload keeps the previously-active map.
+   */
+  reloadIdentityScrub(): number;
   /** Stop accepting, close clients (1001), remove the owned bootstrap file. */
   close(): Promise<void>;
 }
@@ -265,15 +295,41 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   const kernel = options.kernel;
   const clock = options.clock ?? (() => new Date());
   const token = newBootToken();
-  // [X2]: the per-boot token is a known secret value — scrub it out of every
-  // outbound error message and every log line, unconditionally.
-  const scrub = createLineScrubber({ secretValues: [token] });
+  // [X2]: the scrubber removes TWO classes from every outbound error message
+  // and every log line: (1) the per-boot token (a known secret VALUE), and
+  // (2) SEC-2 — every account IDENTITY in the machine-local identity map,
+  // replaced by its placeholder label. The identity map is loaded here at boot
+  // and can be RELOADED (reloadIdentityScrub) when a newly provisioned account
+  // changes the registry, so a fresh account's identities never appear
+  // in-clear afterward. A loader that throws degrades to the current map.
+  // The default loader resolves the SAME machine-local home the bootstrap file
+  // uses (options.aibenderHome / options.env), so `identity-map.json` sits
+  // beside `bootstrap/gateway.json` under one $AIBENDER_HOME.
+  const loadMap =
+    options.loadIdentityMap ??
+    (() =>
+      loadIdentityMap({
+        ...(options.aibenderHome !== undefined ? { aibenderHome: options.aibenderHome } : {}),
+        ...(options.env !== undefined ? { env: options.env } : {}),
+      }));
+  let identityMap: IdentityMap = safeLoadIdentityMap(loadMap, emptyIdentityMap());
+  // `scrub` is re-pointed on reload; every log call reads it through the
+  // closure below, so a reload takes effect immediately for later lines.
+  let scrubActive = createLineScrubber({ secretValues: [token], identityMap });
+  const scrub = (line: string): string => scrubActive(line);
   const baseLogger = options.logger ?? createLogger();
   const log: Logger = {
     debug: (msg, fields) => baseLogger.debug(scrub(msg), fields),
     info: (msg, fields) => baseLogger.info(scrub(msg), fields),
     warn: (msg, fields) => baseLogger.warn(scrub(msg), fields),
     error: (msg, fields) => baseLogger.error(scrub(msg), fields),
+  };
+
+  /** SEC-2: rebuild the scrubber from a freshly-loaded identity map. */
+  const reloadIdentityScrub = (): number => {
+    identityMap = safeLoadIdentityMap(loadMap, identityMap);
+    scrubActive = createLineScrubber({ secretValues: [token], identityMap });
+    return identityMap.size;
   };
 
   const httpServer: Server = createServer((_req, res) => {
@@ -1040,7 +1096,17 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       closed = true;
       await shutdownServers();
       if (options.writeBootstrap !== false) {
-        await removeBootstrapFile(token, options);
+        // SEC-1: ownership-checked, TOCTOU-safe removal. A `foreign` outcome
+        // means a newer boot already published — we left its file untouched and
+        // log a warning (the token value never rides the line — scrubbed).
+        const outcome = await removeBootstrapFile(token, {
+          ...options,
+          onForeign: () =>
+            log.warn('bootstrap file belongs to a newer boot at shutdown — left in place', {
+              port,
+            }),
+        });
+        log.debug('bootstrap removal outcome', { outcome });
       }
       log.info('gateway closed', { port });
     })();
@@ -1053,6 +1119,7 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
     token,
     bootstrapPath: advertisedPath,
     connectionCount: () => connections.size,
+    reloadIdentityScrub,
     publishQuota: (snapshot) => {
       const checked = validateQuotaSnapshot(snapshot);
       if (!checked.ok) {
@@ -1115,4 +1182,18 @@ function toUint8(data: RawData): Uint8Array {
   if (Array.isArray(data)) return new Uint8Array(Buffer.concat(data));
   if (data instanceof ArrayBuffer) return new Uint8Array(data);
   return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+}
+
+/**
+ * SEC-2 [X2]: load the identity map without ever throwing — a bad/absent map
+ * must never crash the boot or drop the currently-active protection. Any
+ * failure returns `fallback` (the empty map at boot, or the previously-loaded
+ * map on a reload), so the scrubber only ever gains identity coverage.
+ */
+function safeLoadIdentityMap(load: () => IdentityMap, fallback: IdentityMap): IdentityMap {
+  try {
+    return load();
+  } catch {
+    return fallback;
+  }
 }

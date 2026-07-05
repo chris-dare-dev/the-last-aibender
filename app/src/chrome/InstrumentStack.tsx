@@ -9,6 +9,7 @@
 
 import type { ReactNode } from 'react';
 import { useStore } from 'zustand';
+import { useAccountRegistry } from '../lib/accountRegistry.ts';
 import { deriveChannelReadings } from '../lib/stores/channelHealth.ts';
 import { connectionStore } from '../lib/stores/connectionStore.ts';
 import { quotaStore } from '../lib/stores/quotaStore.ts';
@@ -24,8 +25,11 @@ export function InstrumentStack(): ReactNode {
   const sessions = useStore(sessionsStore, (s) => s.sessions);
   const focusedChannel = useStore(uiStore, (s) => s.focusedChannel);
   const client = useGatewayClient();
+  // FE-1: subscribe to the reactive registry so a broker-restart re-sync (a
+  // newly-provisioned MAX_C) re-renders the channel stack with no reload.
+  const registry = useAccountRegistry();
 
-  const readings = deriveChannelReadings({ phase, quota, sessions });
+  const readings = deriveChannelReadings({ phase, quota, sessions }, registry);
 
   return (
     <div data-testid="instrument-stack">

@@ -23,8 +23,7 @@ import { registerObservability } from './features/observability/index.ts';
 import { registerPipelines } from './features/pipelines/index.ts';
 import { registerWorkstreams } from './features/workstreams/index.ts';
 import { registerGraphIsland } from './islands/graph/index.ts';
-import { setConfiguredClaudeAccounts } from './lib/accountRegistry.ts';
-import { configuredClaudeAccountsFromBootstrap } from './lib/bootstrap.ts';
+import { installAccountRegistrySync } from './lib/accountConfig.ts';
 import { bindClientToStores } from './lib/stores/bind.ts';
 import { nativeBootstrapProvider, notifyNative } from './lib/native/tauriBridge.ts';
 import { GatewayClient } from './lib/ws/wsClient.ts';
@@ -69,34 +68,28 @@ const rootEl = document.getElementById('root');
 if (rootEl === null) throw new Error('missing #root element');
 
 /**
- * [X1] account registry (ICR-0013/ICR-0014): the cockpit enumerates the
- * CONFIGURED Claude accounts, never a hardcoded five. The AUTHORITATIVE source
- * is the broker's bootstrap-file carrier (`claudeAccounts` — the accounts it
- * discovered from infra/profiles/*.profile.json). We read it ONCE, pre-render,
- * over the same discovery provider the WS client uses, so the picker / channel
- * panels / decks render the right N accounts from first paint (no flash, no
- * re-render). Fail-closed [X2]: `configuredClaudeAccountsFromBootstrap` drops
- * every non-form label. Fallbacks, in order: (1) the bootstrap carrier;
- * (2) a browser-dev shim on `window.AIBENDER_CLAUDE_ACCOUNTS`; (3) the seed
- * set baked into the registry. `setConfiguredClaudeAccounts` re-normalizes and
- * ignores an empty list, so an absent carrier simply leaves the seed in place.
+ * [X1] account registry (ICR-0013/ICR-0014; FE-1/FE-4). The cockpit enumerates
+ * the CONFIGURED Claude accounts, never a hardcoded five. The AUTHORITATIVE
+ * source is the broker's bootstrap-file carrier (`claudeAccounts` — the
+ * accounts it discovered from infra/profiles/*.profile.json), read over the
+ * same discovery provider the WS client uses so the picker / channel panels /
+ * decks render the right N accounts from first paint.
+ *
+ * FE-1: this is NO LONGER a one-shot module-closure write. The configured set
+ * lives in a REACTIVE store and {@link installAccountRegistrySync} RE-SYNCS it
+ * on every broker restart (the same boot-identity trigger that resets
+ * watermarks) — a broker that restarts with a newly-provisioned account
+ * (MAX_C) makes it visible cockpit-wide with no manual reload.
+ *
+ * FE-4: a fallback to the seed set (absent / unreadable / all-dropped carrier)
+ * is LOGGED with its reason, so the fallback is observable.
+ *
+ * Fail-closed [X2]: `configuredClaudeAccountsFromBootstrap` drops every
+ * non-form label; the seed set is the floor.
  */
-async function configureAccountRegistry(): Promise<void> {
-  try {
-    const advertised = await configuredClaudeAccountsFromBootstrap(nativeBootstrapProvider);
-    if (advertised.length > 0) {
-      setConfiguredClaudeAccounts(advertised);
-      return;
-    }
-  } catch {
-    // Discovery never throws by contract; guard anyway — fall through to the
-    // dev shim / seed set rather than blocking the cockpit boot.
-  }
-  const shim = (globalThis as { AIBENDER_CLAUDE_ACCOUNTS?: unknown }).AIBENDER_CLAUDE_ACCOUNTS;
-  if (Array.isArray(shim)) setConfiguredClaudeAccounts(shim);
-}
+const { boot: accountSyncBoot } = installAccountRegistrySync(client, nativeBootstrapProvider);
 
-void configureAccountRegistry().finally(() => {
+void accountSyncBoot.finally(() => {
   createRoot(rootEl).render(
     <StrictMode>
       <Chrome client={client} />

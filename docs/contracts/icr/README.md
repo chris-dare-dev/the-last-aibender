@@ -273,6 +273,58 @@ non-frozen composition/chrome wiring, recorded here per the post-M4 precedent):*
   client `sendPipelineMessage` / `PIPELINES` replay-from-zero / chrome
   `'pipelines'` slot consume them — the FE golden-corpus round-trip (114/114
   incl. every `pipelines` frame + verb) + `features/pipelines` (82/82) green.
+- ~~**M6 freeze co-signs (open at the M6 gate)**~~ **FLIPPED at the M6 gate
+  (2026-07-05) — see the FLIPPED record below:** ws-protocol M6 row (§13.4
+  `resource-health`) + `integration-suite.md` (§9.3/§9.4 contract of record)
+  — **FE-ORCH** (the FE resource/pressure instrument consuming `resource-health`
+  under the §6.3-deck seam) and **BE-9/BE-6 producer lane** (the supervision
+  governor produces the frame; `core/src/readmodels/publisher.spec.ts` narrows
+  its `.toEqual([...READ_MODEL_IDS])` to the ten observability leads). The M6
+  bump (`PROTOCOL_FREEZE = 'FROZEN-M6'`, `PROTOCOL_VERSION 1.4.0`) is landed
+  green across the four BE-ORCH-stewarded packages (protocol 230, testkit 95,
+  schema 94, shared 36); the downstream freeze-literal advances
+  (`app/src/features/launch/wire.spec.ts`, `core/src/collector/hooks/hooks.spec.ts`)
+  + the "ten leads" behavioral assertions
+  (`app/src/features/observability/{golden,freshness}.spec.tsx`,
+  `core/src/readmodels/publisher.spec.ts`) + the `Record<ReadModelId,…>` label
+  maps (`app/.../ObservabilityDeck.tsx`, `core/.../publisher.ts`) advance with
+  the consuming M6 agents (the M3/M4/M5 precedent — each freeze's downstream
+  literal advanced in the consuming lane's commit, not the freeze commit).
+- **M6 post-build ICRs — REVIEWED + LANDED by BE-ORCH at the M6 gate
+  (2026-07-05):** the four freeze-forced/composition items the BE-9/SI-M6 build
+  returned (BE-ORCH is their steward):
+  1. **`core/src/readmodels/publisher.ts`** — the forced
+     `'resource-health': ['lmstudio']` entry in the exhaustive
+     `Record<ReadModelId, EventSource[]>` (the closed registry grew to 11 at the
+     freeze). VERIFIED inert: BE-6's `snapshotAll()` emits exactly the ten §6.3
+     leads; the BE-9 governor (`core/src/supervision/publisher.ts`) produces
+     `resource-health` from its own `ResourceHealthSnapshot.sources` and never
+     reads this default. Type-satisfaction + documentation only.
+  2. **`core/src/readmodels/publisher.spec.ts:152`** — `.toEqual([...READ_MODEL_IDS])`
+     → `.slice(0, 10)`. VERIFIED correct: `resource-health` is index 10 (the
+     11th) in the frozen registry; the spec independently asserts
+     `sink.events` length 10. Publisher behavior unchanged.
+  3. **`core/src/collector/hooks/hooks.spec.ts:43,48`** — `'FROZEN-M5'` →
+     `'FROZEN-M6'`. VERIFIED against the frozen constants
+     (`PROTOCOL_FREEZE = 'FROZEN-M6'`, `GOLDEN_HOOK_CORPUS_FREEZE = 'FROZEN-M6'`,
+     `PROTOCOL_VERSION 1.4.0`). A stale-marker advance, no behavior change.
+  4. **`core/src/main/index.ts`** (BE-ORCH-owned composition root) — the
+     `supervision` options block + `ComposedBroker.supervision` field +
+     late-bound events sink + recycle bound to the ptyHost + close-path
+     teardown. VERIFIED to mirror the M4 workstream / M5 pipeline slice pattern
+     exactly (opt-in, late-bound sink nulled on close, `...(x !== undefined ? {}
+     : {})` conditional spread). Proven end-to-end by
+     `core/src/main/composedSupervision.spec.ts` (resource-health rides EVENTS
+     to a real client with an [X2] no-leak assertion; a watchdog recycle records
+     a `continue` edge with `reason: recycle` on the lineage store — the M6 DoD
+     "one real recycle with lineage continuity"; [X1] red-pressure account spawn
+     admitted post-shed; absent option → M1–M5 behavior). No frozen-contract
+     surface touched; no separate contract amendment required (slice precedent).
+- **M6 freeze co-signs — FLIPPED at the M6 review (2026-07-05):** the ws-protocol
+  M6 row (§13.4 `resource-health`) + `integration-suite.md` co-signs above are
+  **co-signed** at the M6 gate — the golden-corpus round-trip (both sides), the
+  ten-lead behavioral assertions, and the composed supervision E2E all re-ran
+  green (record: [m6-dod.md](../../runbooks/m6-dod.md)).
 - **Still-open co-signs (long-standing, next window):** [ICR-0004](icr-0004-resume-prompt.md)
   resume-prompt (M1-era) + bootstrap-file.md M2 freeze row + icr-0003
   counterpart — all FE-ORCH.

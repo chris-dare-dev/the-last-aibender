@@ -32,7 +32,18 @@ export interface ApprovalsStoreState {
   /** Stable arrival order (fixed positions — rows never reorder). */
   readonly order: readonly string[];
   readonly recentResolved: readonly ResolvedApproval[];
+  /**
+   * FE-2: approval ids whose decision has been SENT but whose broker-pushed
+   * `approval-resolved` has not yet arrived (fire-and-forget on the approvals
+   * channel — ws-protocol.md §10.2, no ack). While an id is in this set the
+   * inbox hides/disables its row so a second click cannot double-send and the
+   * row cannot stutter against the incoming resolve. Cleared when the resolve
+   * lands (or on reset). Idempotent: marking an already-deciding id is a no-op.
+   */
+  readonly deciding: Readonly<Record<string, true>>;
   applyServer(message: ApprovalsServerPayload, nowMs: number): void;
+  /** FE-2: mark an approval as decision-in-flight (before the fire-and-forget send). */
+  markDeciding(approvalId: string): void;
   reset(): void;
 }
 
@@ -40,6 +51,7 @@ export const approvalsStore = createStore<ApprovalsStoreState>()((set) => ({
   pending: {},
   order: [],
   recentResolved: [],
+  deciding: {},
 
   applyServer: (message, nowMs) =>
     set((s) => {
@@ -63,22 +75,44 @@ export const approvalsStore = createStore<ApprovalsStoreState>()((set) => ({
         resolvedAtMs: nowMs,
         request: entry?.request,
       };
+      // FE-2: the in-flight decision (if any) is now settled — clear it.
+      let deciding = s.deciding;
+      if (message.approvalId in deciding) {
+        const next = { ...deciding };
+        delete next[message.approvalId];
+        deciding = next;
+      }
       return {
         pending,
         order: s.order.filter((id) => id !== message.approvalId),
         recentResolved: [...s.recentResolved, resolved].slice(-MAX_RESOLVED_RETAINED),
+        deciding,
       };
     }),
 
-  reset: () => set({ pending: {}, order: [], recentResolved: [] }),
+  markDeciding: (approvalId) =>
+    set((s) => {
+      // Only pending, not-already-deciding approvals can enter the set.
+      if (approvalId in s.deciding || !(approvalId in s.pending)) return s;
+      return { deciding: { ...s.deciding, [approvalId]: true } };
+    }),
+
+  reset: () => set({ pending: {}, order: [], recentResolved: [], deciding: {} }),
 }));
 
 export type ApprovalsStore = typeof approvalsStore;
 
-/** Pending approvals in arrival order (the inbox row list). */
+/**
+ * Pending approvals in arrival order (the inbox row list). FE-2: an approval
+ * whose decision is IN FLIGHT (`deciding`) is filtered out so its row cannot be
+ * clicked again (no double-send) and cannot stutter between the send and the
+ * broker's `approval-resolved` fan-out. The row reappears only via the resolve
+ * path (as a `recentResolved` entry) — it never bounces back into pending.
+ */
 export function pendingApprovals(state: ApprovalsStoreState): readonly PendingApproval[] {
   const out: PendingApproval[] = [];
   for (const id of state.order) {
+    if (id in state.deciding) continue; // FE-2: hide in-flight decisions
     const entry = state.pending[id];
     if (entry !== undefined) out.push(entry);
   }

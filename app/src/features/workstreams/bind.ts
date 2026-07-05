@@ -21,13 +21,19 @@
  */
 
 import type { WorkstreamServerPayload } from '@aibender/protocol';
-import { createRafProjector, type FrameScheduler } from '../../lib/index.ts';
+import { consoleLogger, createRafProjector, type FrameScheduler, type Logger } from '../../lib/index.ts';
 import type { WorkstreamFeed } from './ports.ts';
 import { workstreamsStore } from './store.ts';
 
 export interface WorkstreamsBindOptions {
   /** Injectable frame scheduler (tests drive flushes deterministically). */
   schedule?: FrameScheduler;
+  /**
+   * FE-3: logger for dropped opaque (unknown-kind) workstream payloads.
+   * Defaults to the console logger. The kind is a frozen protocol literal
+   * (never identity-bearing [X2]), so logging it is safe.
+   */
+  logger?: Logger;
 }
 
 /** Wire a client's workstream channel to the lineage store. Returns dispose. */
@@ -35,6 +41,7 @@ export function bindWorkstreams(
   feed: WorkstreamFeed,
   options: WorkstreamsBindOptions = {},
 ): () => void {
+  const logger = options.logger ?? consoleLogger;
   const projector = createRafProjector<WorkstreamServerPayload>({
     onFlush: (batch) => workstreamsStore.getState().applyBatch(batch),
     ...(options.schedule !== undefined ? { schedule: options.schedule } : {}),
@@ -54,8 +61,18 @@ export function bindWorkstreams(
       }
       if (message.kind !== 'workstream') return;
       const payload = message.payload;
-      // Forward-tolerant reader rule: opaque payloads are legal and ignored.
-      if ('opaque' in payload) return;
+      // Forward-tolerant reader rule (§16.1): opaque (unknown-kind) payloads
+      // are legal and DROPPED here, before the store projector — never
+      // forwarded. FE-3: log the dropped kind at DEBUG so an operator can
+      // detect protocol drift (e.g. an M5 broker sending a `lineage-advisory-v2`
+      // to an M4 client) instead of it vanishing with zero visibility. The
+      // kind is a frozen protocol literal, never identity-bearing [X2].
+      if ('opaque' in payload) {
+        logger.debug('dropped opaque workstream payload (unknown kind)', {
+          kind: payload.kind,
+        });
+        return;
+      }
       projector.push(payload);
     },
     onBrokerRestart() {

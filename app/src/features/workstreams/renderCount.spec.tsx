@@ -194,4 +194,41 @@ describe('lineage streaming discipline', () => {
     expect(workstreamsStore.getState().rail).toBeUndefined();
     expect(workstreamsStore.getState().nodes).toEqual({});
   });
+
+  it('FE-3: DEBUG-logs a dropped opaque (unknown-kind) payload with its kind', () => {
+    const debugs: { msg: string; detail: Record<string, unknown> | undefined }[] = [];
+    const logger = {
+      ...nullLogger,
+      debug: (msg: string, detail?: Record<string, unknown>) => debugs.push({ msg, detail }),
+    };
+    let listener: ClientEvents | undefined;
+    const frames = manualFrames();
+    const feed = {
+      subscribe(l: ClientEvents) {
+        listener = l;
+        return () => {
+          listener = undefined;
+        };
+      },
+    };
+    dispose = bindWorkstreams(feed, { schedule: frames.schedule, logger });
+
+    // An M5 broker sends a lens kind an M4 client does not know — legal by the
+    // forward-tolerant reader rule, dropped, but now OBSERVABLE.
+    listener?.onMessage?.({
+      kind: 'workstream',
+      channel: 'workstream',
+      seq: 0,
+      payload: { kind: 'lineage-advisory-v2', opaque: true },
+    });
+    act(() => frames.frame());
+
+    // The store never saw it (forward-tolerant drop) …
+    expect(workstreamsStore.getState().rail).toBeUndefined();
+    expect(workstreamsStore.getState().nodes).toEqual({});
+    // … and the drop is logged at DEBUG with the drift signal (the kind).
+    const dropped = debugs.find((d) => d.msg.includes('opaque workstream'));
+    expect(dropped).toBeDefined();
+    expect(dropped?.detail).toEqual({ kind: 'lineage-advisory-v2' });
+  });
 });

@@ -52,6 +52,12 @@ export function ApprovalInbox({ onDecide }: ApprovalInboxProps): ReactNode {
       onDecide(approvalId, verdict);
       return;
     }
+    // FE-2: mark the decision IN FLIGHT before the fire-and-forget send. The
+    // store hides the row (pendingApprovals filters `deciding`), so a second
+    // click cannot double-send and the row cannot stutter against the
+    // broker-pushed `approval-resolved`. markDeciding is idempotent + only
+    // affects still-pending ids, so a late double-invoke is a safe no-op.
+    approvalsStore.getState().markDeciding(approvalId);
     // Wire shape mirrors the golden corpus key order (§10.2). `updatedInput`
     // is only ever sent with allow AND only when input was edited — the M2
     // inbox approves the original input, so it is never included here.

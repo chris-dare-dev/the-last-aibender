@@ -115,3 +115,85 @@ describe('ApprovalInbox', () => {
     expect(host.textContent).toContain('NO PENDING APPROVALS');
   });
 });
+
+/**
+ * FE-2 — the decision race. The default (client-send) decide() path marks the
+ * approval `deciding` before the fire-and-forget send, so its row hides
+ * immediately: a second click cannot double-send and the row cannot stutter
+ * against the broker-pushed `approval-resolved`.
+ */
+describe('ApprovalInbox — FE-2 decision race (deciding state)', () => {
+  let root: Root;
+  let host: HTMLElement;
+
+  beforeEach(() => {
+    approvalsStore.getState().reset();
+    host = document.createElement('div');
+    document.body.appendChild(host);
+    root = createRoot(host);
+    // No onDecide seam, no client → the default path runs markDeciding then a
+    // no-op send (client undefined). Exactly the store behavior under test.
+    act(() => root.render(<ApprovalInbox />));
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    host.remove();
+  });
+
+  it('hides the row the instant a decision is sent (no stutter, single row)', () => {
+    act(() => {
+      approvalsStore.getState().applyServer(REQUESTS[0]!, 90000000);
+    });
+    expect(host.querySelector('[data-testid="approval-apr_fake_1"]')).not.toBeNull();
+
+    act(() => {
+      (host.querySelector('[data-testid="allow-apr_fake_1"]') as HTMLButtonElement).click();
+    });
+    // Row is gone AND the store still holds it pending (not yet resolved).
+    expect(host.querySelector('[data-testid="approval-apr_fake_1"]')).toBeNull();
+    expect(host.querySelector('[data-testid="approvals-count"]')?.textContent).toContain('CLEAR');
+    const s = approvalsStore.getState();
+    expect('apr_fake_1' in s.pending).toBe(true); // still pending on the broker
+    expect('apr_fake_1' in s.deciding).toBe(true); // but decision is in flight
+  });
+
+  it('a second click cannot re-enter the deciding set (idempotent, no double-send)', () => {
+    act(() => {
+      approvalsStore.getState().applyServer(REQUESTS[0]!, 90000000);
+    });
+    const allow = host.querySelector('[data-testid="allow-apr_fake_1"]') as HTMLButtonElement;
+    act(() => allow.click());
+    // The row (and its button) are gone; markDeciding is idempotent regardless.
+    expect(host.querySelector('[data-testid="allow-apr_fake_1"]')).toBeNull();
+    // Re-invoking markDeciding directly is a no-op (already deciding).
+    const before = { ...approvalsStore.getState().deciding };
+    act(() => approvalsStore.getState().markDeciding('apr_fake_1'));
+    expect(approvalsStore.getState().deciding).toEqual(before);
+  });
+
+  it('the broker-pushed approval-resolved clears the deciding state', () => {
+    act(() => {
+      approvalsStore.getState().applyServer(REQUESTS[0]!, 90000000);
+    });
+    act(() => {
+      (host.querySelector('[data-testid="allow-apr_fake_1"]') as HTMLButtonElement).click();
+    });
+    expect('apr_fake_1' in approvalsStore.getState().deciding).toBe(true);
+    // Broker resolves the now-in-flight decision.
+    act(() => {
+      approvalsStore
+        .getState()
+        .applyServer({ kind: 'approval-resolved', approvalId: 'apr_fake_1', outcome: 'allowed' }, 90000100);
+    });
+    const s = approvalsStore.getState();
+    expect('apr_fake_1' in s.deciding).toBe(false); // cleared
+    expect('apr_fake_1' in s.pending).toBe(false); // resolved out of pending
+    expect(s.recentResolved.at(-1)?.approvalId).toBe('apr_fake_1');
+  });
+
+  it('markDeciding on an unknown/not-pending id is a no-op', () => {
+    act(() => approvalsStore.getState().markDeciding('apr_never_seen'));
+    expect(approvalsStore.getState().deciding).toEqual({});
+  });
+});

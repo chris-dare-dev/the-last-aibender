@@ -48,7 +48,7 @@ two new M4 rows `x4-hook-slots` and `colima-probe`).
 | 5k-node graph soak | graph island pw runner (in `test:islands`) | Chromium (ANGLE Metal, Apple M4 Max, DPR 2): **fps 119.8 · frame mean 8.33 ms · p95 10.10 ms · 0% >16.7 ms · 0% >33.3 ms** (959 frames, 192 layout epochs applied) — strict spike-B floor met outright. WebKit (Apple GPU, DPR 2): **fps 59.9 · mean 16.66 ms · p95 18.00 ms · 0% >33.3 ms** (480 frames, 197 epochs) — 60 Hz-pinned pacing; floor met in its primary "60 fps sustained" form (deviation D1) |
 | Tier-1 scan (full dir) | `gitleaks dir . --config .gitleaks.toml` | **CLEAN** (10.45 MB scanned; cargo `target/` path allowlist in effect per SECURITY.md §2) |
 | Tier-2 scan (full dir) | `gitleaks dir . --config <tier-2>` | **exactly the 12 known `.git/logs` reflog echoes** (6 `HEAD`, 4 `refs/heads/main`, 2 `refs/remotes/origin/main`) — **zero findings outside `.git/logs`**; pending-owner item 1, unchanged |
-| Tier-1 + Tier-2 (history) | `gitleaks git .` both configs | **CLEAN both** — re-run after the M4 commits landed (result recorded at commit time) |
+| Tier-1 + Tier-2 (history) | `gitleaks git .` both configs | **CLEAN both** — 39 commits (re-run after the six M4 commits landed) |
 
 ## 2. Deliverables (plan §8.2 M4)
 

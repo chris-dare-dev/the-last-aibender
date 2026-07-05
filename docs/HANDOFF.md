@@ -11,10 +11,14 @@
 > verbatim to build the remaining milestones. If you jump straight from §0 (TL;DR) to §3 (Status) or
 > §9.1 (next action), come back for this before launching any workflow.
 >
-> **Last updated:** 2026-07-05 — **Stage 2 (M0–M6) + M7 account-registry + the Stage-3 code review &
-> fix loop are all COMPLETE** (HEAD `bfef260`, 2272 tests). Owner has done all five logins. The ONE
-> remaining piece is the **rendered-frontend screen-capture review** (§3 last row). Deferred code items:
-> OS-1 (backend registry), OS-2 (projection SQL), OS-6 (joiner cap).
+> **Last updated:** 2026-07-05 — **Stage 2 (M0–M6) + M7 account-registry + the full Stage-3 code
+> review, fix loop, AND the OS-1 backend registry are all COMPLETE** (HEAD `4a7177a`, 2312 tests,
+> protocol 1.6.0 / FROZEN-M8, schema kernel-ddl 9 / events-ddl 3). Owner has done all five logins; SEC-3
+> composeBroker wiring landed (`5c34978`); rendered-frontend review FIRST PASS done (disconnected state).
+> **Remaining:** the *populated* rendered pass (needs the broker running against the accounts), plus two
+> deferred code items — **OS-2** (projection SQL, design-latent — defer until the publish-cadence timer
+> is wired) and **OS-6** (joiner pending-map cap, LOW). Adding a Claude account OR a backend is now a
+> pure data change (`add-an-account.md` / `add-a-backend.md`).
 > **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
 > **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo
 > `chris-dare-dev/the-last-aibender`. **Everything is committed LOCAL-ONLY. Nothing has been pushed.
@@ -24,12 +28,12 @@
 
 ## 0. TL;DR — your first five minutes
 
-1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -65 && git status` — confirm you
-   are at `bfef260` (or later) with a **clean tree**. If the tree is dirty, someone left work
+1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -75 && git status` — confirm you
+   are at `4a7177a` (or later) with a **clean tree**. If the tree is dirty, someone left work
    uncommitted; investigate before proceeding.
-2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **2272 tests pass / 1 skipped**,
-   typecheck clean. Also green: `pnpm run test:infra` (~117 bats) + `bash infra/ci/tests/run.sh` (46),
-   `pnpm test:integration` (166, §9.3 cross-department), `pnpm -F aibender-app lint:tokens` (200 files),
+2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **2312 tests pass / 1 skipped**,
+   typecheck clean. Also green: `pnpm run test:infra` (~117 bats) + `bash infra/ci/tests/run.sh` (49),
+   `pnpm test:integration` (166, §9.3 cross-department), `pnpm -F aibender-app lint:tokens` (203 files),
    `pnpm -F aibender-core soak:m2` + `soak:m6`, `pnpm -F aibender-app test:islands`. Green baseline.
    (If `pnpm` is missing: `npm i -g pnpm`.)
 3. Read the two **normative** specs (they are the source of truth, not this doc):

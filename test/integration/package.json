@@ -1,0 +1,30 @@
+{
+  "name": "@aibender/integration",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cross-department integration suite (plan §9.3 'Testing between departments' + §9.4 enumeration). ASSEMBLES the BE/FE/SI seams end-to-end from the ALREADY-FROZEN devices (golden corpora, composeBroker, read-model publisher, arch tests, live-check registry); it never re-implements logic a single package already unit-tests. Every test names the §9.3 row it covers. T3 live-host halves are enumerated (not run) here via the live-check meta-test.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test:integration": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@aibender/protocol": "workspace:*",
+    "@aibender/schema": "workspace:*",
+    "@aibender/shared": "workspace:*",
+    "@aibender/testkit": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/ws": "^8.18.0",
+    "jsdom": "^29.1.1",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "ws": "^8.18.0"
+  }
+}

@@ -12,6 +12,7 @@
   "scripts": {
     "test": "vitest run",
     "test:infra": "bash infra/scripts/tests/run.sh && bash infra/launchd/tests/run.sh && bash infra/hooks/tests/run.sh && bash infra/aws/tests/run.sh && bash infra/colima/tests/run.sh",
+    "test:integration": "pnpm -F @aibender/integration test:integration",
     "test:packages": "pnpm -r test",
     "typecheck": "pnpm -r --if-present typecheck"
   },

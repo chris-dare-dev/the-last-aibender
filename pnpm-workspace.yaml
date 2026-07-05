@@ -5,6 +5,9 @@ packages:
   - packages/*
   - core
   - app
+  # INTEG (plan §9.3 cross-department integration suite; @aibender/integration).
+  # Assembles the BE/FE/SI seams end-to-end from already-frozen devices.
+  - test/integration
 # Dependency build scripts must be approved explicitly (pnpm 11 supply-chain
 # guard). esbuild's postinstall only places its platform binary — approved.
 # node-pty places/compiles its native addon on install (darwin prebuilds,

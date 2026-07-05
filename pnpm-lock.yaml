@@ -157,6 +157,43 @@ importers:
         specifier: workspace:*
         version: link:../protocol
 
+  test/integration:
+    dependencies:
+      '@aibender/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
+      '@aibender/schema':
+        specifier: workspace:*
+        version: link:../../packages/schema
+      '@aibender/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@aibender/testkit':
+        specifier: workspace:*
+        version: link:../../packages/testkit
+    devDependencies:
+      '@types/react':
+        specifier: ^19.2.0
+        version: 19.2.17
+      '@types/react-dom':
+        specifier: ^19.2.0
+        version: 19.2.3(@types/react@19.2.17)
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
+      react:
+        specifier: 19.2.7
+        version: 19.2.7
+      react-dom:
+        specifier: 19.2.7
+        version: 19.2.7(react@19.2.7)
+      ws:
+        specifier: ^8.18.0
+        version: 8.21.0
+
 packages:
 
   '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.201':

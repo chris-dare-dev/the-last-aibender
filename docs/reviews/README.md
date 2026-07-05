@@ -18,7 +18,7 @@ consumes the "Recommended fix order" below. No source was modified.
 
 ## Totals
 
-**24 findings** across 4 dimensions: **4 high · 7 medium · 13 low.**
+**30 findings** across 5 dimensions: **7 high · 9 medium · 14 low.**
 
 | Dimension | Doc | High | Med | Low | Total |
 |---|---|:-:|:-:|:-:|:-:|
@@ -26,11 +26,15 @@ consumes the "Recommended fix order" below. No source was modified.
 | Documentation & new-engineer onboarding | [docs-onboarding.md](docs-onboarding.md) | 1 | 3 | 4 | 8 |
 | Cross-cutting requirements [X1/X2/X3/X4] | [x-requirements.md](x-requirements.md) | 0 | 2 | 2 | 4 |
 | Frontend & protocol correctness (source-level) | [frontend-correctness.md](frontend-correctness.md) | 1 | 0 | 3 | 4 |
-| **Total** | | **4** | **7** | **13** | **24** |
+| Optimization & scalability | [optimization-scalability.md](optimization-scalability.md) | 3 | 2 | 1 | 6 |
+| **Total** | | **7** | **9** | **14** | **30** |
 
-Every dimension had survivors — no doc was omitted. (Optimization/scalability
-was folded into [X1] and the frontend docs where its survivors landed; it has
-no standalone doc because it produced no independent survivors of its own.)
+Every dimension has a doc. **Note:** the optimization/scalability reviewer
+crashed in the main run (StructuredOutput retry cap); it was re-run as a focused
+follow-up (commit after this index) and its 3 HIGH findings were independently
+re-verified against the cited code by the driving session. Two [X1/X2/X3/X4]
+entries are verification-passed controls (X-3 env-scrub, X-4 arch-boundary),
+recorded as evidence, not open work.
 
 Two of the four [X1/X2/X3/X4] entries are **verification-passed controls**
 (X-3 env-scrub, X-4 arch-boundary) recorded as evidence, not open work.
@@ -80,6 +84,18 @@ The single highest-severity, highest-confidence issue and the rest of the HIGH t
    "install → start broker → start Tauri app → verify" document exists; a fresh
    engineer cannot cold-start the app without reverse-engineering scattered
    fragments.
+5. **OS-1 (HIGH, gate-verified) — Adding a new local LLM/backend is a
+   cross-codebase fork.** No adapter registry: `BACKENDS` is a frozen 3-tuple,
+   `backendForLabel` a hardcoded if-chain, the literals branch across ~42 files,
+   and every migration hardcodes `CHECK (backend IN (…3…))`. The *backend* twin
+   of the account-label problem M7 solved. ([optimization-scalability.md](optimization-scalability.md))
+6. **OS-2 (HIGH, gate-verified) — Dashboard projections full-scan +
+   JS-aggregate the whole window every publish** (`readmodels/projections.ts`);
+   O(window) per tick, table-scans as events grow. Design-latent until the
+   publish cadence is wired.
+7. **OS-3 (HIGH, gate-verified) — Per-account JSONL watcher does a synchronous
+   recursive dir walk every 2 s** (`collector/jsonl/accountWatcher.ts`); at 12
+   accounts, 12 blocking full-tree walks/2 s on the broker event loop.
 
 ---
 
@@ -128,6 +144,22 @@ fixed together. Verdicts: (C) confirmed, (P) partial.
 16. **SEC-5** (LOW, P) — secret-shaped-name fail-close in `buildSessionEnv`.
 17. **SEC-6/7** (LOW, P) — document the opencode.db frozen/external + OS-level
     read-only assumptions; consider runtime-schema allowlist.
+
+**Batch E — scale hardening (the optimization/scalability dimension; do after A–C)**
+18. **OS-1** (HIGH) — a `BackendDescriptor` + `registerBackend()` registry so a
+    new local LLM/backend is one descriptor, not ~42 edits + a migration; derive
+    the migration backend CHECK from one generated constant. Direct sequel to the
+    M7 account-registry pattern.
+19. **OS-3** (HIGH) — stop the per-account synchronous 2 s full-tree walk:
+    mtime-scoped rescan / FSEvents-driven + periodic reconcile, off the event loop.
+20. **OS-2** (HIGH) — push read-model aggregation into SQL (or a rollup table) +
+    a covering index; bound recompute to the dirty-account set; fix before wiring
+    the publish cadence timer.
+21. **OS-4** (MED) — generalize the [X1] supervision budget from 3 accounts to N
+    (resident-account soft ceiling + checkpoint-hibernation of idle accounts under
+    red); document the N-account math in blueprint §11.
+22. **OS-5** (MED) — LRU/recency eviction on the GraphStore to enforce the 5k-node
+    render regime; **OS-6** (LOW) — bound the ApiRequestJoiner pending map.
 
 **No action needed (documented as intentional):**
 - **SEC-8** (LOW, C) — bootstrap double-sanitization is intentional

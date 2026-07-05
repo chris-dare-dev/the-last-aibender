@@ -118,14 +118,16 @@ The fix run below is **complete**. Full summary + per-finding proof:
 | OS-3 · OS-4 · OS-5 | **FIXED** | `a9e1734` |
 | FE-2 · FE-3 | **FIXED** | `2f2e0c5` |
 | DOC-1..8 · SEC-4 · SEC-6 · SEC-7 | **FIXED** | (e) docs batch |
-| **OS-1** | **OPEN — deferred** | separate future workflow (backend-adapter registry) |
+| **OS-1** | **FIXED** | OS-1 backend-registry workflow (`BackendDescriptor` + `registerBackend` registry; migrations 0007/0008/0009; ICR-0016) — see [os1-backend-registry.md](../runbooks/os1-backend-registry.md) |
 | **OS-2** | **OPEN — deferred** | separate future workflow (projection SQL aggregation) |
 | **OS-6** | **OPEN** | not implemented this run; joiner pending-map still time-window-bounded only |
 | SEC-8 · X-3 · X-4 | no action (intentional / verified control) | — |
 
-Gate: workspace tests **2272 pass / 1 skip** (baseline 2210 -> +62, no
-regression); 166 integration; 107 infra bats (+8) / 46 CI bats; both soaks PASS;
-gitleaks both tiers clean except the known 12 `.git/logs` reflog echoes.
+Gate (OS-1 backend-registry workflow): workspace tests **2312 pass / 1 skip**
+(baseline 2276 -> +36, no regression); 166 integration; 117 infra bats / 49 CI
+bats; both soaks PASS; protocol 1.6.0 / FROZEN-M8, schema kernel ddl 9 / events
+ddl 3; gitleaks both tiers clean except the known 12 `.git/logs` reflog echoes.
+**OS-2 and OS-6 remain OPEN.**
 
 ## Recommended fix order (for the fix-team workflow)
 
@@ -175,10 +177,15 @@ fix-run gate.**
     read-only assumptions (dbAccess.ts header + SECURITY.md §6).
 
 **Batch E — scale hardening (the optimization/scalability dimension; do after A–C)**
-18. **OS-1** (HIGH) — **OPEN — deferred to a separate future workflow.** A `BackendDescriptor` + `registerBackend()` registry so a
-    new local LLM/backend is one descriptor, not ~42 edits + a migration; derive
-    the migration backend CHECK from one generated constant. Direct sequel to the
-    M7 account-registry pattern.
+18. **OS-1** (HIGH) — **FIXED (OS-1 backend-registry workflow, ICR-0016).** A `BackendDescriptor` + `registerBackend()` registry so a
+    new local LLM/backend is one descriptor, not ~42 edits + a migration. The
+    migration backend CHECK moved to the app layer (0007 kernel / 0008 events /
+    0009 step_attempt relax it to a non-empty guard + built-in defense-in-depth;
+    the value set is gated by the registry-driven `isBackend()` at insert — the
+    M3-events open-vocabulary precedent). Direct sequel to the M7 account-registry
+    pattern; the built-in three behave byte-identically; a synthetic 4th backend
+    routes end-to-end with no branch edit. See
+    [os1-backend-registry.md](../runbooks/os1-backend-registry.md).
 19. **OS-3** (HIGH) — **FIXED `a9e1734`** — stop the per-account synchronous 2 s full-tree walk:
     async mtime-scoped rescan + periodic full reconcile, off the event loop.
 20. **OS-2** (HIGH) — **OPEN — deferred to a separate future workflow.** Push read-model aggregation into SQL (or a rollup table) +

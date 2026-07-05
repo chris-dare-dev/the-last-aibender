@@ -1,5 +1,27 @@
 # WS protocol contract — envelope, channels, PTY frames, flow control
 
+> ## 🔒 FROZEN-M8 — 2026-07-05 (backend-registry generalization, ICR-0016)
+> **Owner: BE-ORCH · Co-sign: FE-ORCH (pending).** The M8 amendment is the
+> BACKEND twin of the M7 account-registry change (finding OS-1, [X1]
+> scalability). The `backend` vocabulary was a CLOSED frozen 3-tuple
+> (`claude_code`, `opencode`, `lmstudio`) and `isBackend` tested membership in
+> it; adding a fourth local LLM / backend was a cross-codebase fork (~42 literal
+> branch sites + a new schema migration). `vocab.ts` now carries a
+> **`BackendDescriptor`** (id, the account-label form it serves, events source,
+> legal substrates, adapter/probe keys) + a **registry** (`registerBackend` /
+> `backendById` / `allBackends`), pre-populated with the three built-ins as
+> descriptors. `isBackend` validates REGISTRY membership (built-ins + any
+> registered), and `backendForLabel` / `isAccountLabel` / `sourceForBackend` /
+> `substrateLegalFor` all resolve through the descriptors. `BACKENDS` stays a
+> KNOWN/SEED list (like `ACCOUNT_LABELS` after M7). The three built-ins behave
+> BYTE-IDENTICALLY (same ids, same pairing, same sources, same pty-is-claude-only
+> rule). This is validation-WIDENING and additive — every M1–M7 backend id/label
+> is still valid and NO wire SHAPE changed — so a minor bump: `1.5.0` → `1.6.0`,
+> `FROZEN-M7` → `FROZEN-M8`. Schema `backend`/`source`/pairing CHECKs relaxed to
+> the app-layer-gated form via migrations 0007 (kernel) / 0008 (events) — see
+> §4.1 and [sqlite-ddl.md](sqlite-ddl.md) §11. Details:
+> [icr/icr-0016-backend-registry.md](icr/icr-0016-backend-registry.md).
+>
 > ## 🔒 FROZEN-M7 — 2026-07-05 (account-registry generalization, ICR-0013)
 > **Owner: BE-ORCH · Co-sign: FE-ORCH (pending).** The M7 amendment generalizes
 > the account-label vocabulary for [X1] scalability: the CLOSED 5-label set
@@ -31,7 +53,7 @@
 > co-signs.
 >
 > The machine-checkable half of this contract is `packages/protocol`
-> (`PROTOCOL_VERSION = '1.5.0'`, `PROTOCOL_FREEZE = 'FROZEN-M7'`). **This
+> (`PROTOCOL_VERSION = '1.6.0'`, `PROTOCOL_FREEZE = 'FROZEN-M8'`). **This
 > document is the prose of record when the two disagree — file an ICR, never
 > a silent divergence.**
 
@@ -145,15 +167,46 @@ Claude Max subscriptions without a contract change. Two disjoint concepts:
 | **Fixed backend** labels (not accounts) | `AWS_DEV`, `LOCAL` | **CLOSED** | `opencode`, `lmstudio` |
 
 The machine-checkable gate is `isAccountLabel` (matches the MAX form OR `ENT` OR
-a fixed backend label) + `backendForLabel` (the pairing) in
+a fixed backend label OR a label served by a registered backend — see the
+Backend vocabulary below) + `backendForLabel` (the pairing) in
 `packages/protocol/vocab.ts`. A NON-sanctioned label (`HACKER`, an email shape,
-`MAX_AB`, lowercase `max_a`) is **rejected** with `bad-request` — the widening
-is a real gate, not anything-goes. Golden fixtures:
+`MAX_AB`, lowercase `max_a`) served by no backend is **rejected** with
+`bad-request` — the widening is a real gate, not anything-goes. Golden fixtures:
 `control-launch-max-c-open-form`, `control-launch-max-d-open-form-pty` (valid),
 `control-launch-nonsanctioned-label`, `control-launch-lowercase-max-label`
 (rejected). The label→real-account map stays machine-local [X2]; enumeration
 (the FE picker) renders the runtime REGISTRY discovered from
 `infra/profiles/*.profile.json`, never a hardcoded count.
+
+**Backend vocabulary — FROZEN-M8 (ICR-0016, [X1] scalability).** `backend` is
+validated by REGISTRY membership, not a closed literal set. `vocab.ts` carries a
+`BackendDescriptor` (`id`, `servesLabel` — the account-label form the backend
+serves, `sourceName` — the events `source` it feeds, `substrates` — its legal
+`sdk`/`pty` set, `builtin`, optional `adapterFactoryKey`/`healthProbeKey`) and a
+registry (`registerBackend` / `backendById` / `allBackends` / `allBackendIds`).
+The three built-ins are pre-registered descriptors:
+
+| Backend `id` | Serves account label | Events `source` | Substrates | Set |
+|---|---|---|---|---|
+| `claude_code` | `^MAX_[A-Z]$` + `ENT` (open) | `claude-otel` | `sdk`, `pty` | built-in |
+| `opencode` | `AWS_DEV` | `opencode-sse` | `sdk` | built-in |
+| `lmstudio` | `LOCAL` | `lmstudio` | `sdk` | built-in |
+| *(a registered 4th)* | its `servesLabel` form | its `sourceName` | its `substrates` | **registered** |
+
+`isBackend` tests registry membership; `backendForLabel`, `sourceForBackend`,
+and `substrateLegalFor` resolve through the descriptors (the pty-is-claude-only
+rule is `substrateLegalFor('pty', id)` — true only for `claude_code` among the
+built-ins). `BACKENDS` remains a KNOWN/SEED list, not the validation ceiling.
+Adding a backend is one descriptor + one `registerBackend` call — NOT a
+cross-codebase fork. A `registerBackend` MAY NOT claim a built-in `id` or a
+`servesLabel` that overlaps a built-in label form (a descriptor cannot hijack
+`MAX_<X>`/`ENT`/`AWS_DEV`/`LOCAL`). An UNREGISTERED backend id (`ollama`) or a
+case-mangled one (`CLAUDE_CODE`) is **rejected** with `bad-request` — the
+registry is a real gate. Golden proof: the corpus fixtures
+`control-launch-unregistered-backend`, `control-launch-garbage-backend`
+(rejected, pure replay), plus the register→replay→unregister
+`control-launch-synthetic-4th-backend` (valid only once registered — testkit
+`SYNTHETIC_BACKEND_WS_FIXTURE` + `SYNTHETIC_BACKEND_DESCRIPTOR`).
 
 Response result: `{ "verb": "launch", "sessionId": "ses_…", "state": "spawning" }`
 (the row-before-spawn row exists **before** the response is sent; the process

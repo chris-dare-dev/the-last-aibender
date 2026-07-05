@@ -10,8 +10,24 @@
 > here with its own freeze banner.
 >
 > The machine-checkable half is `packages/schema` (migrations 0001/0002/0003/
-> 0004/0005/0006 + accessors). **This document is the prose of record when the
-> two disagree — file an ICR, never a silent divergence.**
+> 0004/0005/0006/0007/0008/0009 + accessors). **This document is the prose of
+> record when the two disagree — file an ICR, never a silent divergence.**
+>
+> **AMENDED FROZEN-M8 (2026-07-05, ICR-0016) — backend-registry relaxation
+> (finding OS-1).** The `backend` CHECK constraints below (shown verbatim from
+> the frozen migrations 0001/0002/0003/0004) were pinned to the CLOSED 3-literal
+> set `('claude_code','opencode','lmstudio')`, and the label↔backend pairing +
+> pty CHECKs hardcoded those literals. Migrations **0007** (kernel) and **0008**
+> (events) RELAX them: `backend`/`source` become `length(...) > 0` (the accessor's
+> `isBackend`/`isEventSource` consult the runtime `BackendDescriptor` registry —
+> a SQLite CHECK cannot); the account + pairing + pty CHECKs keep the BUILT-IN
+> clauses and add a "backend is NOT one of the built-in three → defer to the app
+> layer" branch. So a registered 4th backend lands with NO schema change, while
+> the built-in three stay CHECK-enforced byte-identically. See §10.8. Migration
+> **0009** (§10.9) closes the one table 0007 skipped — `step_attempt.account`
+> widens to admit a registered backend's own label (keyed on the label form; no
+> backend column on that table). The frozen migrations are NOT edited (the
+> table-rebuilds land in the new 0007/0008/0009).
 >
 > **AMENDED FROZEN-M7 (2026-07-05, ICR-0013) — account-registry relaxation.**
 > The account-label CHECK constraints below (shown verbatim from the frozen
@@ -712,8 +728,15 @@ CREATE TABLE step_attempt (
                      CHECK (status IN ('pending','blocked','running','awaiting-approval',
                                        'completed','memoized','failed','skipped','cancelled')),
   session_id         TEXT,                                        -- the spawned session_node (workflow edge target); not an FK
+  -- account: nullable; built-in open form (0005) OR a non-empty label OUTSIDE
+  -- the built-in forms — a REGISTERED 4th backend's own label (0009, §10.9).
+  -- No backend column here, so the relaxation is keyed on the LABEL FORM; the
+  -- app layer's registry-aware isAccountLabel() is the authoritative value gate.
   account            TEXT CHECK (account IS NULL
-                       OR account IN ('MAX_A','MAX_B','ENT','AWS_DEV','LOCAL')),
+                       OR (account GLOB 'MAX_[A-Z]' OR account IN ('ENT','AWS_DEV','LOCAL'))
+                       OR (length(account) > 0
+                           AND account NOT GLOB 'MAX_[A-Z]'
+                           AND account NOT IN ('ENT','AWS_DEV','LOCAL'))),
   output_json        TEXT,                                        -- the outputSchema-validated result (identifier-tagged)
   cost_estimated_usd REAL CHECK (cost_estimated_usd IS NULL OR cost_estimated_usd >= 0),
   tokens_in          INTEGER CHECK (tokens_in IS NULL OR tokens_in >= 0),
@@ -740,11 +763,13 @@ Rules (accessor-enforced, tested — pipelines.ts):
 - **Append-only** (`step_attempt_identity_idx` UNIQUE): a retry appends a NEW
   row (`attempt+1`); recording an existing `(run, step, iteration, attempt)`
   throws — the journal never overwrites history.
-- **[X2]:** `account` is the placeholder enum, CHECK-enforced; the definition
-  `name` is identity-screened; `document_json` / `inputs_json` / `output_json`
-  are machine-local content, `identifier`-tagged (`PIPELINES_FIELD_TAGS`) for
-  redaction — brief/prompt bodies legitimately carry paths, exempt from the
-  insert-time identity screen (the events §7.6 precedent).
+- **[X2]:** `account` is the placeholder FORM, CHECK-enforced (built-in open
+  form OR a registered backend's own label, §10.9; the registry-aware
+  `isAccountLabel()` is the authoritative value gate — an EMPTY account is still
+  DB-refused); the definition `name` is identity-screened; `document_json` /
+  `inputs_json` / `output_json` are machine-local content, `identifier`-tagged
+  (`PIPELINES_FIELD_TAGS`) for redaction — brief/prompt bodies legitimately carry
+  paths, exempt from the insert-time identity screen (the events §7.6 precedent).
 
 ### 10.5 The `workflow`-edge + cost seams (verified, no amendment)
 
@@ -805,6 +830,128 @@ HACKER + pairing-violation rejected post-migration).
 form + pairing (`isAccountLabel` + `backendForLabel`); the DB CHECK is the
 second line so even a bypassing writer cannot land `HACKER` or a mispaired row.
 
+## 10.8. Migrations 0007 / 0008 `backend-registry-open-set` — the [X1] BACKEND relaxation — FROZEN (M8)
+
+**Why.** The `backend` CHECK constraints (and the label↔backend pairing +
+`substrate != 'pty' OR backend='claude_code'` CHECKs) were pinned to the CLOSED
+3-literal set `('claude_code','opencode','lmstudio')`. Finding OS-1: adding a
+fourth local LLM / backend was therefore a DB-level fork — a valid registered
+backend id (`vocab.ts` `registerBackend`, ICR-0016) would be REFUSED by the
+frozen CHECK. Migrations 0007/0008 relax the backend clauses so a registered
+backend lands with NO schema change, while keeping every BUILT-IN invariant
+CHECK-enforced.
+
+**THE CHECK-DERIVATION DECISION.** A SQLite CHECK is static SQL and CANNOT query
+the runtime `BackendDescriptor` registry, so option (a) "derive the set from one
+generated constant" is not achievable as a live DB check for an OPEN set. We
+take the M3-events precedent for open vocabularies (`event_type`, `model`,
+`provider` are un-CHECK'd; the accessor screens them): the backend/source VALUE
+set moves to the APP LAYER (the accessor's `isBackend` consults the registry at
+insert; `backendForLabel` enforces pairing; `substrateLegalFor` enforces the pty
+rule). The DB retains a NON-EMPTY guard + the BUILT-IN pairing/pty clauses as
+defense-in-depth. This is decision **(b)** in the OS-1 contract (app-layer
+validated insert + drop the closed DB enum), NOT a generated-constant CHECK.
+
+**The relaxed predicates** (SQLite; `NOT IN` the three built-in ids selects the
+"registered backend" branch, which defers to the app layer):
+
+```sql
+backend TEXT NOT NULL CHECK (length(backend) > 0)              -- open, non-empty
+source  TEXT NOT NULL CHECK (length(source)  > 0)              -- events only; open
+-- account: built-in open form OR (non-empty AND non-built-in backend):
+(account GLOB 'MAX_[A-Z]' OR account IN ('ENT','AWS_DEV','LOCAL'))
+  OR (length(account) > 0 AND backend NOT IN ('claude_code','opencode','lmstudio'))
+-- pairing: built-in triples for built-in backends, else defer to the app layer:
+backend NOT IN ('claude_code','opencode','lmstudio')
+  OR ((account GLOB 'MAX_[A-Z]' OR account = 'ENT') AND backend = 'claude_code')
+  OR (account = 'AWS_DEV' AND backend = 'opencode')
+  OR (account = 'LOCAL'   AND backend = 'lmstudio')
+-- pty (resume_ledger): claude-only for built-ins, else defer:
+substrate != 'pty' OR backend = 'claude_code'
+  OR backend NOT IN ('claude_code','opencode','lmstudio')
+```
+
+- **Migration 0007** (kernel DB, `KERNEL_MIGRATIONS`) rebuilds the three
+  `backend`-carrying tables — `account_profiles`, `resume_ledger`, `session_node`
+  (the inbound-FK table, same `defer_foreign_keys` + rename-old-aside +
+  child-re-point recipe as 0005). `step_attempt` was SKIPPED here on the "no
+  backend column" reasoning — but its `account` CHECK still needed the
+  registered-backend clause; migration **0009** (§10.9) closes that gap. Bumps
+  `schema_meta` `ddl_version=7`, `frozen_milestone=M8`.
+- **Migration 0008** (events DB, `EVENTS_STORE_MIGRATIONS`) rebuilds `events`
+  (relaxes `backend`, `source`, account, and pairing). `quota_snapshots` /
+  `session_outcomes` have no backend/source column and are NOT rebuilt (a
+  registered backend feeds only the `events` table). Bumps
+  `events_ddl_version=3`, `frozen_milestone=M8`.
+
+**Why the account CHECK also relaxes here.** A registered backend, by definition,
+serves account labels OUTSIDE the built-in `MAX_<X>`/`ENT`/`AWS_DEV`/`LOCAL`
+forms (its descriptor's `servesLabel`). The OS-1 goal is unreachable if the
+account CHECK still pins the built-in form — the row would be DB-refused though
+the app layer admits it. So the account CHECK becomes "built-in form OR
+(non-empty AND backend is not built-in)": the M7 open form stays enforced for the
+built-in backends (byte-identical) and is a strict SUBSET of what the relaxed
+CHECK admits — every M1–M7 row still validates.
+
+**Safety + proof.** Same table-rebuild-is-safe reasoning as 0005 (SQLite cannot
+ALTER a CHECK; `defer_foreign_keys` for the FK table; `foreign_key_check` clean at
+COMMIT). Seed rows, all indexes, and the account CHECK (open MAX_<X> form) are
+preserved; frozen migrations 0001–0006 are NOT edited. Proven by `migrate.spec`
+(kernel ids `[1,3,4,5,7]` durable across REOPEN), `kernel.spec` (a registered
+4th backend `synthbackend`/`SYNTH_L` lands end-to-end via the accessor; an
+empty backend + a built-in pairing violation still rejected by the DDL), and
+`events.spec` (a registered-4th-backend `events` row lands; unregistered
+refused). The kernel accessor's pty rule now routes through
+`substrateLegalFor` (registry-driven) — built-in behaviour byte-identical.
+
+## 10.9. Migration 0009 `backend-registry-open-set-step-attempt` — the step_attempt amendment — FROZEN (M8)
+
+**Why.** Migration 0007 (§10.8) relaxed the three `backend`-carrying kernel
+tables but explicitly SKIPPED `step_attempt` on the reasoning "no backend
+column". That overlooked that `step_attempt.account` (from 0004, rebuilt to the
+open M7 form by 0005) still admits ONLY the built-in account-label forms —
+`account IS NULL OR (account GLOB 'MAX_[A-Z]' OR account IN
+('ENT','AWS_DEV','LOCAL'))`. A REGISTERED 4th backend serves its OWN
+account-label form (e.g. `SYNTH_L`), which the built-in regex cannot express, so
+a full pipeline RUN on a 4th-backend account was refused at the FIRST journal
+write (`step_attempt.record` → `CHECK constraint failed: account IS NULL ...`)
+even though the runner's `resolveBackend` already routed the label through the
+registry with no core branch and 0007/0008 already accepted the label in the
+lineage/events stores. The OS-1 goal — a 4th backend lands with NO schema change
+— was unreachable while `step_attempt` stayed pinned.
+
+**What changes.** Migration **0009** (kernel DB, `KERNEL_MIGRATIONS`) rebuilds
+`step_attempt` (straight create-new / copy / drop / rename — no inbound FK; the
+outbound FK to `pipeline_run(id)` and all four indexes are preserved verbatim)
+with only its nullable `account` CHECK widened, exactly as 0008 widened
+`events.account` — but keyed on the LABEL FORM, since this table carries NO
+backend column to gate on:
+
+```sql
+account IS NULL
+  OR (account GLOB 'MAX_[A-Z]' OR account IN ('ENT','AWS_DEV','LOCAL'))  -- built-in form (0005)
+  OR (length(account) > 0                                                -- a registered 4th
+      AND account NOT GLOB 'MAX_[A-Z]'                                   --   backend's own
+      AND account NOT IN ('ENT','AWS_DEV','LOCAL'))                      --   label
+```
+
+The M7 form is a strict SUBSET of what this admits — every M1–M8 row (built-in
+labels + NULL) validates byte-identically. The third clause newly admits a
+registered backend's label. Consistent with the §10.8 CHECK-derivation decision:
+the VALUE-set gate for a non-built-in label is the app layer's registry-aware
+`isAccountLabel()` (enforced at `stepAttempts.record`/`complete`); the DB keeps
+the NULL + built-in-form clauses as defense-in-depth so an EMPTY account is still
+refused. Bumps `schema_meta` `ddl_version=9` (milestone stays `M8` — same
+ICR-0016 freeze).
+
+**Proof.** `pipelines.spec` (a registered `synthbackend`/`SYNTH_L` step attempt
+lands via `record` + `complete`; the built-in form + NULL still admitted; an
+unregistered `SYNTH_L` refused by the app-layer gate), `migrate.spec` (kernel
+ids `[1,3,4,5,7,9]` durable across REOPEN), `kernel.spec` (`ddl_version=9`), and
+core `backendRegistryRoute.spec` (a full engine RUN on `SYNTH_L` now COMPLETES
+end-to-end with the attempt journaled under `SYNTH_L` — NO core edit). Frozen
+migrations 0001–0008 are NOT edited.
+
 ## 11. Amendment record
 
 | Date | Change | ICR |
@@ -816,3 +963,5 @@ second line so even a bypassing writer cannot land `HACKER` or a mispaired row.
 | 2026-07-04 | **M4 lineage freeze (§8).** Migration 0003 `lineage-tables-init`: `workstream` (status enum, JSON tags) + `session_node` (HARNESS id PRIMARY — the resume-ledger id for kernel launches, reconciler-minted for external; native id a nullable write-once ATTRIBUTE; label-enum + pairing CHECKs [X2]; lineage state/origin/confidence enums; mutable `native_scope` for `/cd`; token/cost snapshots) + `brief` (kind session-end·pre-compact·session-start-injection·merge; provenance native-summary·local-draft·refined; body `identifier`-tagged) + `session_edge` (edge_type EXACTLY continue·fork·merge_parent·compact·sidechain·handoff·import·workflow; from/import + handoff-brief CHECK matrices; continue self-edges legal). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§8.1 — action-time recording shares the kernel's commit boundary; lineage writes are resume-ledger-rate; the SessionIdResolver join is single-db; repo-wide-unique migration ids 0001/0002/0003); epoch-ms integers for lineage times (§8.1); accessor-enforced edge legality + ATOMIC `recordMerge` (§8.5); naming-column identity screen + `LINEAGE_FIELD_TAGS` (§8.6). `schema_meta` gains lineage keys, M1 seeds untouched. Migrations 0001/0002 untouched; `openKernelStore` now also hands back the `lineage` accessors. | — (M4 freeze; plan §3 schema row) |
 | 2026-07-04 | **M5 pipeline freeze (§10).** Migration 0004 `pipeline-tables-init`: `pipeline_definition` (the saved versioned JSON DAG document verbatim + schema_version re-validated on load + schema_hash for drift) + `pipeline_run` (status enum pending·running·paused·completed·failed·cancelled; pinned schema_hash; inputs/workstream) + `step_attempt` = **THE memoization journal** (append-only via UNIQUE (run_id, step_id, iteration, attempt); the resume lookup `findMemoized(run,step,iteration,input_hash)` returns a COMPLETED/`memoized` attempt's cached output → no re-execution, the M5 DoD; state enum incl. `blocked`/`awaiting-approval`/`memoized`/`skipped`; nullable session_id = the spawned node / workflow-edge target; label-enum account CHECK [X2]). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§10.1 — same commit boundary + query plan as the `workflow`-edge session_nodes each attempt produces; journal writes are resume-ledger-rate; repo-wide-unique migration ids 0001/0002/0003/0004); epoch-ms integers (§10.1); `PIPELINES_FIELD_TAGS` on document/inputs/output JSON, definition name identity-screened (§10.4). Verified sufficient, NO change: the `workflow` edge type (in the frozen §8.5 vocabulary since M4) + the events `(backend, raw_ref)` dedupe key carry the per-step lineage + cost seams (§10.5). `schema_meta` gains pipeline keys, M1/M4 seeds untouched. Migrations 0001/0002/0003 untouched; `openKernelStore` now also hands back the `pipelines` accessors. | — (M5 freeze; plan §3 schema row) |
 | 2026-07-05 | **M7 account-registry relaxation (§10.7).** Migrations **0005** `account-registry-open-form` (kernel: `account_profiles`, `resume_ledger`, `session_node` [inbound-FK table-rebuild with `defer_foreign_keys` + child re-point], `step_attempt`) and **0006** `account-registry-open-form-events` (events: `events`, `quota_snapshots`, `session_outcomes`) RELAX the account-label CHECK from the CLOSED 5-literal set to the OPEN form `account[_label] GLOB 'MAX_[A-Z]' OR IN ('ENT','AWS_DEV','LOCAL')` — the SQL mirror of `CLAUDE_ACCOUNT_LABEL_RE` — so a newly provisioned Claude Max account (MAX_C, MAX_D, …) is admitted WITHOUT a schema change ([X1]). The label↔backend pairing CHECK is preserved verbatim (GLOB form); seed rows + all indexes preserved; frozen migrations 0001–0004 untouched. `schema_meta`: kernel `ddl_version=5`/`frozen_milestone=M7`, events `events_ddl_version=2`/`frozen_milestone=M7`. | [ICR-0013](icr/icr-0013-account-registry.md) |
+| 2026-07-05 | **M8 backend-registry relaxation (§10.8; finding OS-1).** Migrations **0007** `backend-registry-open-set` (kernel: `account_profiles`, `resume_ledger`, `session_node` [same inbound-FK rebuild recipe as 0005]) and **0008** `backend-registry-open-set-events` (events: `events`) RELAX the `backend` CHECK from the CLOSED 3-literal set to `length(backend) > 0` (the events `source` too), and relax the account + label↔backend pairing + pty CHECKs to "built-in clauses hold for the built-in backends, OR the backend is NOT one of the three built-ins" — so a REGISTERED 4th backend (`vocab.ts` `registerBackend`, ICR-0016) lands WITHOUT a schema change ([X1]). The CHECK-derivation decision (§10.8): a SQLite CHECK cannot query the runtime `BackendDescriptor` registry, so the backend/source VALUE set moves to the app-layer validated insert (`isBackend`/`isEventSource`/`backendForLabel`/`substrateLegalFor`) — the M3-events open-vocabulary precedent — while the built-in pairing/pty clauses stay CHECK-enforced (defense-in-depth, byte-identical). `step_attempt`/`quota_snapshots`/`session_outcomes` have no backend/source column and are NOT rebuilt. Seed rows + indexes + the account (open MAX_<X>) form preserved; frozen migrations 0001–0006 untouched. `schema_meta`: kernel `ddl_version=7`/`frozen_milestone=M8`, events `events_ddl_version=3`/`frozen_milestone=M8`. | [ICR-0016](icr/icr-0016-backend-registry.md) |
+| 2026-07-05 | **M8 backend-registry — `step_attempt` amendment (§10.9; finding OS-1).** Migration **0009** `backend-registry-open-set-step-attempt` (kernel, `KERNEL_MIGRATIONS`) closes the table 0007 explicitly SKIPPED: it rebuilds `step_attempt` (no inbound FK; outbound FK + all indexes preserved) with only its nullable `account` CHECK widened — `account IS NULL OR (built-in open MAX_<X> form) OR (length(account) > 0 AND NOT built-in form)`. Keyed on the LABEL FORM (this table has NO backend column), so a REGISTERED 4th backend's own account label (e.g. `SYNTH_L`) is admitted at the journal write WITHOUT a schema change ([X1]); the M7 form is a strict subset (every M1–M8 row still validates byte-identically). Consistent with the §10.8 decision: the registry-aware `isAccountLabel()` is the authoritative value gate at `stepAttempts.record`/`complete`; the DB keeps the NULL + built-in-form clauses as defense-in-depth (an EMPTY account still refused). Frozen migrations 0001–0008 untouched. `schema_meta`: kernel `ddl_version=9`/`frozen_milestone=M8` (same ICR-0016 freeze). Proof: `pipelines.spec` (SYNTH_L lands via record+complete; built-in + NULL preserved; unregistered refused), `migrate.spec` (kernel ids `[1,3,4,5,7,9]`), core `backendRegistryRoute.spec` (a full engine run on SYNTH_L now COMPLETES end-to-end, NO core edit). | [ICR-0016](icr/icr-0016-backend-registry.md) |

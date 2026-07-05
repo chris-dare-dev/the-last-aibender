@@ -10,15 +10,42 @@ re-verified against the cited code by the driving session** (see verdicts).
 `AWS_DEV`, `LOCAL`). No real identifier appears here.
 
 The framing question for this dimension (plan Stage 3): *is it easy to add a
-new Claude account, and a new local LLM?* The account half is now **yes** (the
-M7 registry generalization). The **backend/local-LLM half is still no** — see
-OS-1, the highest-value finding here.
+new Claude account, and a new local LLM?* The account half is **yes** (the M7
+registry generalization). The **backend/local-LLM half is now also yes** — OS-1
+is **FIXED** (the OS-1 backend-registry workflow, ICR-0016): a `BackendDescriptor`
++ `registerBackend()` registry, migrations 0007/0008/0009 moving the backend
+CHECK to the app layer, and a proven synthetic 4th-backend end-to-end route with
+no branch edit. See the finding below and
+[../runbooks/os1-backend-registry.md](../runbooks/os1-backend-registry.md).
 
 ---
 
 ## Findings (6): 3 high · 2 medium · 1 low
 
-### OS-1 (HIGH — confirmed, gate-verified) — Adding a new local backend is a cross-codebase fork; no adapter registry exists
+### OS-1 (HIGH — confirmed, gate-verified) — **FIXED (ICR-0016)** — Adding a new local backend is a cross-codebase fork; no adapter registry exists
+> **RESOLUTION (OS-1 backend-registry workflow, ICR-0016, protocol 1.6.0 / FROZEN-M8).**
+> `vocab.ts` now carries a `BackendDescriptor` (id, `servesLabel`, `sourceName`,
+> `substrates`, `builtin`, optional adapter/probe keys) + a registry
+> (`registerBackend` / `backendById` / `allBackends` / `unregisterBackend`)
+> pre-seeded with the three built-ins; `isBackend` tests registry membership;
+> `backendForLabel` / `isAccountLabel` / `sourceForBackend` / `substrateLegalFor`
+> resolve through the descriptors. `sourceForBackend` moved from the
+> `lineageCost.ts` if-chain into the registry; `projections.ts` local-offload
+> classifies by the descriptor's `sourceName`, not `=== 'lmstudio'`. Migrations
+> **0007** (kernel) / **0008** (events) / **0009** (step_attempt) relaxed every
+> `backend`-pinned CHECK to a non-empty guard + built-in defense-in-depth, with
+> the value set gated at the app layer (the M3-events open-vocabulary precedent),
+> so a new backend needs **no** migration. Proven: a synthetic 4th backend
+> registers and routes end-to-end (vocab → pipeline cost → read-model → schema →
+> FE render) with no branch edit (`core/src/pipelines/backendRegistryRoute.spec.ts`,
+> `packages/testkit/src/wsGolden.spec.ts` register→replay→unregister,
+> `app/src/features/observability/fourthBackendRender.spec.tsx`); the built-in
+> three are byte-identical (`app/src/lib/backendLabels.spec.ts`,
+> `packages/schema/src/kernel.spec.ts` built-in pairing/pty CHECK still rejects an
+> illegal built-in row). The remaining `=== 'claude_code'` sites are Claude-only
+> ingest paths (`ingest.ts` OTel/JSONL joiner, `sessionKernel.ts`/`ptyHost.ts` pty)
+> and registry-mediated semantic guards, not extension-blocking dispatch.
+> **OS-2 and OS-6 remain OPEN.**
 - **Anchor:** `packages/protocol/src/vocab.ts:100` (`BACKENDS` frozen 3-tuple), `:194` (`backendForLabel` hardcoded if-chain), `:69` (`FIXED_BACKEND_LABELS` closed, "a new one would be a new backend, an ICR of its own").
 - **Failure scenario:** to run Ollama directly, a 2nd OpenAI-compatible server, or LM Studio on a 2nd port as a *distinct* backend, one must edit a FROZEN protocol enum, ~42 non-spec files that branch on the `'claude_code'|'opencode'|'lmstudio'` literals (e.g. `lineageCost.ts` `sourceForBackend`, `projections.ts` `localTokens`, `ingest.ts`, `reconciler.ts`, `sessionKernel.ts`, `ptyHost.ts`), **and** add a schema migration to rebuild every account-pinned table — because every migration hardcodes `CHECK (backend IN ('claude_code','opencode','lmstudio'))` (verified in `0001-kernel.ts:48,74`, `0002-events.ts:63`, `0006-account-registry-events.ts:36`). This is exactly the extension cliff this dimension exists to catch — the *backend* twin of the account-label problem M7 just solved.
 - **Gate verification:** CONFIRMED. `grep` counts **42** non-spec files referencing the backend literals; the migration CHECKs are present as cited.

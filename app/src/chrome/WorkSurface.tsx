@@ -36,30 +36,38 @@ export function WorkSurface(): ReactNode {
   const selectedSessionId = useStore(uiStore, (s) => s.selectedSessionId);
   const view = useStore(uiStore, (s) => s.workSurfaceView);
   const toggleGraphView = useStore(uiStore, (s) => s.toggleGraphView);
+  const togglePipelinesView = useStore(uiStore, (s) => s.togglePipelinesView);
   const substrate = useStore(sessionsStore, (s) =>
     selectedSessionId === undefined ? undefined : s.sessions[selectedSessionId]?.substrate,
   );
   useSyncExternalStore(subscribeIslands, islandsVersion, islandsVersion);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const graphView = view === 'graph';
-  const slot: IslandSlot = graphView ? 'graph' : slotForSubstrate(substrate);
-  // The graph view is session-independent (the whole session-artifact
-  // field); session views need a selection before anything mounts. Keeping
-  // the graph's mount context pinned to undefined means a selection change
-  // never tears the scene down while the graph view is up.
-  const island = graphView
-    ? getIsland('graph')
+  const pipelinesView = view === 'pipelines';
+  // Graph and pipelines are session-INDEPENDENT views (the whole
+  // session-artifact field / the whole pipeline fleet); session views need a
+  // selection before anything mounts. Keeping their mount context pinned to
+  // undefined means a selection change never tears the scene down while such
+  // a view is up.
+  const sessionIndependent = graphView || pipelinesView;
+  const slot: IslandSlot = graphView
+    ? 'graph'
+    : pipelinesView
+      ? 'pipelines'
+      : slotForSubstrate(substrate);
+  const island = sessionIndependent
+    ? getIsland(slot)
     : selectedSessionId === undefined
       ? undefined
       : getIsland(slot);
-  const mountSessionId = graphView ? undefined : selectedSessionId;
+  const mountSessionId = sessionIndependent ? undefined : selectedSessionId;
 
   useEffect(() => {
     const host = hostRef.current;
     if (island === undefined || host === null) return undefined;
-    if (!graphView && mountSessionId === undefined) return undefined;
+    if (!sessionIndependent && mountSessionId === undefined) return undefined;
     return island.mount(host, { sessionId: mountSessionId });
-  }, [island, mountSessionId, graphView]);
+  }, [island, mountSessionId, sessionIndependent]);
 
   return (
     <section className="ig-work" aria-label="work surface" data-testid="work-surface">
@@ -69,9 +77,11 @@ export function WorkSurface(): ReactNode {
           <span className="ig-panel-readout ig-engraved">
             {graphView
               ? 'CONTEXT GRAPH'
-              : selectedSessionId === undefined
-                ? 'NO SESSION SELECTED'
-                : `SES ${selectedSessionId}`}
+              : pipelinesView
+                ? 'PIPELINE BUILDER'
+                : selectedSessionId === undefined
+                  ? 'NO SESSION SELECTED'
+                  : `SES ${selectedSessionId}`}
           </span>
           <button
             type="button"
@@ -82,6 +92,18 @@ export function WorkSurface(): ReactNode {
           >
             GRAPH
           </button>
+          {/* DESIGN.md §4.1 "Center — work: … builder": the pipelines deck is
+              the third center view, reachable by an explicit user layout
+              action (the palette verb mirrors this — DESIGN.md §6). */}
+          <button
+            type="button"
+            className="ig-btn"
+            data-testid="work-view-toggle-pipelines"
+            aria-pressed={pipelinesView}
+            onClick={togglePipelinesView}
+          >
+            BUILDER
+          </button>
         </header>
       </div>
       <div className="ig-well">
@@ -91,7 +113,7 @@ export function WorkSurface(): ReactNode {
               NO SIGNAL
             </div>
             <div className="ig-engraved" style={{ color: 'var(--ig-ink-faint)' }}>
-              {!graphView && selectedSessionId === undefined
+              {!sessionIndependent && selectedSessionId === undefined
                 ? 'NO SESSION SELECTED'
                 : 'NO ISLAND REGISTERED'}
             </div>

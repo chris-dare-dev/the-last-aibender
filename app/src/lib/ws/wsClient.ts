@@ -30,6 +30,7 @@ import {
   type ErrorDetail,
   type KillRequest,
   type LaunchRequest,
+  type PipelineClientPayload,
   type ResumeRequest,
   type StatusRequest,
   type WorkstreamMergeRequest,
@@ -177,12 +178,21 @@ export class GatewayClient {
     // a broker boot, and the retained context-graph touch window warm-starts
     // the graph island's activity read model (bounded + honest — below-floor
     // history answers `watermark-out-of-range`, logged and harmless, §8).
+    // PIPELINES joined the default set at M5 (BE-ORCH stewarding, FE-6 M5
+    // request — the EVENTS/WORKSTREAM/CONTEXT_GRAPH precedent): the retained
+    // §18 catalog snapshot + run/step-status window hydrate the builder
+    // palette and the run monitor on the first connect of a broker boot, so
+    // the deck reads a live catalog and any in-flight runs without waiting a
+    // publish cycle (the golden `pipelines-replay-request-valid` fixture;
+    // below-floor history answers `watermark-out-of-range`, logged and
+    // harmless, §8).
     this.replayFromZero = options.replayFromZeroOnFirstConnect ?? [
       CHANNEL.APPROVALS,
       CHANNEL.QUOTA,
       CHANNEL.EVENTS,
       CHANNEL.WORKSTREAM,
       CHANNEL.CONTEXT_GRAPH,
+      CHANNEL.PIPELINES,
     ];
   }
 
@@ -451,6 +461,21 @@ export class GatewayClient {
    */
   sendWorkstreamMergeRequest(request: WorkstreamMergeRequest): boolean {
     return this.sendOn(CHANNEL.WORKSTREAM, request);
+  }
+
+  /**
+   * The six frozen pipeline verbs (`pipeline-validate` / `-save` / `-launch` /
+   * `-pause` / `-resume` / `-cancel`) ride the pipelines channel
+   * (ws-protocol.md §18.2 — the §16.2 merge-request precedent: a feature-scoped
+   * verb rides its own fan-out channel, not `control`). ONE method carries all
+   * six; the union is discriminated on `kind`. The mirror of
+   * `sendApprovalDecision` / `sendWorkstreamMergeRequest`: returns false when
+   * not connected — the FE-6 deck renders the unsendable instrument state
+   * (features/pipelines/ports.ts PipelineVerbSender; register.tsx detects this
+   * method structurally). Nothing throws, nothing toasts (NO SIGNAL doctrine).
+   */
+  sendPipelineMessage(message: PipelineClientPayload): boolean {
+    return this.sendOn(CHANNEL.PIPELINES, message);
   }
 
   /** Open (or fetch) the PTY byte conduit for a session. */

@@ -10,9 +10,13 @@ import type { ChannelId } from './theme/tokens.ts';
 /**
  * Center-zone work-surface views (DESIGN.md §4.1: "Center — work: active
  * session (terminal/transcript), graph, builder"). `session` = the selected
- * session's substrate island; `graph` = the FE-4 context-graph island.
+ * session's substrate island; `graph` = the FE-4 context-graph island;
+ * `pipelines` = the FE-6 pipelines builder + run monitor deck (M5). Both
+ * `graph` and `pipelines` are session-independent (they mount regardless of
+ * selection); switching to one is an explicit user layout action (geometry
+ * never reflows in response to data).
  */
-export type WorkSurfaceView = 'session' | 'graph';
+export type WorkSurfaceView = 'session' | 'graph' | 'pipelines';
 
 export interface UiState {
   readonly paletteOpen: boolean;
@@ -33,6 +37,8 @@ export interface UiState {
   toggleInstrumentsOverlay(): void;
   setWorkSurfaceView(view: WorkSurfaceView): void;
   toggleGraphView(): void;
+  /** Center-work builder view (DESIGN.md §4.1). Toggles pipelines ↔ session. */
+  togglePipelinesView(): void;
 }
 
 export const uiStore = createStore<UiState>()((set) => ({
@@ -54,6 +60,8 @@ export const uiStore = createStore<UiState>()((set) => ({
   setWorkSurfaceView: (workSurfaceView) => set({ workSurfaceView }),
   toggleGraphView: () =>
     set((s) => ({ workSurfaceView: s.workSurfaceView === 'graph' ? 'session' : 'graph' })),
+  togglePipelinesView: () =>
+    set((s) => ({ workSurfaceView: s.workSurfaceView === 'pipelines' ? 'session' : 'pipelines' })),
 }));
 
 export type UiStore = typeof uiStore;

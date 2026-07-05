@@ -20,6 +20,7 @@ import './chrome/chrome.css';
 import { Chrome } from './chrome/Chrome.tsx';
 import { registerAppIslands } from './composition/registerIslands.tsx';
 import { registerObservability } from './features/observability/index.ts';
+import { registerPipelines } from './features/pipelines/index.ts';
 import { registerWorkstreams } from './features/workstreams/index.ts';
 import { registerGraphIsland } from './islands/graph/index.ts';
 import { bindClientToStores } from './lib/stores/bind.ts';
@@ -42,6 +43,13 @@ registerObservability(client);
 // chrome's 'workstreams' island slot (left zone dock), registers the palette
 // verb; the merge sender is detected structurally on the client.
 registerWorkstreams(client);
+// FE-6 pipelines (M5): binds the pipelines channel, occupies the chrome's
+// 'pipelines' island slot (the center-work BUILDER view — DESIGN.md §4.1),
+// registers the "open pipelines" palette verb; the six-verb sender
+// (sendPipelineMessage) is detected structurally on the client. Catalog +
+// run snapshots hydrate on the first connect via the PIPELINES replay-from-
+// zero default.
+registerPipelines(client);
 
 // Native affordance glue: approval arrivals raise a system notification
 // (tray/notification only — never a streaming path, blueprint §2).

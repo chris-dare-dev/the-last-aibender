@@ -7,7 +7,18 @@
  * rule: chrome never reaches into app/src/islands or app/src/features).
  */
 
-export type IslandSlot = 'terminal' | 'transcript' | 'graph' | 'observability' | 'workstreams';
+export type IslandSlot =
+  | 'terminal'
+  | 'transcript'
+  | 'graph'
+  | 'observability'
+  | 'workstreams'
+  // FE-6 pipelines builder + run monitor deck (M5; the M4 'workstreams'-slot
+  // ratification precedent). registerPipelines occupied this slot through a
+  // documented cast (PIPELINES_SLOT) until the union widened; the cast is now
+  // a no-op. Mounted by the center work surface as the 'builder' view
+  // (DESIGN.md §4.1: "Center — work: … builder").
+  | 'pipelines';
 
 export interface IslandMount {
   /**

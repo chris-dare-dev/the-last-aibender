@@ -22,6 +22,7 @@ import {
   validateQuotaSnapshot,
   validateTranscriptPayload,
   validateWorkstreamServerPayload,
+  validatePipelineServerPayload,
   type ApprovalsServerPayload,
   type ChannelName,
   type ContextGraphTouch,
@@ -30,7 +31,9 @@ import {
   type ErrorPayload,
   type EventSummary,
   type OpaqueEventsPayload,
+  type OpaquePipelinePayload,
   type OpaqueWorkstreamPayload,
+  type PipelineServerPayload,
   type PtyFrame,
   type QuotaSnapshot,
   type ReadModelSnapshot,
@@ -50,6 +53,7 @@ export type InboundStage =
   | 'context-graph-payload'
   | 'events-payload'
   | 'workstream-payload'
+  | 'pipelines-payload'
   | 'channel-policy'
   | 'pty-frame-codec';
 
@@ -104,6 +108,18 @@ export type InboundMessage =
       readonly seq: number;
       readonly payload: WorkstreamServerPayload | OpaqueWorkstreamPayload;
     }
+  | {
+      /**
+       * pipelines union FROZEN at M5 (ws-protocol.md §18): the features-4/5
+       * fan-out (catalog snapshots, run/step status, validation results, save
+       * acks); unknown kinds decode opaque and MUST be ignored (the same
+       * frozen forward-tolerant reader rule as events/workstream).
+       */
+      readonly kind: 'pipelines';
+      readonly channel: ChannelName;
+      readonly seq: number;
+      readonly payload: PipelineServerPayload | OpaquePipelinePayload;
+    }
   | { readonly kind: 'pty-frame'; readonly frame: PtyFrame };
 
 export type InboundVerdict =
@@ -119,6 +135,7 @@ export function replayableChannelOf(message: InboundMessage): ChannelName | unde
     case 'context-graph':
     case 'events':
     case 'workstream':
+    case 'pipelines':
       return isReplayableChannel(message.channel) ? message.channel : undefined;
     default:
       return undefined;
@@ -134,6 +151,7 @@ export function seqOf(message: InboundMessage): number | undefined {
     case 'context-graph':
     case 'events':
     case 'workstream':
+    case 'pipelines':
       return message.seq;
     default:
       return undefined;
@@ -238,6 +256,16 @@ export function routeBrokerFrame(data: string | Uint8Array): InboundVerdict {
     return workstream.ok
       ? { ok: true, message: { kind: 'workstream', channel, seq, payload: workstream.value } }
       : { ok: false, code: workstream.code, stage: 'workstream-payload' };
+  }
+
+  if (channel === 'pipelines') {
+    // FROZEN at M5 (ws-protocol.md §18): the features-4/5 catalog + run-monitor
+    // union; unknown kinds decode opaque (the same forward-tolerant reader
+    // rule as events/workstream). Client verbs are outbound-only.
+    const pipelines = validatePipelineServerPayload(payload);
+    return pipelines.ok
+      ? { ok: true, message: { kind: 'pipelines', channel, seq, payload: pipelines.value } }
+      : { ok: false, code: pipelines.code, stage: 'pipelines-payload' };
   }
 
   return { ok: false, code: 'unknown-channel', stage: 'channel-policy' };

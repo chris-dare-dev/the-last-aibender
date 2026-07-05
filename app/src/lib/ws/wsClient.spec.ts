@@ -12,7 +12,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { encodePtyFrame, type WorkstreamMergeRequest } from '@aibender/protocol';
+import {
+  encodePtyFrame,
+  type PipelineClientPayload,
+  type WorkstreamMergeRequest,
+} from '@aibender/protocol';
 import { nullLogger } from '../log.ts';
 import {
   FAKE_GATEWAY_TOKEN,
@@ -250,6 +254,17 @@ describe('reconnect-replay watermarks (edge)', () => {
         fromSeq: 0,
       }),
     );
+    // PIPELINES joined the default set at M5: the retained §18 catalog snapshot
+    // + run/step-status window hydrate the builder palette + run monitor on the
+    // first connect of a broker boot (the golden pipelines-replay-request-valid
+    // fixture).
+    expect(sent).toContain(
+      encodeEnvelope('pipelines', 0, {
+        kind: 'replay-request',
+        channel: 'pipelines',
+        fromSeq: 0,
+      }),
+    );
   });
 
   it('resumes from lastSeq+1 and drops replayed duplicates exactly-once', async () => {
@@ -348,6 +363,39 @@ describe('workstream merge sender (ws-protocol.md §16.2)', () => {
     // structurally, so the deck wires merge dispatch with no FE-6 change.
     const sender: { sendWorkstreamMergeRequest(r: WorkstreamMergeRequest): boolean } = h.client;
     expect(typeof sender.sendWorkstreamMergeRequest).toBe('function');
+  });
+});
+
+describe('pipeline verb sender (ws-protocol.md §18.2)', () => {
+  // A minimal document-free verb (resume) exercises the sender end-to-end
+  // without depending on a DAG document shape.
+  const resumeVerb: PipelineClientPayload = {
+    kind: 'pipeline-resume',
+    requestId: 'req_fe_pl_1',
+    runId: 'run_fe_spec_1',
+  };
+
+  it('rides the pipelines channel with the sendApprovalDecision mirror (positive)', async () => {
+    const h = harness();
+    await connect(h);
+    expect(h.client.sendPipelineMessage(resumeVerb)).toBe(true);
+    // seq 1: the first-connect replay-request took seq 0 on this channel.
+    expect(h.hub.latest.sentTexts).toContain(encodeEnvelope('pipelines', 1, resumeVerb));
+  });
+
+  it('returns false while not connected — the unsendable posture, never a throw (negative)', () => {
+    const h = harness(undefined);
+    h.client.start();
+    expect(h.client.sendPipelineMessage(resumeVerb)).toBe(false);
+  });
+
+  it('satisfies the FE-6 PipelineVerbSender port structurally (compile-enforced pin)', () => {
+    const h = harness();
+    // The features/pipelines/ports.ts PipelineVerbSender shape, inlined (lib
+    // never imports features): register.tsx detects this method structurally,
+    // so the deck wires every verb dispatch with no FE-6 change.
+    const sender: { sendPipelineMessage(m: PipelineClientPayload): boolean } = h.client;
+    expect(typeof sender.sendPipelineMessage).toBe('function');
   });
 });
 

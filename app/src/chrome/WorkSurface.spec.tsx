@@ -229,4 +229,75 @@ describe('WorkSurface slot policy', () => {
       expect(log.mounts.at(-1)).toEqual({ slot: 'terminal', sessionId: 'ses_fake_9' });
     });
   });
+
+  describe('pipelines (builder) view (M5 — the FE-6 chrome+composition ICR)', () => {
+    it('the BUILDER header toggle swaps to the pipelines deck, session-independently (positive)', () => {
+      const log: MountLog = { mounts: [], unmounts: 0 };
+      registerFakeIsland('pipelines', log);
+      render();
+      // No session selected — the builder + run monitor is the whole fleet.
+      const toggle = container.querySelector<HTMLButtonElement>(
+        '[data-testid="work-view-toggle-pipelines"]',
+      );
+      expect(toggle?.getAttribute('aria-pressed')).toBe('false');
+      act(() => toggle?.click());
+      expect(log.mounts).toEqual([{ slot: 'pipelines', sessionId: undefined }]);
+      const host = container.querySelector('[data-testid="island-host"]');
+      expect(host?.getAttribute('data-slot')).toBe('pipelines');
+      expect(toggle?.getAttribute('aria-pressed')).toBe('true');
+      expect(container.textContent).toContain('PIPELINE BUILDER');
+    });
+
+    it('the palette verb flips the view (DESIGN.md §6 kill-switch rule)', () => {
+      const verb = builtinCommands().find((c) => c.id === 'chrome.work.pipelines.toggle');
+      expect(verb?.title).toBe('toggle builder view');
+      verb?.run({ client: undefined });
+      expect(uiStore.getState().workSurfaceView).toBe('pipelines');
+      verb?.run({ client: undefined });
+      expect(uiStore.getState().workSurfaceView).toBe('session');
+    });
+
+    it('renders NO SIGNAL (not "NO SESSION SELECTED") while no pipelines island is registered (negative)', () => {
+      act(() => uiStore.getState().setWorkSurfaceView('pipelines'));
+      render();
+      expect(container.textContent).toContain('NO SIGNAL');
+      // Session-independent: the idle treatment must NOT demand a selection.
+      expect(container.textContent).toContain('NO ISLAND REGISTERED');
+      expect(container.textContent).not.toContain('NO SESSION SELECTED');
+    });
+
+    it('selection changes never remount the pipelines deck (edge)', () => {
+      const log: MountLog = { mounts: [], unmounts: 0 };
+      registerFakeIsland('pipelines', log);
+      act(() => {
+        sessionsStore.getState().applyStatuses([
+          status('ses_fake_10', 'pty'),
+          status('ses_fake_11', 'sdk'),
+        ]);
+        uiStore.getState().selectSession('ses_fake_10');
+        uiStore.getState().setWorkSurfaceView('pipelines');
+      });
+      render();
+      expect(log.mounts).toEqual([{ slot: 'pipelines', sessionId: undefined }]);
+      act(() => uiStore.getState().selectSession('ses_fake_11'));
+      expect(log.unmounts).toBe(0);
+      expect(log.mounts).toHaveLength(1);
+    });
+
+    it('toggling back unmounts the deck and restores the substrate slot (edge)', () => {
+      const log: MountLog = { mounts: [], unmounts: 0 };
+      registerFakeIsland('pipelines', log);
+      registerFakeIsland('terminal', log);
+      act(() => {
+        sessionsStore.getState().applyStatuses([status('ses_fake_12', 'pty')]);
+        uiStore.getState().selectSession('ses_fake_12');
+        uiStore.getState().setWorkSurfaceView('pipelines');
+      });
+      render();
+      expect(log.mounts.at(-1)).toEqual({ slot: 'pipelines', sessionId: undefined });
+      act(() => uiStore.getState().togglePipelinesView());
+      expect(log.unmounts).toBe(1);
+      expect(log.mounts.at(-1)).toEqual({ slot: 'terminal', sessionId: 'ses_fake_12' });
+    });
+  });
 });

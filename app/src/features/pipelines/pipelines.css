@@ -1,0 +1,202 @@
+/*
+ * Pipelines builder + run monitor (FE-6, M5). Token-locked: every value is a
+ * var(--ig-*) custom property or a plain layout primitive — no literals
+ * (DESIGN.md §8.5). Data surfaces on the character grid (§4.3): rows on the
+ * --ig-grid-row rhythm, hairline wells for inputs (never cards, §2.6). NO
+ * ceremony lives here — the one ceremonial animation is workstream lineage
+ * only (§3.3); pipelines get mechanical state feedback only (§3.1).
+ */
+
+.ig-pl-deck {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ig-space-8);
+}
+
+/* ---- mode bar ------------------------------------------------------------- */
+
+.ig-pl-modebar {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+}
+
+/* ---- account routing chip — the [X1] differentiator, visually first-class - */
+
+/* the chip: label + a channel index-hue tick (identity tick, hairline scale,
+ * never a fill — DESIGN.md §2.5). --ig-pl-hue is set per chip from the frozen
+ * account→channel token map. */
+.ig-pl-account {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ig-space-4);
+  font-size: var(--ig-type-label);
+  line-height: var(--ig-type-label-lh);
+}
+
+.ig-pl-account-tick {
+  flex: none;
+  width: var(--ig-space-2);
+  height: var(--ig-grid-row);
+  background: var(--ig-pl-hue, var(--ig-ink-muted));
+}
+
+.ig-pl-account-select {
+  background: var(--ig-surface-well);
+  color: var(--ig-ink-primary);
+  border: var(--ig-line-width) solid var(--ig-line-hairline);
+  border-radius: var(--ig-radius-1);
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-label);
+  line-height: var(--ig-type-label-lh);
+  letter-spacing: var(--ig-tracking-engraved);
+  text-transform: uppercase;
+}
+
+.ig-pl-account-select:focus {
+  outline: var(--ig-focus-outline);
+  outline-offset: var(--ig-focus-offset);
+}
+
+/* ---- palette -------------------------------------------------------------- */
+
+.ig-pl-group-head {
+  min-height: var(--ig-grid-row);
+  display: flex;
+  align-items: center;
+  color: var(--ig-ink-muted);
+}
+
+.ig-pl-palette-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+}
+
+/* degraded / unusable capabilities RENDER — never hidden. A degraded row is
+ * dimmed; an unusable (model-invocation-disabled) row reads NO SIGNAL and its
+ * ADD is disabled. Every degradation carries a text flag (never color-only). */
+.ig-pl-palette-row[data-status='degraded'] {
+  color: var(--ig-ink-muted);
+}
+
+.ig-pl-palette-row[data-status='nosignal'] {
+  color: var(--ig-ink-faint);
+}
+
+.ig-pl-cap-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ig-pl-flag {
+  color: var(--ig-status-degraded);
+}
+
+/* ---- canvas (steps + needs edges) ----------------------------------------- */
+
+.ig-pl-step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ig-space-4);
+  padding: var(--ig-space-4) 0;
+  border-bottom: var(--ig-line-width) solid var(--ig-line-hairline);
+}
+
+/* the gate node reads in a distinct register — a human gate, not an executable
+ * step (never color-only: the HUMAN GATE text marker rides the head). */
+.ig-pl-step[data-gate='true'] {
+  background: var(--ig-status-degraded-tint);
+}
+
+.ig-pl-step-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+}
+
+.ig-pl-step-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ig-pl-gate-badge {
+  color: var(--ig-status-degraded);
+}
+
+.ig-pl-step-needs {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ig-space-8);
+}
+
+/* ---- run monitor ---------------------------------------------------------- */
+
+.ig-pl-run-row,
+.ig-pl-run-step {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+}
+
+.ig-pl-run-row {
+  cursor: pointer;
+}
+
+.ig-pl-run-row[data-selected='true'] {
+  background: var(--ig-status-ok-tint);
+}
+
+/* memoized / done / nosignal step registers — settled, never animated; a
+ * memoized step is resumed-from-journal, rendered as cached (M5 DoD). */
+.ig-pl-run-step[data-status='nosignal'] {
+  color: var(--ig-ink-faint);
+}
+
+.ig-pl-run-step[data-state='memoized'] {
+  color: var(--ig-ink-muted);
+}
+
+.ig-pl-run-accounts,
+.ig-pl-run-controls,
+.ig-pl-verb-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  padding-top: var(--ig-space-4);
+}
+
+/* ---- instrument form fields — hairline wells, never cards (§2.6) ---------- */
+
+.ig-pl-input {
+  background: var(--ig-surface-well);
+  color: var(--ig-ink-primary);
+  border: var(--ig-line-width) solid var(--ig-line-hairline);
+  border-radius: var(--ig-radius-1);
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  padding: 0 var(--ig-space-4);
+}
+
+.ig-pl-input:focus {
+  outline: var(--ig-focus-outline);
+  outline-offset: var(--ig-focus-offset);
+}

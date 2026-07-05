@@ -158,6 +158,18 @@ export function builtinCommands(): readonly CommandSpec[] {
       keywords: 'context graph island center work surface lineage',
       run: () => ui().toggleGraphView(),
     },
+    {
+      // DESIGN.md §6 kill-switch rule: the work-surface BUILDER toggle
+      // (WorkSurface.tsx header) swaps the center to the FE-6 pipelines deck
+      // (DESIGN.md §4.1 "Center — work: … builder"). The FE-6 feature also
+      // registers an "open pipelines" verb (register.tsx) that focuses the
+      // deck once it is the active view; this chrome verb makes it the active
+      // view.
+      id: 'chrome.work.pipelines.toggle',
+      title: 'toggle builder view',
+      keywords: 'pipeline pipelines builder dag run monitor catalog center work surface',
+      run: () => ui().togglePipelinesView(),
+    },
     ...channelOrder.map((channel) => ({
       id: `chrome.channel.focus.${channel}`,
       title: `focus channel ${channel}`,

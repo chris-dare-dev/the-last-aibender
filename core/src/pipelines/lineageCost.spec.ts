@@ -130,7 +130,7 @@ describe('lineage + cost — a two-step run records nodes, edges, and cost', () 
     const lineageCost = createPipelineLineageCost({ events: events.events, nowMs: () => NOW });
     lineageCost.landCost({ runId: 'run_aws', stepId: 's', iteration: 0, account: 'AWS_DEV', costEstimatedUsd: 0.5, ok: true });
     const row = events.events.list().find((r) => r.eventType === 'pipeline_step');
-    expect(row?.backend).toBe('opencode'); // AWS_DEV → opencode (LABEL_BACKENDS)
+    expect(row?.backend).toBe('opencode'); // AWS_DEV → opencode (backendForLabel)
     events.close();
   });
 

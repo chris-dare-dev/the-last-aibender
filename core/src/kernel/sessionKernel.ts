@@ -37,7 +37,7 @@
 import { isAbsolute, join } from 'node:path';
 
 import type { LaunchParams, LineageRecorder, SessionStatus } from '@aibender/protocol';
-import { LABEL_BACKENDS, noopLineageRecorder } from '@aibender/protocol';
+import { backendForLabel, noopLineageRecorder } from '@aibender/protocol';
 import type { ResumeLedgerRow, ResumeLedgerStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
@@ -52,7 +52,7 @@ import {
   SessionNotResumableError,
 } from './errors.js';
 import { defaultPidLivenessProbe, type PidLivenessProbe } from './pidLiveness.js';
-import type { ClaudeProfile, ProfileRegistry } from './profiles.js';
+import { isClaudeProfileLabel, type ClaudeProfile, type ProfileRegistry } from './profiles.js';
 import type {
   QueryHandle,
   QueryRunner,
@@ -425,7 +425,7 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
         'no native session id was ever backfilled — nothing to fork from',
       );
     }
-    if (!isClaudeLabel(parent.accountLabel)) {
+    if (!isClaudeProfileLabel(parent.accountLabel)) {
       throw new SessionNotResumableError(parent.id, 'not a claude_code session (BE-4 adapters)');
     }
     const session = await insertRowAndSpawn({
@@ -448,21 +448,17 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
     };
   };
 
-  function isClaudeLabel(label: string): label is ClaudeProfile['label'] {
-    return label === 'MAX_A' || label === 'MAX_B' || label === 'ENT';
-  }
-
   return {
     launch: async (params) => {
       assertNotShuttingDown();
 
       // Validation order matters for typed refusals (plan §9.2 negative row).
       profiles.resolve(params.accountLabel); // unknown label → typed throw
-      if (params.backend !== LABEL_BACKENDS[params.accountLabel]) {
+      if (params.backend !== backendForLabel(params.accountLabel)) {
         throw new KernelError(
           'bad-request',
           `label/backend pairing violation: ${params.accountLabel} requires ` +
-            `${LABEL_BACKENDS[params.accountLabel]}`,
+            `${backendForLabel(params.accountLabel)}`,
         );
       }
       if (params.substrate !== 'sdk') {
@@ -480,7 +476,7 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
       if (params.prompt === undefined || params.prompt.length === 0) {
         throw new KernelError('bad-request', 'a prompt is required on the sdk substrate');
       }
-      if (!isClaudeLabel(params.accountLabel)) {
+      if (!isClaudeProfileLabel(params.accountLabel)) {
         // profiles.resolve above already refuses AWS_DEV/LOCAL; this narrows
         // the type and guards future label additions.
         throw new KernelError('bad-request', 'kernel launches claude_code sessions only at M1');
@@ -600,7 +596,7 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
               'no native session id was ever backfilled — nothing to resume',
             );
           }
-          if (!isClaudeLabel(row.accountLabel)) {
+          if (!isClaudeProfileLabel(row.accountLabel)) {
             throw new SessionNotResumableError(sessionId, 'not a claude_code session');
           }
           // Un-forked dead resume: same row, state → resumed, then spawn.

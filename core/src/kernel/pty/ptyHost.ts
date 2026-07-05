@@ -54,7 +54,7 @@ import { isAbsolute } from 'node:path';
 
 import type { LaunchParams, PtyFrame } from '@aibender/protocol';
 import {
-  LABEL_BACKENDS,
+  backendForLabel,
   PTY_FRAME_MAX_PAYLOAD_BYTES,
   PTY_MAX_COLS,
   PTY_MAX_ROWS,
@@ -633,11 +633,11 @@ export function createPtyHost(options: PtyHostOptions): PtyHost {
 
   const validateAttendedParams = (params: LaunchParams): ClaudeProfileLabel => {
     profiles.resolve(params.accountLabel); // unknown label → typed throw
-    if (params.backend !== LABEL_BACKENDS[params.accountLabel]) {
+    if (params.backend !== backendForLabel(params.accountLabel)) {
       throw new KernelError(
         'bad-request',
         `label/backend pairing violation: ${params.accountLabel} requires ` +
-          `${LABEL_BACKENDS[params.accountLabel]}`,
+          `${backendForLabel(params.accountLabel)}`,
       );
     }
     if (params.substrate !== 'pty') {

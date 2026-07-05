@@ -3,10 +3,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { createAccountRegistry } from './accountRegistry.js';
 import {
   CLAUDE_PROFILE_LABELS,
   aibenderHomePath,
   createProfileRegistry,
+  defaultDirNameFor,
+  isClaudeProfileLabel,
   parseProfilesManifest,
 } from './profiles.js';
 import { ProfileConfigError, UnknownProfileError } from './errors.js';
@@ -166,7 +169,7 @@ describe('profile registry (BE-1; blueprint §3)', () => {
     const manifest = parseProfilesManifest(
       JSON.stringify({ accounts: { $comment: 'ignored', MAX_A: { dirName: 'max-a' } } }),
     );
-    expect(manifest.accounts.MAX_A?.dirName).toBe('max-a');
+    expect(manifest.accounts['MAX_A']?.dirName).toBe('max-a');
 
     const home = scratch();
     writeFileSync(join(home, 'profiles.json'), JSON.stringify({ $where: 'ignored' }));
@@ -180,5 +183,130 @@ describe('profile registry (BE-1; blueprint §3)', () => {
       manifestPath: '/synthetic/does-not-exist/accounts.json',
     });
     expect(registry.resolve('MAX_A').configDir).toBe('/synthetic/home/accounts/max-a');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ICR-0013: the OPEN Claude-account form (MAX_C/MAX_D via the registry)
+// ---------------------------------------------------------------------------
+
+describe('profile registry — open account form (ICR-0013)', () => {
+  function accountRegistryWith(labels: readonly { stem: string; label: string }[], home: string) {
+    const dir = scratch();
+    for (const { stem, label } of labels) {
+      const conv = `$AIBENDER_HOME/accounts/${stem}`;
+      writeFileSync(
+        join(dir, `${stem}.profile.json`),
+        JSON.stringify({
+          $comment: 'synthesized fixture — placeholder label only [X2]',
+          schemaVersion: 1,
+          label,
+          kind: label === 'ENT' ? 'enterprise' : 'max',
+          pathConvention: conv,
+          env: { CLAUDE_CONFIG_DIR: conv, CLAUDE_SECURESTORAGE_CONFIG_DIR: conv },
+        }),
+      );
+    }
+    return createAccountRegistry({ profilesDir: dir, aibenderHome: home });
+  }
+
+  it('isClaudeProfileLabel keys off the FORM, not the seed set (MAX_C/MAX_D pass, AWS_DEV/junk fail)', () => {
+    expect(isClaudeProfileLabel('MAX_C')).toBe(true);
+    expect(isClaudeProfileLabel('MAX_D')).toBe(true);
+    expect(isClaudeProfileLabel('MAX_Z')).toBe(true);
+    expect(isClaudeProfileLabel('ENT')).toBe(true);
+    expect(isClaudeProfileLabel('AWS_DEV')).toBe(false);
+    expect(isClaudeProfileLabel('LOCAL')).toBe(false);
+    expect(isClaudeProfileLabel('MAX_AB')).toBe(false);
+    expect(isClaudeProfileLabel('max_c')).toBe(false);
+    expect(isClaudeProfileLabel('HACKER')).toBe(false);
+  });
+
+  it('resolves a FOURTH account (MAX_C) when the discovered registry provides it — no code change', () => {
+    const home = '/synthetic/home';
+    const accountRegistry = accountRegistryWith(
+      [
+        { stem: 'max-a', label: 'MAX_A' },
+        { stem: 'max-b', label: 'MAX_B' },
+        { stem: 'ent', label: 'ENT' },
+        { stem: 'max-c', label: 'MAX_C' },
+      ],
+      home,
+    );
+    const registry = createProfileRegistry({ aibenderHome: home, accountRegistry });
+    expect(registry.labels()).toEqual(['MAX_A', 'MAX_B', 'ENT', 'MAX_C']);
+    const c = registry.resolve('MAX_C');
+    expect(c.configDir).toBe(join(home, 'accounts', 'max-c'));
+    expect(c.securestorageDir).toBe(join(home, 'accounts', 'max-c'));
+    expect(c.backend).toBe('claude_code');
+  });
+
+  it('resolves a FIFTH account (MAX_D) too; the seed three still resolve alongside it', () => {
+    const home = '/synthetic/home';
+    const accountRegistry = accountRegistryWith(
+      [
+        { stem: 'max-a', label: 'MAX_A' },
+        { stem: 'max-b', label: 'MAX_B' },
+        { stem: 'max-c', label: 'MAX_C' },
+        { stem: 'max-d', label: 'MAX_D' },
+        { stem: 'ent', label: 'ENT' },
+      ],
+      home,
+    );
+    const registry = createProfileRegistry({ aibenderHome: home, accountRegistry });
+    expect(registry.labels()).toEqual(['MAX_A', 'MAX_B', 'ENT', 'MAX_C', 'MAX_D']);
+    expect(registry.resolve('MAX_D').configDir).toBe(join(home, 'accounts', 'max-d'));
+    expect(registry.resolve('MAX_A').configDir).toBe(join(home, 'accounts', 'max-a'));
+  });
+
+  it('an override alone (no manifest) can introduce a MAX_C profile', () => {
+    const home = scratch();
+    writeFileSync(
+      join(home, 'profiles.json'),
+      JSON.stringify({ MAX_C: { configDir: '/synthetic/custom/max-c-store' } }),
+    );
+    const registry = createProfileRegistry({ aibenderHome: home });
+    expect(registry.labels()).toContain('MAX_C');
+    expect(registry.resolve('MAX_C').configDir).toBe('/synthetic/custom/max-c-store');
+  });
+
+  it('WITHOUT a registry/override/manifest, an unconfigured MAX_C still throws (gate stays real)', () => {
+    // The default seed is MAX_A/MAX_B/ENT only — MAX_C is a valid FORM but is
+    // NOT configured on this machine, so resolve must refuse it.
+    const registry = createProfileRegistry({ aibenderHome: '/synthetic/home' });
+    expect(registry.labels()).toEqual(['MAX_A', 'MAX_B', 'ENT']);
+    expect(() => registry.resolve('MAX_C')).toThrow(UnknownProfileError);
+  });
+
+  it('accountRegistryOptions convenience builds the registry from a profiles dir', () => {
+    const home = '/synthetic/home';
+    const dir = scratch();
+    const conv = '$AIBENDER_HOME/accounts/max-c';
+    writeFileSync(
+      join(dir, 'max-c.profile.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        label: 'MAX_C',
+        pathConvention: conv,
+        env: { CLAUDE_CONFIG_DIR: conv, CLAUDE_SECURESTORAGE_CONFIG_DIR: conv },
+      }),
+    );
+    const registry = createProfileRegistry({
+      aibenderHome: home,
+      accountRegistryOptions: { profilesDir: dir },
+    });
+    expect(registry.resolve('MAX_C').configDir).toBe(join(home, 'accounts', 'max-c'));
+  });
+
+  it('defaultDirNameFor maps labels to the plan-§2 dir convention', () => {
+    expect(defaultDirNameFor('MAX_A')).toBe('max-a');
+    expect(defaultDirNameFor('MAX_C')).toBe('max-c');
+    expect(defaultDirNameFor('ENT')).toBe('ent');
+  });
+
+  it('the fixed backend labels are still refused by resolve (AWS_DEV/LOCAL ride BE-4)', () => {
+    const registry = createProfileRegistry({ aibenderHome: '/synthetic/home' });
+    expect(() => registry.resolve('AWS_DEV')).toThrow(/BE-4/);
+    expect(() => registry.resolve('LOCAL')).toThrow(UnknownProfileError);
   });
 });

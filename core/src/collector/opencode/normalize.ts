@@ -24,7 +24,7 @@
  */
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { NewEventRow } from '@aibender/schema';
 
 import { CollectorError } from '../errors.js';
@@ -66,7 +66,7 @@ export function isIngestedOpencodeType(type: string): boolean {
 }
 
 export function assertOpencodeLabel(account: AccountLabel): void {
-  if (!isAccountLabel(account) || LABEL_BACKENDS[account] !== 'opencode') {
+  if (!isAccountLabel(account) || backendForLabel(account) !== 'opencode') {
     throw new CollectorError(`opencode sources require an opencode label — got ${String(account)}`);
   }
 }

@@ -24,6 +24,7 @@ export {
   DEFAULT_PROFILES_MANIFEST,
   aibenderHomePath,
   createProfileRegistry,
+  defaultDirNameFor,
   isClaudeProfileLabel,
   parseProfilesManifest,
   type ClaudeProfile,
@@ -32,6 +33,18 @@ export {
   type ProfileRegistryOptions,
   type ProfilesManifest,
 } from './profiles.js';
+
+// [X1]/ICR-0013: the discovered account registry — the single source of "which
+// Claude accounts exist on this machine" (infra/profiles/*.profile.json).
+export {
+  PROFILE_MANIFEST_SUFFIX,
+  createAccountRegistry,
+  defaultProfilesDir,
+  expandConvention,
+  type AccountRegistry,
+  type AccountRegistryOptions,
+  type DiscoveredAccount,
+} from './accountRegistry.js';
 
 export {
   OAUTH_TOKEN_ENV_VAR,

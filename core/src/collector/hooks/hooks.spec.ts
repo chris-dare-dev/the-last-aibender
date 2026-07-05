@@ -8,6 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { PROTOCOL_FREEZE } from '@aibender/protocol';
 import { GOLDEN_HOOK_CORPUS_FREEZE, GOLDEN_HOOK_FIXTURES } from '@aibender/testkit';
 import { openEventsStore, type EventsStore } from '@aibender/schema';
 
@@ -40,16 +41,17 @@ const PERMISSION_REQUEST_BODY = JSON.stringify({
   tool_use_id: 'toolu_synth_9',
 });
 
-// M6 freeze bumped GOLDEN_HOOK_CORPUS_FREEZE from FROZEN-M5 → FROZEN-M6
-// (protocol version tracked the resource-health read-model addition). This
-// BE-5 hooks-server assertion tracks the frozen marker; freeze-forced update
-// flagged to BE-ORCH via icr_request.
-describe('startHooksServer — golden corpus replay (FROZEN-M6)', () => {
+// The hook corpus freeze tracks the protocol freeze (it was bumped M5→M6 for
+// the resource-health read-model, and M6→M7 by ICR-0013's account-registry
+// widening). Assert against PROTOCOL_FREEZE rather than a hardcoded marker so a
+// version bump does not force a byte-edit here — the invariant is corpus ==
+// protocol, not any one literal.
+describe('startHooksServer — golden corpus replay (protocol-frozen)', () => {
   let store: EventsStore;
   let server: HooksServer;
 
   beforeEach(async () => {
-    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M6');
+    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
     store = await openEventsStore({ path: ':memory:' });
     server = await startHooksServer({ events: store.events, port: 0, nowMs: () => 4242 });
     expect(server.state).toBe('listening');

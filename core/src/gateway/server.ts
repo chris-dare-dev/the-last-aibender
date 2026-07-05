@@ -159,6 +159,16 @@ export interface GatewayOptions extends BootstrapPathOptions {
   readonly clock?: () => Date;
   /** Skip writing the bootstrap file (tests that exercise the server alone). */
   readonly writeBootstrap?: boolean;
+  /**
+   * ICR-0014: the configured Claude-account placeholder labels to advertise in
+   * the bootstrap file (the [X1] account-registry carrier). composeBroker
+   * passes the labels the account registry discovered from
+   * `infra/profiles/*.profile.json`. Sanitized FAIL-CLOSED on write — only
+   * sanctioned `MAX_<X>`/`ENT` FORM labels land on disk [X2]; an empty/absent
+   * list omits the field, so the FE falls back to its seed set. NEVER a real
+   * identity or a machine-local path.
+   */
+  readonly claudeAccounts?: readonly string[];
 }
 
 export interface GatewayHandle {
@@ -983,7 +993,18 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
   if (options.writeBootstrap !== false) {
     try {
       await writeBootstrapFile(
-        { port, token, pid: process.pid, startedAt: clock().toISOString() },
+        {
+          port,
+          token,
+          pid: process.pid,
+          startedAt: clock().toISOString(),
+          // ICR-0014: advertise the configured Claude-account labels. Sanitized
+          // fail-closed inside writeBootstrapFile — an absent list simply omits
+          // the field (M1–M6-shaped body).
+          ...(options.claudeAccounts !== undefined
+            ? { claudeAccounts: options.claudeAccounts }
+            : {}),
+        },
         options,
       );
     } catch (error) {

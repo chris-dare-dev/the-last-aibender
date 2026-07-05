@@ -37,7 +37,7 @@ import type {
   PipelineStepState,
   StepBackend,
 } from '@aibender/protocol';
-import { ACCOUNT_STEP_BACKENDS, LABEL_BACKENDS } from '@aibender/protocol';
+import { accountStepBackendsFor, backendForLabel } from '@aibender/protocol';
 import type { PipelinesStore, StepAttemptRow } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
@@ -822,12 +822,12 @@ function resolveBackend(
   if (explicit !== undefined) return explicit;
   // Default to the account's canonical backend family. AWS_DEV → opencode
   // (the generic route); MAX_*/ENT → claude; LOCAL → lmstudio.
-  const legal = ACCOUNT_STEP_BACKENDS[account];
+  const legal = accountStepBackendsFor(account);
   return legal[0] ?? mapWireBackend(account);
 }
 
 function mapWireBackend(account: AccountLabel): StepBackend {
-  const wire = LABEL_BACKENDS[account];
+  const wire = backendForLabel(account);
   if (wire === 'claude_code') return 'claude';
   if (wire === 'opencode') return 'opencode';
   return 'lmstudio';

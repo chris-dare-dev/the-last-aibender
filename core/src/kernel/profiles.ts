@@ -32,21 +32,51 @@ import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
-import type { AccountLabel } from '@aibender/protocol';
+import {
+  isClaudeAccountLabel,
+  isFixedBackendLabel,
+  type AccountLabel,
+  type ClaudeAccountLabel,
+} from '@aibender/protocol';
 
+import {
+  createAccountRegistry,
+  type AccountRegistry,
+  type AccountRegistryOptions,
+} from './accountRegistry.js';
 import { ProfileConfigError, UnknownProfileError } from './errors.js';
 
 // ---------------------------------------------------------------------------
 // Vocabulary
 // ---------------------------------------------------------------------------
 
-/** The labels this registry serves: Claude subscription accounts only. */
+/**
+ * The KNOWN/SEED profile labels — the three originally provisioned Claude
+ * accounts. This is a back-compat + seeding + test convenience matching
+ * {@link DEFAULT_PROFILES_MANIFEST}; it is NO LONGER the validation ceiling
+ * (ICR-0013). A newly provisioned Max account (`MAX_C`, `MAX_D`, …) is a
+ * first-class profile label by FORM ({@link isClaudeProfileLabel}) the moment
+ * its manifest/override/registry entry exists — no code change here.
+ */
 export const CLAUDE_PROFILE_LABELS = Object.freeze(['MAX_A', 'MAX_B', 'ENT'] as const);
 
-export type ClaudeProfileLabel = (typeof CLAUDE_PROFILE_LABELS)[number];
+/**
+ * A Claude subscription profile label: the OPEN, validated account FORM
+ * ({@link isClaudeAccountLabel} — `MAX_<X>` for a single uppercase letter, or
+ * the exact literal `ENT`). This is the SAME form the wire/schema validate; it
+ * deliberately EXCLUDES the fixed backend labels `AWS_DEV`/`LOCAL` (which have
+ * no CLAUDE_CONFIG_DIR and ride the BE-4 adapters).
+ */
+export type ClaudeProfileLabel = ClaudeAccountLabel;
 
+/**
+ * True for a Claude subscription profile label. Keys off the OPEN account FORM
+ * (ICR-0013), not membership in {@link CLAUDE_PROFILE_LABELS} — so `MAX_C` /
+ * `MAX_D` / … pass without a code change. `AWS_DEV`/`LOCAL` and any
+ * non-sanctioned string are rejected.
+ */
 export function isClaudeProfileLabel(value: unknown): value is ClaudeProfileLabel {
-  return typeof value === 'string' && (CLAUDE_PROFILE_LABELS as readonly string[]).includes(value);
+  return isClaudeAccountLabel(value);
 }
 
 /** A resolved per-account profile. Both paths are absolute, NFC, frozen. */
@@ -67,9 +97,16 @@ export interface ClaudeProfile {
 // SI-2 manifest (committed; labels + dir-name conventions only)
 // ---------------------------------------------------------------------------
 
-/** Parsed SI-2 manifest shape (see infra/profiles/; placeholders only [X2]). */
+/**
+ * Parsed SI-2 aggregate-manifest shape (see infra/profiles/; placeholders only
+ * [X2]). Keys are sanctioned Claude account labels validated by FORM at parse
+ * time (ICR-0013) — `MAX_C`/`MAX_D`/… are admitted without a code change. This
+ * aggregate `{ accounts: { LABEL: { dirName } } }` shape is the registry's
+ * dir-name override input; the per-account `*.profile.json` discovery format
+ * lives in accountRegistry.ts.
+ */
 export interface ProfilesManifest {
-  readonly accounts: Readonly<Partial<Record<ClaudeProfileLabel, { readonly dirName: string }>>>;
+  readonly accounts: Readonly<Record<string, { readonly dirName: string }>>;
 }
 
 /** Built-in conventions = plan §2 machine-local layout. */
@@ -99,13 +136,13 @@ export function parseProfilesManifest(json: string, source?: string): ProfilesMa
   if (typeof accountsRaw !== 'object' || accountsRaw === null || Array.isArray(accountsRaw)) {
     throw new ProfileConfigError(`profile manifest${where} must carry an "accounts" object`);
   }
-  const accounts: Partial<Record<ClaudeProfileLabel, { dirName: string }>> = {};
+  const accounts: Record<string, { dirName: string }> = {};
   for (const [key, value] of Object.entries(accountsRaw)) {
     if (key.startsWith('$')) continue; // comment keys
     if (!isClaudeProfileLabel(key)) {
       throw new ProfileConfigError(
-        `profile manifest${where} has unknown label key ${JSON.stringify(key)} ` +
-          `(want one of ${CLAUDE_PROFILE_LABELS.join(', ')})`,
+        `profile manifest${where} has non-sanctioned label key ${JSON.stringify(key)} ` +
+          '(want a Claude account: MAX_<X> where X is a single uppercase letter, or ENT [X2])',
       );
     }
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -137,10 +174,7 @@ interface ProfileOverride {
   readonly securestorageDir?: string;
 }
 
-function parseOverrides(
-  json: string,
-  source: string,
-): Partial<Record<ClaudeProfileLabel, ProfileOverride>> {
+function parseOverrides(json: string, source: string): Record<string, ProfileOverride> {
   let raw: unknown;
   try {
     raw = JSON.parse(json);
@@ -152,13 +186,13 @@ function parseOverrides(
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new ProfileConfigError(`profile overrides at ${source} must be a JSON object`);
   }
-  const out: Partial<Record<ClaudeProfileLabel, ProfileOverride>> = {};
+  const out: Record<string, ProfileOverride> = {};
   for (const [key, value] of Object.entries(raw)) {
     if (key.startsWith('$')) continue;
     if (!isClaudeProfileLabel(key)) {
       throw new ProfileConfigError(
-        `profile overrides at ${source}: unknown label key ${JSON.stringify(key)} ` +
-          `(want one of ${CLAUDE_PROFILE_LABELS.join(', ')})`,
+        `profile overrides at ${source}: non-sanctioned label key ${JSON.stringify(key)} ` +
+          '(want a Claude account: MAX_<X> where X is a single uppercase letter, or ENT [X2])',
       );
     }
     if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -205,15 +239,30 @@ export interface ProfileRegistryOptions {
   readonly aibenderHome?: string;
   /** Env source for AIBENDER_HOME, default `process.env`. */
   readonly env?: Readonly<Record<string, string | undefined>>;
-  /** Parsed SI-2 manifest. Wins over `manifestPath`. */
+  /** Parsed SI-2 aggregate manifest. Wins over `manifestPath`. */
   readonly manifest?: ProfilesManifest;
-  /** Path to an SI-2 manifest JSON file. Missing file → built-in defaults. */
+  /** Path to an SI-2 aggregate manifest JSON file. Missing file → built-in defaults. */
   readonly manifestPath?: string;
   /**
    * Machine-local overrides file. Default `$AIBENDER_HOME/profiles.json`.
    * Missing file → no overrides. Malformed file → loud ProfileConfigError.
    */
   readonly overridesPath?: string;
+  /**
+   * The discovered account registry ([X1]/ICR-0013). When present, EVERY
+   * account it discovered from `infra/profiles/*.profile.json` is registered
+   * here with its pinned dirs — so `MAX_C`/`MAX_D`/… resolve the moment their
+   * manifest exists, with ZERO code change. This is the single source of "which
+   * accounts exist"; the seed labels + aggregate manifest remain for
+   * back-compat and only fill gaps the registry did not cover.
+   */
+  readonly accountRegistry?: AccountRegistry;
+  /**
+   * Options to BUILD the account registry when {@link accountRegistry} is not
+   * passed directly. Convenience for composition (`{ profilesDir }`). Ignored
+   * when `accountRegistry` is supplied.
+   */
+  readonly accountRegistryOptions?: AccountRegistryOptions;
 }
 
 /** Resolve the machine-local aibender home (mirrors @aibender/shared). */
@@ -234,9 +283,28 @@ function nfc(path: string): string {
 }
 
 /**
+ * Default bare dir-name for a Claude account label, mirroring plan §2's layout:
+ * `MAX_A` → `max-a`, `MAX_C` → `max-c`, `ENT` → `ent`. This is the same
+ * `label.toLowerCase().replaceAll('_','-')` rule the SI provisioning scripts
+ * use, so a Max account beyond the seed gets a sensible convention dir with no
+ * manifest edit — the aggregate manifest / override still wins when present.
+ */
+export function defaultDirNameFor(label: ClaudeProfileLabel): string {
+  return label.toLowerCase().replaceAll('_', '-');
+}
+
+/**
  * Build the profile registry. All path normalization happens HERE, once;
  * everything downstream (env injection, keychain-name math in SI-2 scripts)
  * sees identical byte-stable strings.
+ *
+ * The label set is OPEN (ICR-0013): the registry serves every account it can
+ * source a dir for — the seed labels (MAX_A/MAX_B/ENT) ALWAYS, plus any account
+ * introduced by the discovered {@link AccountRegistry}, the aggregate manifest,
+ * or a machine-local override. A `MAX_C`/`MAX_D`/… therefore resolves the
+ * moment its `*.profile.json` manifest exists — NO code change (that is the
+ * whole [X1] point). Labels the registry cannot source a dir for still throw
+ * {@link UnknownProfileError} on resolve, so the gate stays real.
  */
 export function createProfileRegistry(options: ProfileRegistryOptions = {}): ProfileRegistry {
   const home = aibenderHomePath(options);
@@ -253,30 +321,70 @@ export function createProfileRegistry(options: ProfileRegistryOptions = {}): Pro
   manifest ??= DEFAULT_PROFILES_MANIFEST;
 
   const overridesPath = options.overridesPath ?? join(home, 'profiles.json');
-  let overrides: Partial<Record<ClaudeProfileLabel, ProfileOverride>> = {};
+  let overrides: Record<string, ProfileOverride> = {};
   if (existsSync(overridesPath)) {
     overrides = parseOverrides(readFileSync(overridesPath, 'utf8'), overridesPath);
   }
 
+  // The discovered account registry ([X1]): passed directly, or built from
+  // accountRegistryOptions, or — when neither is given — an EMPTY registry so
+  // back-compat callers keep the seed-only behavior.
+  const accountRegistry =
+    options.accountRegistry ??
+    (options.accountRegistryOptions !== undefined
+      ? createAccountRegistry({
+          ...options.accountRegistryOptions,
+          ...(options.accountRegistryOptions.aibenderHome === undefined &&
+          options.aibenderHome !== undefined
+            ? { aibenderHome: options.aibenderHome }
+            : {}),
+          ...(options.accountRegistryOptions.env === undefined && options.env !== undefined
+            ? { env: options.env }
+            : {}),
+        })
+      : undefined);
+
+  // The label set to register: seed ∪ manifest ∪ overrides ∪ discovered. Order:
+  // seed first (stable back-compat labels()), then any additional in code-unit
+  // order for determinism.
+  const seed = CLAUDE_PROFILE_LABELS as readonly ClaudeProfileLabel[];
+  const extra = new Set<ClaudeProfileLabel>();
+  for (const key of Object.keys(manifest.accounts)) {
+    if (isClaudeProfileLabel(key) && !seed.includes(key)) extra.add(key);
+  }
+  for (const key of Object.keys(overrides)) {
+    if (isClaudeProfileLabel(key) && !seed.includes(key)) extra.add(key);
+  }
+  for (const label of accountRegistry?.labels() ?? []) {
+    if (!seed.includes(label)) extra.add(label);
+  }
+  const orderedLabels: ClaudeProfileLabel[] = [...seed, ...[...extra].sort()];
+
   const profiles = new Map<ClaudeProfileLabel, ClaudeProfile>();
-  for (const label of CLAUDE_PROFILE_LABELS) {
-    const dirName = manifest.accounts[label]?.dirName ?? DEFAULT_PROFILES_MANIFEST.accounts[label]?.dirName;
-    if (dirName === undefined) {
-      throw new ProfileConfigError(`profile manifest is missing label ${label}`);
-    }
+  for (const label of orderedLabels) {
     const override = overrides[label];
-    const configDir = nfc(override?.configDir ?? join(home, 'accounts', dirName));
-    const securestorageDir = nfc(override?.securestorageDir ?? configDir);
+    const discovered = accountRegistry?.get(label);
+    // Dir precedence: machine-local override > discovered manifest > aggregate
+    // manifest dirName > default convention dir. securestorage follows suit,
+    // pinned to config unless an override deliberately decouples it.
+    const dirName = manifest.accounts[label]?.dirName ?? defaultDirNameFor(label);
+    const configDir = nfc(
+      override?.configDir ?? discovered?.configDir ?? join(home, 'accounts', dirName),
+    );
+    const securestorageDir = nfc(
+      override?.securestorageDir ?? discovered?.securestorageDir ?? configDir,
+    );
     profiles.set(
       label,
       Object.freeze({ label, backend: 'claude_code' as const, configDir, securestorageDir }),
     );
   }
 
+  const labels = Object.freeze(orderedLabels);
   return {
-    labels: () => CLAUDE_PROFILE_LABELS,
+    labels: () => labels,
     resolve: (label) => {
-      if (typeof label === 'string' && (label === 'AWS_DEV' || label === 'LOCAL')) {
+      if (isFixedBackendLabel(label)) {
         throw new UnknownProfileError(
           label,
           'not a Claude subscription profile — AWS_DEV/LOCAL sessions ride the BE-4 adapters (M2–M3)',

@@ -31,6 +31,7 @@ export {
   readBootstrapFile,
   removeBootstrapFile,
   resolveAibenderHome,
+  sanitizeClaudeAccountsForBootstrap,
   writeBootstrapFile,
   type BootstrapPathOptions,
   type GatewayBootstrap,

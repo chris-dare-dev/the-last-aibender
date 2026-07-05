@@ -15,7 +15,7 @@
  */
 
 import type { AcceptedHookPost } from '@aibender/protocol';
-import { LABEL_BACKENDS } from '@aibender/protocol';
+import { backendForLabel } from '@aibender/protocol';
 import type { NewEventRow } from '@aibender/schema';
 
 import { scrubIdentityText } from '../identity.js';
@@ -53,7 +53,7 @@ export function normalizeAcceptedHookPost(input: NormalizeHookPostInput): NewEve
 
   return {
     tsMs,
-    backend: LABEL_BACKENDS[accepted.accountLabel],
+    backend: backendForLabel(accepted.accountLabel),
     account: accepted.accountLabel,
     source: 'hooks',
     eventType: scrubIdentityText(accepted.hookEventName),

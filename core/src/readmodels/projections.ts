@@ -18,7 +18,7 @@
  */
 
 import {
-  LABEL_BACKENDS,
+  backendForLabel,
   type AccountLabel,
   type ReadModelSnapshot,
 } from '@aibender/protocol';
@@ -192,7 +192,7 @@ export function bedrockCostData(stores: ReadModelStores, nowMs: number): Bedrock
   const dayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const yesterdayStartMs = dayStartMs - DAY_MS;
 
-  // AWS_DEV rides OpenCode→Bedrock (vocab.ts LABEL_BACKENDS).
+  // AWS_DEV rides OpenCode→Bedrock (vocab.ts backendForLabel).
   const rows = stores.events.list({ backend: 'opencode', sinceTsMs: mtdStartMs });
   let estimateMtdUsd = 0;
   let actualMtdUsd: number | undefined;
@@ -239,7 +239,7 @@ export function apiEquivalentUsdData(
       account,
       // The events store enforces the pairing at insert; deriving it here
       // keeps the entry valid by construction.
-      backend: LABEL_BACKENDS[account],
+      backend: backendForLabel(account),
       equivalentUsd,
     }));
   return { basis: 'api-equivalent', entries, windowDays };

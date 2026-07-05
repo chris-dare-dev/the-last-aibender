@@ -95,6 +95,7 @@ import {
 } from '../gateway/index.js';
 import {
   approvalRelayFromBroker,
+  createAccountRegistry,
   createApprovalBroker,
   createProfileRegistry,
   createPtyHost,
@@ -105,6 +106,7 @@ import {
   rawOfRunnerMessage,
   toApprovalBrokerGatewayPort,
   toGatewayPtyHostPort,
+  type AccountRegistry,
   type ApprovalBroker,
   type FlowControlConfig,
   type KernelApprovalRelay,
@@ -169,6 +171,14 @@ export interface ComposedKernel {
   readonly store: KernelStore;
   /** The ONE profile registry (shared with the ptyHost by composeBroker). */
   readonly profiles: ProfileRegistry;
+  /**
+   * The discovered account registry ([X1]/ICR-0013): the machine's actually
+   * provisioned Claude accounts, read from `infra/profiles/*.profile.json`.
+   * This is the single source of "which accounts exist" — the ptyHost and every
+   * account-enumerating publisher key off THIS, never a hardcoded 3/5. Adding a
+   * new Max account is dropping in its manifest; no code change reaches here.
+   */
+  readonly accountRegistry: AccountRegistry;
   /** Shutdown ordering: kernel drains first, then the store closes. */
   close(): Promise<void>;
 }
@@ -189,7 +199,26 @@ function createRefusingQueryRunner(): QueryRunner {
  */
 export async function composeKernel(options: ComposeKernelOptions): Promise<ComposedKernel> {
   const store = await openKernelStore({ path: options.storePath });
-  const profiles = createProfileRegistry(options.profiles ?? {});
+  // [X1]/ICR-0013: discover the machine's Claude accounts ONCE, from the
+  // committed profile manifests, and drive the profile registry from it. Every
+  // downstream account enumeration reads this registry, so a newly provisioned
+  // Max account (MAX_C/MAX_D/…) is visible the moment its manifest lands — no
+  // code change. Discovery is built here (unless the caller injected a registry
+  // directly) and shared into createProfileRegistry so it is not done twice.
+  const accountRegistry =
+    options.profiles?.accountRegistry ??
+    createAccountRegistry({
+      ...(options.profiles?.accountRegistryOptions ?? {}),
+      ...(options.profiles?.accountRegistryOptions?.aibenderHome === undefined &&
+      options.profiles?.aibenderHome !== undefined
+        ? { aibenderHome: options.profiles.aibenderHome }
+        : {}),
+      ...(options.profiles?.accountRegistryOptions?.env === undefined &&
+      options.profiles?.env !== undefined
+        ? { env: options.profiles.env }
+        : {}),
+    });
+  const profiles = createProfileRegistry({ ...(options.profiles ?? {}), accountRegistry });
   const runner =
     options.runner ??
     (options.liveSpawn?.enabled === true
@@ -212,6 +241,7 @@ export async function composeKernel(options: ComposeKernelOptions): Promise<Comp
     kernel,
     store,
     profiles,
+    accountRegistry,
     close: async () => {
       await kernel.shutdown();
       store.close();
@@ -819,6 +849,12 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       kernel: port,
       approvals: toApprovalBrokerGatewayPort(approvals),
       transcripts,
+      // ICR-0014 ([X1]): advertise the configured Claude-account placeholder
+      // labels the account registry discovered from infra/profiles/*.profile.json
+      // so the FE cockpit enumerates the accounts ACTUALLY provisioned on this
+      // machine (N, never a hardcoded five). Sanitized fail-closed on write [X2];
+      // an empty registry omits the field (FE falls back to its seed set).
+      claudeAccounts: composed.accountRegistry.labels(),
       // [X4] M4 (ICR-0011): the frozen merge verb goes live when the BE-7
       // engine is composed; absent → the documented empty-broker degrade.
       ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice.engine } : {}),
@@ -921,6 +957,7 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     kernel: composed.kernel,
     store: composed.store,
     profiles: composed.profiles,
+    accountRegistry: composed.accountRegistry,
     gateway,
     approvals,
     ...(ptyHost !== undefined ? { ptyHost } : {}),

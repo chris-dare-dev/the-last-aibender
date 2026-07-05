@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { EventsTableStore, SessionOutcomesStore } from '@aibender/schema';
 
 import { CollectorError } from '../errors.js';
@@ -90,7 +90,7 @@ function listFilesFlat(dir: string, suffix: string): readonly string[] {
 export function createAccountConfigWatcher(
   options: AccountConfigWatcherOptions,
 ): AccountConfigWatcher {
-  if (!isAccountLabel(options.account) || LABEL_BACKENDS[options.account] !== 'claude_code') {
+  if (!isAccountLabel(options.account) || backendForLabel(options.account) !== 'claude_code') {
     throw new CollectorError(
       `account config watcher is a claude_code feed — got ${String(options.account)}`,
     );

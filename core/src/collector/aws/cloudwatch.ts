@@ -15,7 +15,7 @@
  */
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { EventsTableStore, NewEventRow } from '@aibender/schema';
 
 import { CollectorError, LiveAwsDisabledError } from '../errors.js';
@@ -137,7 +137,7 @@ export interface CloudWatchPollerOptions {
 }
 
 export function createCloudWatchPoller(options: CloudWatchPollerOptions): CloudWatchPoller {
-  if (!isAccountLabel(options.account) || LABEL_BACKENDS[options.account] !== 'opencode') {
+  if (!isAccountLabel(options.account) || backendForLabel(options.account) !== 'opencode') {
     throw new CollectorError(
       `CloudWatch AWS/Bedrock polling targets the opencode label — got ${String(options.account)}`,
     );

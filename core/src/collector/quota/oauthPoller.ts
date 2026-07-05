@@ -23,7 +23,7 @@
  */
 
 import type { AccountLabel, QuotaWindow } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { QuotaSnapshotsStore } from '@aibender/schema';
 
 import { CollectorError, LiveOauthDisabledError } from '../errors.js';
@@ -109,7 +109,7 @@ export function createIdleAccountOauthPoller(
   options: IdleAccountOauthPollerOptions,
 ): IdleAccountOauthPoller {
   for (const account of options.accounts) {
-    if (!isAccountLabel(account) || LABEL_BACKENDS[account] !== 'claude_code') {
+    if (!isAccountLabel(account) || backendForLabel(account) !== 'claude_code') {
       throw new CollectorError(
         `OAuth usage polling is a claude_code feed — got ${String(account)}`,
       );

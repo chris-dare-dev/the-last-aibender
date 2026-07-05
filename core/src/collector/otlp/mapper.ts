@@ -21,7 +21,7 @@
  */
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { EventUsage, NewEventRow } from '@aibender/schema';
 
 import { fnv32Hex } from '../hash.js';
@@ -79,7 +79,7 @@ export function decodeOtlpAttributes(
 export function accountFromResource(resource: unknown): AccountLabel | undefined {
   const attrs = decodeOtlpAttributes(asRecord(resource)?.['attributes']);
   const label = attrs['account'];
-  if (typeof label === 'string' && isAccountLabel(label) && LABEL_BACKENDS[label] === 'claude_code') {
+  if (typeof label === 'string' && isAccountLabel(label) && backendForLabel(label) === 'claude_code') {
     return label;
   }
   return undefined;

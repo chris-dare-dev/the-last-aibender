@@ -22,7 +22,7 @@
  */
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { EventsTableStore } from '@aibender/schema';
 
 import { CollectorError, LiveAwsDisabledError } from '../errors.js';
@@ -106,7 +106,7 @@ function isoDay(ms: number): string {
 }
 
 export function createCostExplorerPoller(options: CostExplorerPollerOptions): CostExplorerPoller {
-  if (!isAccountLabel(options.account) || LABEL_BACKENDS[options.account] !== 'opencode') {
+  if (!isAccountLabel(options.account) || backendForLabel(options.account) !== 'opencode') {
     throw new CollectorError(
       `Cost Explorer backfill targets the Bedrock/opencode label — got ${String(options.account)}`,
     );

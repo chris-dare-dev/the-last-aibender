@@ -27,7 +27,7 @@
  */
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS, isAccountLabel } from '@aibender/protocol';
+import { backendForLabel, isAccountLabel } from '@aibender/protocol';
 import type { EventInsertOutcome, EventUsage, EventsTableStore, NewEventRow } from '@aibender/schema';
 
 import { CollectorError } from './errors.js';
@@ -139,7 +139,7 @@ export function createApiRequestJoiner(
   const stats = { merged: 0, jsonlOnly: 0, otelOnly: 0, lateTwinsDropped: 0, labelMismatches: 0 };
 
   const assertClaudeLabel = (half: ApiRequestHalfBase): void => {
-    if (!isAccountLabel(half.account) || LABEL_BACKENDS[half.account] !== 'claude_code') {
+    if (!isAccountLabel(half.account) || backendForLabel(half.account) !== 'claude_code') {
       throw new CollectorError(
         `api_request joiner only joins claude_code accounts — got ${String(half.account)}`,
       );

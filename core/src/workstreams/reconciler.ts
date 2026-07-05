@@ -38,7 +38,7 @@ import { readdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AccountLabel } from '@aibender/protocol';
-import { LABEL_BACKENDS } from '@aibender/protocol';
+import { backendForLabelOrUndefined } from '@aibender/protocol';
 import type { LineageStore, ResumeLedgerStore, SessionNodeRow } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
@@ -50,7 +50,7 @@ import { nodeToWire, type WorkstreamPublisher } from './wire.js';
 // ---------------------------------------------------------------------------
 
 export interface ReconcilerAccountRoot {
-  /** MAX_A | MAX_B | ENT — claude_code accounts only (pairing-validated). */
+  /** A Claude account (any MAX_<X> or ENT) — claude_code only (pairing-validated). */
   readonly accountLabel: AccountLabel;
   /**
    * ABSOLUTE path of the account's `projects/` tree. Tests pass fixture/temp
@@ -135,8 +135,6 @@ export interface WorkstreamReconciler {
 export const OPENCODE_SESSION_POLL_SQL =
   "SELECT DISTINCT aggregate_id FROM event WHERE type LIKE 'session.%' ORDER BY aggregate_id";
 
-const CLAUDE_LABELS: readonly AccountLabel[] = ['MAX_A', 'MAX_B', 'ENT'];
-
 export function createWorkstreamReconciler(
   options: WorkstreamReconcilerOptions,
 ): WorkstreamReconciler {
@@ -145,13 +143,19 @@ export function createWorkstreamReconciler(
   const mintNodeId = options.newNodeId ?? (() => newId('ses'));
 
   for (const root of options.roots ?? []) {
-    if (!CLAUDE_LABELS.includes(root.accountLabel)) {
+    // ICR-0013: the Claude-account label form is OPEN — gate on the pairing
+    // (any MAX_<X>/ENT → claude_code), never a hardcoded 3-set, so MAX_C/MAX_D
+    // roots reconcile with no code change.
+    if (backendForLabelOrUndefined(root.accountLabel) !== 'claude_code') {
       throw new RangeError(
-        `reconciler roots are claude_code accounts (MAX_A|MAX_B|ENT); got ${root.accountLabel}`,
+        `reconciler roots are claude_code accounts (a MAX_<X> or ENT label); got ${root.accountLabel}`,
       );
     }
   }
-  if (options.opencode !== undefined && LABEL_BACKENDS[options.opencode.accountLabel] !== 'opencode') {
+  if (
+    options.opencode !== undefined &&
+    backendForLabelOrUndefined(options.opencode.accountLabel) !== 'opencode'
+  ) {
     throw new RangeError('the opencode poll target must carry the AWS_DEV label');
   }
 

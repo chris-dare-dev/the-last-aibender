@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -87,6 +87,62 @@ describe('composeKernel — M1 wiring (config → migrations → kernel)', () =>
       );
     } finally {
       await composed.close();
+    }
+  });
+
+  // -- [X1]/ICR-0013: the discovered account registry flows through compose --
+
+  it('discovers a FOURTH account (MAX_C) from a profiles dir and launches it — no code change', async () => {
+    const HOME = '/synthetic/aibender-home';
+    const profilesDir = await mkdtemp(join(tmpdir(), 'aibender-compose-registry-'));
+    try {
+      for (const [stem, label] of [
+        ['max-a', 'MAX_A'],
+        ['max-b', 'MAX_B'],
+        ['max-c', 'MAX_C'],
+        ['ent', 'ENT'],
+      ] as const) {
+        const conv = `$AIBENDER_HOME/accounts/${stem}`;
+        await import('node:fs/promises').then((fs) =>
+          fs.writeFile(
+            join(profilesDir, `${stem}.profile.json`),
+            JSON.stringify({
+              $comment: 'synthesized fixture — placeholder label only [X2]',
+              schemaVersion: 1,
+              label,
+              pathConvention: conv,
+              env: { CLAUDE_CONFIG_DIR: conv, CLAUDE_SECURESTORAGE_CONFIG_DIR: conv },
+            }),
+          ),
+        );
+      }
+      const runner = new FakeQueryRunner();
+      const composed = await composeKernel({
+        storePath: ':memory:',
+        profiles: { aibenderHome: HOME, accountRegistryOptions: { profilesDir } },
+        runner,
+        baseEnv: { PATH: '/usr/bin' },
+      });
+      try {
+        // The composition exposes the discovered registry — the single source
+        // of which accounts exist. MAX_C is present with zero code change.
+        expect(composed.accountRegistry.labels()).toEqual(['MAX_A', 'MAX_B', 'MAX_C', 'ENT']);
+        const session = await composed.kernel.launch({
+          accountLabel: 'MAX_C',
+          backend: 'claude_code',
+          substrate: 'sdk',
+          cwd: '/synthetic/workspace',
+          purpose: 'synthesized 4th-account launch',
+          prompt: 'synthesized prompt',
+        });
+        await session.waitForExit();
+        expect(runner.starts[0]?.env['CLAUDE_CONFIG_DIR']).toBe(join(HOME, 'accounts', 'max-c'));
+        expect(runner.starts[0]?.env['OTEL_RESOURCE_ATTRIBUTES']).toBe('account=MAX_C');
+      } finally {
+        await composed.close();
+      }
+    } finally {
+      await rm(profilesDir, { recursive: true, force: true });
     }
   });
 
@@ -412,10 +468,60 @@ describe('composeBroker — WS → gateway → real kernel → real ledger (M1 d
       const advertised = await readBootstrapFile({ aibenderHome: home });
       expect(advertised?.port).toBe(broker.gateway.port);
       expect(advertised?.token).toBe(broker.gateway.token);
+      // No profiles dir configured ⇒ empty account registry ⇒ the ICR-0014
+      // carrier field is OMITTED (the FE falls back to its seed set).
+      expect(advertised?.claudeAccounts).toBeUndefined();
       await broker.close();
       expect(await readBootstrapFile({ aibenderHome: home })).toBeUndefined();
     } finally {
       await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('advertises the discovered Claude-account labels in the bootstrap file (ICR-0014)', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'aibender-broker-'));
+    const profilesDir = await mkdtemp(join(tmpdir(), 'aibender-broker-profiles-'));
+    // Two SI-2-shaped manifests, placeholder labels ONLY [X2] — a Max account
+    // and the enterprise account. Adding an account is a DATA change: the
+    // broker discovers these and advertises them with no code change.
+    const manifest = (label: string, stem: string): string =>
+      JSON.stringify({
+        $comment: 'synthesized fixture — placeholder label only [X2]',
+        schemaVersion: 1,
+        label,
+        env: {
+          CLAUDE_CONFIG_DIR: `$AIBENDER_HOME/accounts/${stem}`,
+          CLAUDE_SECURESTORAGE_CONFIG_DIR: `$AIBENDER_HOME/accounts/${stem}`,
+        },
+      });
+    try {
+      await writeFile(join(profilesDir, 'max-c.profile.json'), manifest('MAX_C', 'max-c'), 'utf8');
+      await writeFile(join(profilesDir, 'max-a.profile.json'), manifest('MAX_A', 'max-a'), 'utf8');
+      const broker = await composeBroker({
+        storePath: ':memory:',
+        profiles: {
+          aibenderHome: '/synthetic/aibender-home',
+          accountRegistryOptions: { profilesDir },
+        },
+        runner: new FakeQueryRunner(),
+        baseEnv: {},
+        gateway: { aibenderHome: home },
+      });
+      try {
+        const advertised = await readBootstrapFile({ aibenderHome: home });
+        // Registry order: Max ladder first (A < C), enterprise last. Only the
+        // two discovered placeholder labels — never a path, never an identity.
+        expect(advertised?.claudeAccounts).toEqual(['MAX_A', 'MAX_C']);
+        // [X2]: the machine-local config dir NEVER rides the carrier.
+        const rawKeys = Object.keys(advertised ?? {});
+        expect(rawKeys).not.toContain('configDir');
+        expect(JSON.stringify(advertised)).not.toContain('/synthetic/aibender-home');
+      } finally {
+        await broker.close();
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(profilesDir, { recursive: true, force: true });
     }
   });
 

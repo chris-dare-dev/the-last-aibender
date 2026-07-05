@@ -14,16 +14,17 @@
  * `(backend, raw_ref)` dedupe key, `raw_ref` keyed
  * `pipeline:<runId>:<stepId>:<iteration>` (distinct iterations are distinct
  * keys; retry-safe re-ingest dedupes). The events backend is the account's
- * `LABEL_BACKENDS[account]` (the wire `Backend` enum — the step's `bedrock`
+ * `backendForLabel(account)` (the wire `Backend` enum — the step's `bedrock`
  * DAG-backend collapses to `opencode` for AWS_DEV, satisfying the store's
- * label/backend pairing CHECK).
+ * label/backend pairing CHECK). A function, not a Record (ICR-0013): the
+ * Claude-account label form is OPEN, so `MAX_C`/`MAX_D`/… resolve too.
  *
  * Both paths are FIRE-AND-FORGET and WRAPPED: a lineage/cost failure is logged
  * and swallowed — it must never take a running pipeline down (the recorder's
  * never-throw discipline). All ids are HARNESS ids; native ids never appear.
  */
 
-import { LABEL_BACKENDS, type AccountLabel } from '@aibender/protocol';
+import { backendForLabel, type AccountLabel } from '@aibender/protocol';
 import type { EventsTableStore, LineageStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
@@ -116,7 +117,7 @@ export function createPipelineLineageCost(
       if (store === undefined) return undefined;
       try {
         const id = mintNodeId();
-        const backend = LABEL_BACKENDS[input.account];
+        const backend = backendForLabel(input.account);
         const row = store.nodes.insert({
           id,
           ...(input.workstreamId !== undefined ? { workstreamId: input.workstreamId } : {}),
@@ -175,7 +176,7 @@ export function createPipelineLineageCost(
         return;
       }
       try {
-        const backend = LABEL_BACKENDS[input.account];
+        const backend = backendForLabel(input.account);
         store.insert({
           tsMs: nowMs(),
           backend,

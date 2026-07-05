@@ -10,9 +10,15 @@ confirm/partial verdict — see the per-dimension docs.
 This is a **findings-only** deliverable. A later, separate fix-team workflow
 consumes the "Recommended fix order" below. No source was modified.
 
-> **The rendered-frontend screen-capture review is a SEPARATE pass, still
-> PENDING** — it needs the live app running (a T3 owner-gated activity).
-> `frontend-correctness.md` here is source-level only.
+> **The rendered-frontend screen-capture review — FIRST PASS DONE**
+> ([rendered-frontend.md](rendered-frontend.md)): captured the real running
+> cockpit (vite dev server, preview MCP) in its disconnected/seed-3 state — 5
+> findings (0 high · 3 med · 2 low), critiquing chrome/layout/IA/contrast/
+> navigation from actual pixels (anti-slop bar cleared; a11y strong). A
+> **populated** follow-up pass (live dashboards, context graph, lineage,
+> pipelines, the real 5-account density, motion) is now possible with the 5
+> logins done — see that doc's follow-up section. `frontend-correctness.md` is
+> the separate source-level pass.
 
 ---
 

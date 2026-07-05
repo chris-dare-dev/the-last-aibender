@@ -8,9 +8,17 @@
 #   edge     — non-NFC path input; hash-suffix mismatch after a simulated
 #              SDK bump → version gate BLOCKs
 #
+# ICR-0013 ([X1] scalability): the account label set is an OPEN, validated
+# FORM (^MAX_[A-Z]$ for Max accounts, plus the exact `ENT` literal), NOT a
+# closed 5-set. The owner provisioned MAX_C / MAX_D exactly like MAX_A / MAX_B;
+# the profile glob and form-validation must enumerate ALL of them and resolve a
+# new manifest with zero code change, while still refusing a bogus/leaky label.
+# So these tests assert the FULL registry (5 manifests today) and the form gate.
+#
 # Fully headless [X2/T3 boundary]: every test targets a temp $AIBENDER_HOME
 # and uses --dry-run or a stubbed security(1). The real keychain and the real
-# ~/.aibender are never touched.
+# ~/.aibender are never touched. Form-validation tests that need a bogus label
+# synthesize a manifest into a TEMP --profiles-dir — never edit infra/profiles/.
 
 setup() {
   REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)"
@@ -62,22 +70,53 @@ STUB
   chmod +x "$1/security"
 }
 
+# The full account registry as it stands today — the shipped manifests. Adding
+# a MAX_<X> manifest is a manifest-only change (docs/runbooks/add-an-account.md),
+# so if this list drifts from infra/profiles/*.profile.json the enumeration
+# tests below fail loudly (that is the point — the registry is the source).
+ALL_ACCOUNTS="max-a max-b max-c max-d ent"
+
+# Copy the real infra/profiles into a writable temp dir so a test can add a
+# synthetic (e.g. bogus-label) manifest WITHOUT ever touching the tree. Echoes
+# the temp dir path.
+seed_temp_profiles() {
+  local d="$BATS_TEST_TMPDIR/profiles.$$.$RANDOM"
+  mkdir -p "$d"
+  cp "$REPO_ROOT"/infra/profiles/*.profile.json "$d/"
+  printf '%s' "$d"
+}
+
 # --- provisioning: positive ----------------------------------------------------
 
-@test "provision --dry-run plans all three accounts and creates nothing" {
+@test "provision --dry-run PLANs every account in the registry and creates nothing" {
   run "$SCRIPTS/provision-accounts.sh" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *"PLAN-CREATED"* ]]
-  [[ "$output" == *"$AIBENDER_HOME/accounts/max-a"* ]]
-  [[ "$output" == *"$AIBENDER_HOME/accounts/max-b"* ]]
-  [[ "$output" == *"$AIBENDER_HOME/accounts/ent"* ]]
+  # every shipped manifest — including MAX_C / MAX_D — must be planned
+  for a in $ALL_ACCOUNTS; do
+    [[ "$output" == *"$AIBENDER_HOME/accounts/$a"* ]] || {
+      echo "missing plan line for account dir: $a" >&2
+      false
+    }
+  done
+  # exactly the registry, no phantom accounts: PLAN- line count == manifest count
+  n_plan="$(printf '%s\n' "$output" | grep -c $'^provision\t')"
+  n_manifest="$(find "$REPO_ROOT/infra/profiles" -maxdepth 1 -name '*.profile.json' | wc -l | tr -d ' ')"
+  [ "$n_plan" -eq "$n_manifest" ]
   [ ! -e "$AIBENDER_HOME" ]
 }
 
-@test "provision creates the three dirs 0700 with provenance markers" {
+@test "provision --dry-run plans MAX_C and MAX_D (the new sanctioned placeholders)" {
+  run "$SCRIPTS/provision-accounts.sh" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'provision\tMAX_C\t'*"$AIBENDER_HOME/accounts/max-c"*$'\tPLAN-CREATED'* ]]
+  [[ "$output" == *$'provision\tMAX_D\t'*"$AIBENDER_HOME/accounts/max-d"*$'\tPLAN-CREATED'* ]]
+}
+
+@test "provision creates every registry dir 0700 with provenance markers" {
   run "$SCRIPTS/provision-accounts.sh"
   [ "$status" -eq 0 ]
-  for a in max-a max-b ent; do
+  for a in $ALL_ACCOUNTS; do
     d="$AIBENDER_HOME/accounts/$a"
     [ -d "$d" ]
     [ "$(perms "$d")" = "700" ]
@@ -87,6 +126,11 @@ STUB
   [ "$(perms "$AIBENDER_HOME/accounts")" = "700" ]
   run jq -r '.label' "$AIBENDER_HOME/accounts/max-b/.aibender-account.json"
   [ "$output" = "MAX_B" ]
+  # MAX_C / MAX_D markers carry their own label + byte-stable dir string
+  run jq -r '.label' "$AIBENDER_HOME/accounts/max-c/.aibender-account.json"
+  [ "$output" = "MAX_C" ]
+  run jq -r '.claudeSecurestorageConfigDir' "$AIBENDER_HOME/accounts/max-d/.aibender-account.json"
+  [ "$output" = "$AIBENDER_HOME/accounts/max-d" ]
   run jq -r '.claudeSecurestorageConfigDir' "$AIBENDER_HOME/accounts/ent/.aibender-account.json"
   [ "$output" = "$AIBENDER_HOME/accounts/ent" ]
 }
@@ -138,16 +182,97 @@ STUB
   [[ "$output" == *"absolute path"* ]]
 }
 
+# --- form validation: the open MAX_<X>/ENT gate (ICR-0013) ----------------------
+
+@test "aib_is_claude_account_label accepts the sanctioned form, rejects everything else" {
+  # positive: the seed labels + the new placeholders + the full letter range
+  for l in MAX_A MAX_B MAX_C MAX_D MAX_Z ENT; do
+    run bash -c "source '$SCRIPTS/lib.sh'; aib_is_claude_account_label '$l'"
+    [ "$status" -eq 0 ] || { echo "should ACCEPT: $l" >&2; false; }
+  done
+  # negative/edge: wrong length, wrong case, digit, whitespace, empty, bare
+  # prefix, a fixed-BACKEND label (no profile — must NOT resolve here), and an
+  # [X2]-leak-shaped string
+  for l in MAX_AB MAX_a MAX_1 max_a HACKER "hacker@example.com" AWS_DEV LOCAL "MAX_A " " MAX_A" "" "MAX_" "ENT_A" "ent"; do
+    run bash -c "source '$SCRIPTS/lib.sh'; aib_is_claude_account_label \"\$1\"" _ "$l"
+    [ "$status" -ne 0 ] || { echo "should REJECT: [$l]" >&2; false; }
+  done
+}
+
+@test "the shell form regex mirrors vocab.ts CLAUDE_ACCOUNT_LABEL_RE byte-for-byte" {
+  # If BE widens the frozen form, this fails loudly so the two stay in lockstep.
+  vocab="$REPO_ROOT/packages/protocol/src/vocab.ts"
+  [ -f "$vocab" ] || skip "vocab.ts not present in this checkout"
+  # vocab source: export const CLAUDE_ACCOUNT_LABEL_RE = /^MAX_[A-Z]$/;
+  grep -qF "CLAUDE_ACCOUNT_LABEL_RE = /^MAX_[A-Z]\$/" "$vocab"
+  run bash -c "source '$SCRIPTS/lib.sh'; printf '%s' \"\$AIB_CLAUDE_MAX_LABEL_RE\""
+  [ "$output" = '^MAX_[A-Z]$' ]
+  run bash -c "source '$SCRIPTS/lib.sh'; printf '%s' \"\$AIB_ENTERPRISE_LABEL\""
+  [ "$output" = 'ENT' ]
+}
+
+@test "provision aib_die's on a bogus-label manifest (temp profiles dir; tree untouched)" {
+  profiles="$(seed_temp_profiles)"
+  jq '.label = "MAX_AB"
+      | .env.CLAUDE_CONFIG_DIR = "$AIBENDER_HOME/accounts/bogus"
+      | .env.CLAUDE_SECURESTORAGE_CONFIG_DIR = "$AIBENDER_HOME/accounts/bogus"' \
+    "$profiles/max-a.profile.json" > "$profiles/zz-bogus.profile.json"
+  run "$SCRIPTS/provision-accounts.sh" --dry-run --profiles-dir "$profiles"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"MAX_AB"* ]]
+  [[ "$output" == *"not a sanctioned Claude-account placeholder"* ]]
+  # nothing was created (dry-run) and the real profiles dir was never touched
+  [ ! -e "$AIBENDER_HOME" ]
+  [ ! -e "$REPO_ROOT/infra/profiles/zz-bogus.profile.json" ]
+}
+
+@test "probe aib_die's on a bogus-label manifest (temp profiles dir)" {
+  profiles="$(seed_temp_profiles)"
+  jq '.label = "hacker@example.com"
+      | .env.CLAUDE_CONFIG_DIR = "$AIBENDER_HOME/accounts/leak"
+      | .env.CLAUDE_SECURESTORAGE_CONFIG_DIR = "$AIBENDER_HOME/accounts/leak"' \
+    "$profiles/max-a.profile.json" > "$profiles/zz-leak.profile.json"
+  run "$SCRIPTS/keychain-probe.sh" --dry-run --profiles-dir "$profiles"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"not a sanctioned Claude-account placeholder"* ]]
+}
+
+@test "a new MAX_<X> manifest resolves with NO code change ([X1] scalability proof)" {
+  # Synthesize MAX_E — a label that appears in NO script, NO fixture — into a
+  # temp profiles dir and prove the whole pipeline enumerates it end to end.
+  profiles="$(seed_temp_profiles)"
+  jq '.label = "MAX_E"
+      | .pathConvention = "$AIBENDER_HOME/accounts/max-e"
+      | .env.CLAUDE_CONFIG_DIR = "$AIBENDER_HOME/accounts/max-e"
+      | .env.CLAUDE_SECURESTORAGE_CONFIG_DIR = "$AIBENDER_HOME/accounts/max-e"' \
+    "$profiles/max-a.profile.json" > "$profiles/max-e.profile.json"
+  run "$SCRIPTS/provision-accounts.sh" --dry-run --profiles-dir "$profiles"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'provision\tMAX_E\t'*"$AIBENDER_HOME/accounts/max-e"*$'\tPLAN-CREATED'* ]]
+  # and the probe recomputes a distinct service name for it
+  run "$SCRIPTS/keychain-probe.sh" --dry-run --profiles-dir "$profiles"
+  [ "$status" -eq 0 ]
+  exp="$(hash8 "$AIBENDER_HOME/accounts/max-e")"
+  [[ "$output" == *$'probe\tMAX_E\t'*"Claude Code-credentials-$exp"* ]]
+}
+
 # --- keychain probe: positive ---------------------------------------------------
 
 @test "probe --dry-run recomputes the expected per-account service names" {
   "$SCRIPTS/provision-accounts.sh" >/dev/null
   run "$SCRIPTS/keychain-probe.sh" --dry-run
   [ "$status" -eq 0 ]
-  for a in max-a max-b ent; do
+  for a in $ALL_ACCOUNTS; do
     exp="$(hash8 "$AIBENDER_HOME/accounts/$a")"
     [[ "$output" == *"Claude Code-credentials-$exp"* ]]
   done
+  # MAX_C and MAX_D get their own DISTINCT service names (the whole point of the
+  # per-dir securestorage pin — keychain isolation scales automatically)
+  cexp="$(hash8 "$AIBENDER_HOME/accounts/max-c")"
+  dexp="$(hash8 "$AIBENDER_HOME/accounts/max-d")"
+  [ "$cexp" != "$dexp" ]
+  [[ "$output" == *$'probe\tMAX_C\t'*"Claude Code-credentials-$cexp"* ]]
+  [[ "$output" == *$'probe\tMAX_D\t'*"Claude Code-credentials-$dexp"* ]]
   [[ "$output" == *"DRY-RUN"* ]]
   [[ "$output" == *"claude auth status --json"* ]]
 }
@@ -256,9 +381,17 @@ STUB
   [ "$(perms "$state")" = "600" ]
   run jq -r '.serviceBase' "$state"
   [ "$output" = "Claude Code-credentials" ]
+  # the baseline captures the FULL registry — MAX_C / MAX_D included
+  run jq -r '.accounts | length' "$state"
+  n_manifest="$(find "$REPO_ROOT/infra/profiles" -maxdepth 1 -name '*.profile.json' | wc -l | tr -d ' ')"
+  [ "$output" -eq "$n_manifest" ]
+  run jq -r '[.accounts[].label] | sort | join(",")' "$state"
+  [ "$output" = "ENT,MAX_A,MAX_B,MAX_C,MAX_D" ]
   run "$SCRIPTS/version-gate.sh" --dry-run
   [ "$status" -eq 0 ]
   [[ "$output" == *$'gate\tMAX_A\t'*$'\tMATCH'* ]]
+  [[ "$output" == *$'gate\tMAX_C\t'*$'\tMATCH'* ]]
+  [[ "$output" == *$'gate\tMAX_D\t'*$'\tMATCH'* ]]
   [[ "$output" == *"RESULT: PASS"* ]]
   [[ "$output" == *"ADVISORY"* ]]
 }

@@ -156,12 +156,44 @@ is_offline() {
   [ "${AIBENDER_LIVECHECK_OFFLINE:-0}" = "1" ]
 }
 
-# At least one provisioned account dir (SI-2 marker present)?
-ACCOUNT_LABELS="max-a max-b ent"
+# The set of account dir stems the harness knows about, DERIVED FROM THE
+# PROFILE REGISTRY (infra/profiles/*.profile.json), never a hardcoded list —
+# so a new MAX_<X> account (max-c, max-d, …) is enumerated the moment its
+# manifest exists, with zero edit here (ICR-0013, [X1] scalability; the SI-2
+# scripts glob the same manifests). Each stem is the basename of a manifest's
+# CLAUDE_CONFIG_DIR convention ("$AIBENDER_HOME/accounts/<stem>").
+PROFILES_DIR="$ROOT/infra/profiles"
+registry_stems() {
+  local f conv stem out=""
+  [ -d "$PROFILES_DIR" ] || { printf '\n'; return; }
+  if command -v jq >/dev/null 2>&1; then
+    for f in "$PROFILES_DIR"/*.profile.json; do
+      [ -e "$f" ] || continue
+      conv="$(jq -r '.env.CLAUDE_CONFIG_DIR // empty' "$f" 2>/dev/null || true)"
+      [ -n "$conv" ] || continue
+      stem="${conv##*/}"
+      out="$out $stem"
+    done
+  else
+    # jq-less fallback: any accounts/<stem>/ carrying an SI-2 provenance marker.
+    local home d
+    home="$(aib_home)"
+    if [ -d "$home/accounts" ]; then
+      for d in "$home"/accounts/*/; do
+        [ -f "$d.aibender-account.json" ] || continue
+        stem="${d%/}"; stem="${stem##*/}"
+        out="$out $stem"
+      done
+    fi
+  fi
+  printf '%s\n' "${out# }"
+}
+
+# The registry stems that are actually provisioned here (SI-2 marker present).
 provisioned_labels() {
   local home label out=""
   home="$(aib_home)"
-  for label in $ACCOUNT_LABELS; do
+  for label in $(registry_stems); do
     if [ -f "$home/accounts/$label/.aibender-account.json" ]; then
       out="$out $label"
     fi

@@ -87,7 +87,7 @@ tail -n 100 "$HOME/.aibender/logs/broker.err.log"
   `orphan_detected`→`orphan_killed`→`resumed`/`exited` within a few seconds of
   the restart. A row **stuck** in `orphan_detected` means the reap did not
   complete — go to §2.
-- The three account sessions never require a re-login on restart: their
+- The account sessions never require a re-login on restart: their
   Keychain credentials are read fresh by each resumed session (that is the
   whole point of the Aqua-domain rule, [launchd.md](launchd.md)). If a resumed
   account session reports an auth failure, the broker is not in the Aqua
@@ -239,13 +239,13 @@ fixed-tick edition) and the induced-bloat unit tests
 
 ### The real 24 h soak (T4 / owner-gated — never run in CI)
 
-The **real** 24 h mixed soak is inherently T4/pending-owner: it needs the three
-real accounts, real inference cost, and a real elapsed day, so it is NEVER run
+The **real** 24 h mixed soak is inherently T4/pending-owner: it needs the real
+provisioned accounts, real inference cost, and a real elapsed day, so it is NEVER run
 from `live-check.sh` (the `soak-24h` entry SKIPs pending-owner and points here;
 do not claim a real 24 h soak executed in CI). To run it on the owner's machine:
 
 ```sh
-# 1. Boot the broker (Aqua LaunchAgent or the sidecar) with the three accounts
+# 1. Boot the broker (Aqua LaunchAgent or the sidecar) with all provisioned accounts
 #    logged in (login-bootstrap.md), two OpenCode sessions, and LM Studio up.
 # 2. Enable the supervision slice with the REAL macOS phys_footprint sampler +
 #    createSpawnPressureProbe (the guarded-real telemetry ports — see
@@ -255,7 +255,7 @@ do not claim a real 24 h soak executed in CI). To run it on the owner's machine:
 #      - total resident memory stays within the ~17 GB pessimistic envelope;
 #      - the resident session set does not grow unsupervised (recycles/hibernation
 #        fire as footprints/pressure rise);
-#      - the three account sessions are never hibernated/shed, and an account
+#      - the account sessions are never hibernated/shed, and an account
 #        spawn is still honored while shedding under red.
 # 4. If the envelope is busted: enforce the sacrifice order, shrink the local
 #    model tier, re-run; if still busted, cut non-Claude concurrency defaults —

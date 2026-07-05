@@ -271,6 +271,37 @@ STUB
   grep -q 'version-gate.md' <<<"$output"
 }
 
+@test "provisioned-account detection is registry-driven — it enumerates MAX_C / MAX_D (ICR-0013)" {
+  # The account set is derived from infra/profiles/*.profile.json, never a
+  # hardcoded list, so a new MAX_<X> account is picked up with no edit here.
+  # Prove it by provisioning EVERY registry dir (incl. max-c/max-d) with hooks
+  # installed and asserting hooks-installed PASSes across the whole set.
+  command -v jq >/dev/null 2>&1 || skip "jq required to read the profile registry"
+  aib="$BATS_TEST_TMPDIR/registry-all"
+  stems="$(HOME="$FAKE_HOME" bash -c '
+    for f in "'"$REPO_ROOT"'"/infra/profiles/*.profile.json; do
+      jq -r ".env.CLAUDE_CONFIG_DIR" "$f"
+    done | sed "s#.*/##"')"
+  # sanity: the registry today includes the new placeholders
+  grep -qw max-c <<<"$stems"
+  grep -qw max-d <<<"$stems"
+  for stem in $stems; do
+    mkdir -p "$aib/accounts/$stem"
+    printf '{"label":"%s"}\n' "$stem" > "$aib/accounts/$stem/.aibender-account.json"
+    cat > "$aib/accounts/$stem/settings.json" <<'JSON'
+{ "hooks": { "SessionStart": [ { "matcher": "startup",
+  "hooks": [{ "type": "http", "url": "http://127.0.0.1:4319/hooks/v1/X", "timeout": 5 }] } ] } }
+JSON
+  done
+  HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
+    run bash "$LIVECHECK" --aibender-home "$aib" --check hooks-installed
+  [ "$status" -eq 0 ]
+  grep -q $'^check\thooks-installed\tM2\tPASS\t' <<<"$output"
+  # the PASS detail names the full provisioned set — max-c and max-d included
+  grep -q 'max-c' <<<"$output"
+  grep -q 'max-d' <<<"$output"
+}
+
 # --- M4 checks: SI-3 [X4] slots + SI-5 colima probe (surgical append) ----------
 
 # Per-account fixture with the M4-active [X4] slots ($1 = label, $2 = SessionStart timeout).

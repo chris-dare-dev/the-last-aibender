@@ -64,7 +64,7 @@ EOF
 
 # --- install: positive -----------------------------------------------------------
 
-@test "fresh install writes the frozen-contract fragment for all three accounts" {
+@test "fresh install writes the frozen-contract fragment for all provisioned accounts" {
   provision
   run "$INSTALL"
   [ "$status" -eq 0 ]

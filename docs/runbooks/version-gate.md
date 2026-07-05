@@ -22,7 +22,7 @@ account = $USER
 [infra/profiles/README.md](../../infra/profiles/README.md)). Anthropic already
 moved credential storage once (2025 file→Keychain migration) and introduced
 this suffixing quietly in the 2.1.x line. Any SDK/CLI bump can therefore
-silently change the derivation and "log out" all three accounts — the CLI
+silently change the derivation and "log out" all provisioned accounts — the CLI
 would compute different service names and find empty keychain slots.
 
 **No SDK/CLI version bump lands without this runbook passing. The pinned

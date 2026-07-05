@@ -12,7 +12,7 @@
   THEREFORE THIS TEMPLATE DELIBERATELY OMITS LimitLoadToSessionType:
   the launchd default for a LaunchAgent is Aqua, which is exactly what we
   want. Adding LimitLoadToSessionType=Background (or bootstrapping into
-  user/$UID) silently breaks subscription auth for all three accounts —
+  user/$UID) silently breaks subscription auth for all provisioned accounts —
   see com.aibender.broker.background-expected-fail.plist.template for the
   documented expected-failure probe.
 

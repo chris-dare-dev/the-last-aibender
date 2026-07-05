@@ -5,11 +5,17 @@
 [x1-parallel-multi-account](../research/findings/x1-parallel-multi-account.md),
 [infra/profiles/README.md](../../infra/profiles/README.md) (derivation + expansion rules).
 
-Each of **MAX_A / MAX_B / ENT** gets its own config dir with
+Each provisioned account gets its own config dir with
 `CLAUDE_SECURESTORAGE_CONFIG_DIR` pinned to the same path, which yields a
 distinct macOS Keychain item per account. You log in interactively **once per
 account per machine**; thereafter every session of every account runs
 concurrently with zero re-login.
+
+The account label set is an **open, validated form** — a Max account is
+`^MAX_[A-Z]$` (`MAX_A`, `MAX_B`, `MAX_C`, `MAX_D`, …), the enterprise account is
+the literal `ENT` (ICR-0013). This runbook walks the seed set below; to add
+**another** account later, the whole procedure is a manifest + one login + a
+probe — see [add-an-account.md](add-an-account.md).
 
 [X2] reminder: this file and every committed file use placeholder labels only.
 The real account mapping lives in `$AIBENDER_HOME/identity-map.json` and your
@@ -24,10 +30,12 @@ infra/scripts/accounts/provision-accounts.sh --dry-run   # inspect the plan
 infra/scripts/accounts/provision-accounts.sh             # create the dirs (0700)
 ```
 
-Creates `$AIBENDER_HOME/accounts/{max-a,max-b,ent}/` (default
-`~/.aibender/accounts/...`) with a provenance marker recording the
-**byte-stable dir string**. The script refuses to touch a populated dir it did
-not provision — see §7 if that happens.
+Creates one `$AIBENDER_HOME/accounts/<stem>/` per manifest (default
+`~/.aibender/accounts/...` — today `max-a`, `max-b`, `max-c`, `max-d`, `ent`)
+with a provenance marker recording the **byte-stable dir string**. The script
+enumerates the `infra/profiles/*.profile.json` glob, so it always plans exactly
+the provisioned set. It refuses to touch a populated dir it did not provision —
+see §8 if that happens.
 
 ## 2. Pre-flight: env hygiene (blueprint §3 rule 3)
 
@@ -92,9 +100,9 @@ Notes:
 infra/scripts/accounts/keychain-probe.sh
 ```
 
-Expect three lines ending `PRESENT`, one per account, each with a distinct
+Expect one line ending `PRESENT` per provisioned account, each with a distinct
 `Claude Code-credentials-<hash8>` service name. Keychain Access will show the
-same three items (account attribute = your macOS username).
+same items (account attribute = your macOS username).
 
 **4b. Value access in the broker's own context (T3, owner-run):**
 

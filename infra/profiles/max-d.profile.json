@@ -1,0 +1,19 @@
+{
+  "$comment": "the-last-aibender account profile manifest (SI-2). Label + machine-local path CONVENTION only — never a real identity [X2]. Expansion + derivation rules: infra/profiles/README.md. MAX_D is a sanctioned MAX_<X> placeholder (same class as MAX_A/MAX_B), added by following docs/runbooks/add-an-account.md — proof [X1] scales without a code change.",
+  "schemaVersion": 1,
+  "label": "MAX_D",
+  "kind": "max",
+  "rung": 1,
+  "pathConvention": "$AIBENDER_HOME/accounts/max-d",
+  "env": {
+    "CLAUDE_CONFIG_DIR": "$AIBENDER_HOME/accounts/max-d",
+    "CLAUDE_SECURESTORAGE_CONFIG_DIR": "$AIBENDER_HOME/accounts/max-d"
+  },
+  "keychain": {
+    "serviceBase": "Claude Code-credentials",
+    "serviceNameRule": "<serviceBase>-<first 8 hex of sha256(NFC(CLAUDE_SECURESTORAGE_CONFIG_DIR))>",
+    "accountAttribute": "$USER",
+    "setupTokenItemConvention": "aibender-setup-token-max-d"
+  },
+  "identityMap": "identity-map.example.json — the real label-to-identity map lives at $AIBENDER_HOME/identity-map.json, machine-local forever, never committed"
+}

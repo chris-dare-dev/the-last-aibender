@@ -10,7 +10,7 @@ live-verified launchd/keychain semantics in
 domain**. gui-domain LaunchAgents have full login-keychain value access;
 Background/user-domain agents fail Claude Code's credential reads with
 `errSecInteractionNotAllowed` (exit-36 class) and silently "log out" all
-three accounts. The broker template therefore carries **no**
+provisioned accounts. The broker template therefore carries **no**
 `LimitLoadToSessionType` key — the LaunchAgent default is Aqua — and the
 tests assert the key's absence.
 

@@ -17,7 +17,7 @@
   items. `security find-generic-password -w` exits 36
   (errSecInteractionNotAllowed): the Background security session does not
   hold the unlocked login-keychain state and UI interaction is disallowed.
-  A broker running here would silently "log out" all three accounts.
+  A broker running here would silently "log out" all provisioned accounts.
 
   The probe run under this plist MUST observe that exit-36-class failure;
   a probe that SUCCEEDS here means macOS/launchd semantics have changed and

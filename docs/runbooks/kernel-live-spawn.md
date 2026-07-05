@@ -39,10 +39,10 @@ Properties of the live runner (all enforced in code, tested with fakes):
 
 ## Preconditions (all owner-executed, in order)
 
-1. SI-2 provisioning done: `~/.aibender/accounts/{max-a,max-b,ent}/` exist
+1. SI-2 provisioning done: `~/.aibender/accounts/<stem>/` exist
    (see docs/runbooks/login-bootstrap.md) and one interactive `claude /login`
    per account has been performed, ever.
-2. Keychain probe green for all three per-config-dir service names (SI-2
+2. Keychain probe green for every per-config-dir service name (SI-2
    probe script; never `security ... -w`).
 3. Version gate green for the pinned SDK (docs/runbooks/version-gate.md) —
    includes the keychain service-name recompute and, before any rung-2 use,

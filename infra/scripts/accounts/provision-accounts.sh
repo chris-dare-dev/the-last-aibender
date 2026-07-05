@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # provision-accounts.sh — create the per-account config dirs ([X1] host side, SI-2).
 #
-# Creates $AIBENDER_HOME/accounts/{max-a,max-b,ent}/ (0700) from the profile
-# manifests in infra/profiles/, pins the CLAUDE_CONFIG_DIR +
+# Creates one $AIBENDER_HOME/accounts/<stem>/ (0700) per profile manifest in
+# infra/profiles/ (the registry — MAX_<X>/ENT form, ICR-0013; today max-a,
+# max-b, max-c, max-d, ent), pins the CLAUDE_CONFIG_DIR +
 # CLAUDE_SECURESTORAGE_CONFIG_DIR convention (both = the same byte-stable
 # absolute string), and records a provenance marker per dir.
 #

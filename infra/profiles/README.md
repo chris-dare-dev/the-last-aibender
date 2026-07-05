@@ -1,18 +1,35 @@
 # infra/profiles/ — account profile manifests (SI-2, [X1] host side)
 
-Machine-local path **conventions** for the three Claude accounts, keyed by the
-sanctioned placeholder labels only — **MAX_A / MAX_B / ENT**. No real identity
-(emails, org/account UUIDs, AWS IDs) ever appears here [X2]; the real mapping
-lives machine-locally per [identity-map.example.json](identity-map.example.json).
+Machine-local path **conventions** for the provisioned Claude accounts, keyed by
+sanctioned placeholder labels only. The label set is an **open, validated form**,
+not a closed list (ICR-0013,
+[icr-0013-account-registry.md](../../docs/contracts/icr/icr-0013-account-registry.md)):
 
-Sources of record: blueprint §3 ([X1] mechanism), plan §6/SI-2,
+- a **Max** account is `MAX_` + one uppercase letter A–Z (`^MAX_[A-Z]$`) —
+  `MAX_A`, `MAX_B`, `MAX_C`, `MAX_D`, … `MAX_Z` are all first-class sanctioned
+  placeholders, added **without a code change**;
+- the **enterprise** account is the single literal `ENT`.
+
+The fixed backend labels `AWS_DEV` / `LOCAL` are **not** Claude accounts and have
+no manifest here. No real identity (emails, org/account UUIDs, AWS IDs) ever
+appears here [X2]; the real mapping lives machine-locally per
+[identity-map.example.json](identity-map.example.json). Adding an account is a
+manifest-only change — see
+[docs/runbooks/add-an-account.md](../../docs/runbooks/add-an-account.md).
+
+Every consumer (`infra/scripts/accounts/*.sh`, the schema, the FE picker)
+**enumerates the `*.profile.json` glob and validates the form** — nothing
+hardcodes the count. The manifests shipped today are the seed registry
+(MAX_A / MAX_B / MAX_C / MAX_D / ENT); a new one is picked up the moment it exists.
+
+Sources of record: blueprint §3 ([X1] mechanism), plan §6/SI-2, ICR-0013,
 [x1-parallel-multi-account](../../docs/research/findings/x1-parallel-multi-account.md).
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `max-a.profile.json` / `max-b.profile.json` / `ent.profile.json` | One manifest per account label — dir convention, pinned env, keychain naming rule. |
+| `max-a.profile.json` / `max-b.profile.json` / `max-c.profile.json` / `max-d.profile.json` / `ent.profile.json` | One manifest per provisioned account label — dir convention, pinned env, keychain naming rule. `max-c` / `max-d` are the same shape as `max-a` / `max-b`; add more with the runbook above. |
 | `identity-map.example.json` | Pointer only. The real label→identity map is `$AIBENDER_HOME/identity-map.json`, never committed. |
 
 ## Manifest schema (v1)
@@ -20,7 +37,7 @@ Sources of record: blueprint §3 ([X1] mechanism), plan §6/SI-2,
 ```jsonc
 {
   "schemaVersion": 1,
-  "label": "MAX_A",                  // MAX_A | MAX_B | ENT — the only identities in the tree
+  "label": "MAX_A",                  // sanctioned FORM only: ^MAX_[A-Z]$ (a Max account) or ENT
   "kind": "max",                     // max | enterprise
   "rung": 1,                         // fallback-ladder rung this manifest implements (blueprint §3)
   "pathConvention": "$AIBENDER_HOME/accounts/max-a",

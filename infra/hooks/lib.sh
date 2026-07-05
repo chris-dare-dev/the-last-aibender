@@ -6,7 +6,7 @@
 # infra/profiles/ are the single source of account labels and dirs.
 #
 # [X2]: everything rendered here carries placeholder labels only
-# (MAX_A|MAX_B|ENT). The hook templates POST to 127.0.0.1 exclusively and
+# (MAX_<X>|ENT). The hook templates POST to 127.0.0.1 exclusively and
 # register no command hooks (hooks-contract.md §5.3); the only shell command
 # these settings ever reference is the statusline tee, which writes only
 # under $AIBENDER_HOME.

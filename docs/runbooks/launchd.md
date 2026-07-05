@@ -13,7 +13,7 @@ gui-domain (Aqua) LaunchAgents have full login-keychain access, including the
 ACL-gated value reads Claude Code performs for its
 `Claude Code-credentials-<hash8>` items. Background/user-domain agents fail
 those reads with `errSecInteractionNotAllowed` (exit 36) — a broker running
-there silently "logs out" all three accounts. Verified live on this machine;
+there silently "logs out" all provisioned accounts. Verified live on this machine;
 the broker plist therefore ships with **no `LimitLoadToSessionType` key**
 (LaunchAgent default = Aqua) and is only ever bootstrapped into `gui/$UID`.
 

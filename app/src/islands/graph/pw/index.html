@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>FE-4 graph island — Playwright harness</title>
+    <style>
+      /* Harness chrome only — island visuals are token-fed via tokens.css. */
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: var(--ig-surface-base, #111110);
+      }
+      #stage {
+        width: 960px;
+        height: 640px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="stage"></div>
+    <script type="module" src="./harness.ts"></script>
+  </body>
+</html>

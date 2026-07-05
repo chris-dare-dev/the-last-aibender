@@ -16,9 +16,11 @@
     "tauri": "tauri",
     "smoke-test": "cargo run --manifest-path src-tauri/Cargo.toml -- --smoke-test",
     "test": "vitest run",
-    "test:islands": "pnpm run pw:build:terminal && pnpm run pw:build:transcript && tsx src/islands/terminal/pw/run-pw.ts && tsx src/islands/transcript/pw/run-pw.ts",
+    "test:islands": "pnpm run pw:build:terminal && pnpm run pw:build:transcript && pnpm run pw:build:graph && tsx src/islands/terminal/pw/run-pw.ts && tsx src/islands/transcript/pw/run-pw.ts && tsx src/islands/graph/pw/run-pw.ts",
+    "test:graph-island": "pnpm run pw:build:graph && tsx src/islands/graph/pw/run-pw.ts",
     "pw:build:terminal": "vite build -c src/islands/terminal/pw/vite.config.ts",
     "pw:build:transcript": "vite build -c src/islands/transcript/pw/vite.config.ts",
+    "pw:build:graph": "vite build -c src/islands/graph/pw/vite.config.ts",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
@@ -29,6 +31,10 @@
     "@xterm/addon-serialize": "0.14.0",
     "@xterm/addon-webgl": "0.19.0",
     "@xterm/xterm": "6.0.0",
+    "d3-force": "3.0.0",
+    "graphology": "0.26.0",
+    "motion": "12.42.2",
+    "pixi.js": "8.19.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "zustand": "5.0.14"
@@ -36,9 +42,11 @@
   "devDependencies": {
     "@aibender/testkit": "workspace:*",
     "@tauri-apps/cli": "2.11.4",
+    "@types/d3-force": "^3.0.10",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.1.0",
+    "graphology-types": "^0.24.8",
     "jsdom": "^29.1.1",
     "playwright": "1.61.1",
     "tailwindcss": "4.3.2",

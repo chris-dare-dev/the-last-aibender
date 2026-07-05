@@ -24,7 +24,12 @@
  * never-throw discipline). All ids are HARNESS ids; native ids never appear.
  */
 
-import { backendForLabel, type AccountLabel } from '@aibender/protocol';
+import {
+  backendForLabel,
+  isEventSource,
+  sourceForBackend,
+  type AccountLabel,
+} from '@aibender/protocol';
 import type { EventsTableStore, LineageStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
@@ -177,14 +182,27 @@ export function createPipelineLineageCost(
       }
       try {
         const backend = backendForLabel(input.account);
+        // The events `source` a backend feeds is resolved through the registry
+        // (ICR-0016 / OS-1): claude → the OTel attribution-truth source,
+        // opencode → its SSE source, lmstudio → its inline source, a registered
+        // 4th backend → its descriptor.sourceName. The registry returns a
+        // `string`; the store's `source` column is the frozen `EventSource`
+        // union, and a well-formed descriptor declares a sourceName inside that
+        // vocabulary. Narrow with the frozen guard — the three built-ins always
+        // pass; a mis-declared descriptor throws here and is caught by the
+        // fire-and-forget wrapper below (logged, never crashes the pipeline).
+        const source = sourceForBackend(backend);
+        if (!isEventSource(source)) {
+          throw new Error(
+            `backend ${backend} descriptor sourceName ${JSON.stringify(source)} is not an EventSource`,
+          );
+        }
         store.insert({
           tsMs: nowMs(),
           backend,
           account: input.account,
-          // The events `source` must pair with the backend (the store's
-          // pairing CHECK): claude → the OTel attribution-truth source,
-          // opencode → its SSE source, lmstudio → its inline source.
-          source: sourceForBackend(backend),
+          // `source` is narrowed to EventSource by the guard above.
+          source,
           eventType: 'pipeline_step',
           // raw_ref is the (backend, raw_ref) dedupe key: distinct iterations
           // are distinct keys; a retry re-ingest of the SAME iteration dedupes.
@@ -214,12 +232,10 @@ function coerceErrorKind(kind: string): 'error' | 'retry' | 'throttle' | 'timeou
   return 'error';
 }
 
-/** Pick an `EventSource` consistent with the wire backend (no source↔backend
- *  CHECK exists, but a coherent source keeps the events pane truthful). */
-function sourceForBackend(
-  backend: 'claude_code' | 'opencode' | 'lmstudio',
-): 'claude-otel' | 'opencode-sse' | 'lmstudio' {
-  if (backend === 'claude_code') return 'claude-otel';
-  if (backend === 'opencode') return 'opencode-sse';
-  return 'lmstudio';
-}
+// The events `source` a backend feeds is now resolved through the registry
+// `sourceForBackend` (@aibender/protocol, ICR-0016 / finding OS-1) instead of a
+// local if-chain over the closed three. Byte-identical for the built-in three
+// (claude_code → 'claude-otel', opencode → 'opencode-sse', lmstudio →
+// 'lmstudio'); a registered 4th backend contributes its descriptor.sourceName
+// with NO edit here. Fed a validated `Backend` (backendForLabel just returned
+// it), so the id is always registered — the registry never throws on this path.

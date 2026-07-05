@@ -18,6 +18,7 @@
  */
 
 import {
+  backendById,
   backendForLabel,
   type AccountLabel,
   type ReadModelSnapshot,
@@ -105,6 +106,28 @@ function groupBy<K, V>(items: readonly V[], key: (item: V) => K): Map<K, V[]> {
     else bucket.push(item);
   }
   return groups;
+}
+
+/**
+ * The events `source` the LOCAL-model substrate feeds — resolved through the
+ * registry (ICR-0016 / finding OS-1) rather than hardcoding the `'lmstudio'`
+ * literal. The built-in `lmstudio` backend is the canonical local one; its
+ * descriptor's `sourceName` is the local source of record, and any registered
+ * backend that declares the SAME source (e.g. a 2nd OpenAI-compatible local
+ * server whose descriptor reuses `sourceName: 'lmstudio'`) is local too. `??`
+ * falls back to the literal ONLY if the built-in is somehow absent, which never
+ * happens (the three built-ins are pre-seeded and cannot be unregistered).
+ */
+const LOCAL_EVENT_SOURCE = backendById('lmstudio')?.sourceName ?? 'lmstudio';
+
+/**
+ * True iff `backend` is a LOCAL-model backend — its registered descriptor feeds
+ * the {@link LOCAL_EVENT_SOURCE}. Byte-identical for the built-in three (only
+ * `lmstudio` is local); a registered 4th local backend counts with NO edit
+ * here. An unregistered id is never local (fail-closed → not counted).
+ */
+function isLocalBackend(backend: string): boolean {
+  return backendById(backend)?.sourceName === LOCAL_EVENT_SOURCE;
 }
 
 const clampPct = (value: number): number => Math.min(100, Math.max(0, value));
@@ -476,7 +499,7 @@ export function localOffloadData(
   for (const row of rows) {
     const tokens = tokensOfRow(row);
     totalTokens += tokens;
-    if (row.backend === 'lmstudio') localTokens += tokens;
+    if (isLocalBackend(row.backend)) localTokens += tokens;
   }
   return {
     // 0/0 renders honestly as 0 WITH a no-signal freshness entry explaining

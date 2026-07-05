@@ -821,16 +821,31 @@ function resolveBackend(
   const explicit = step.backend ?? defaults?.backend;
   if (explicit !== undefined) return explicit;
   // Default to the account's canonical backend family. AWS_DEV → opencode
-  // (the generic route); MAX_*/ENT → claude; LOCAL → lmstudio.
+  // (the generic route); MAX_*/ENT → claude; LOCAL → lmstudio. For a REGISTERED
+  // 4th backend (ICR-0016 / OS-1) whose label is not one of the built-in forms,
+  // accountStepBackendsFor returns [] (its STEP_BACKENDS vocabulary is a
+  // protocol-package concern), and mapWireBackend carries the wire id through.
   const legal = accountStepBackendsFor(account);
   return legal[0] ?? mapWireBackend(account);
 }
 
+/**
+ * Fallback wire→step-backend map for accounts outside the built-in step-backend
+ * families (a registered 4th backend, ICR-0016 / finding OS-1). Resolves through
+ * the frozen `backendForLabel` (registry-backed) instead of a closed if-chain:
+ * the built-in three keep their canonical step-backend name (byte-identical —
+ * but this path is DEAD for them, since accountStepBackendsFor always returns a
+ * non-empty family for a built-in label), and a registered id is carried through
+ * as its own StepBackend (the honest `as StepBackend` widening mirrors
+ * `backendForLabel`'s `as Backend`: STEP_BACKENDS is the built-in union, a
+ * registered id is a runtime string the executor seam treats opaquely). This
+ * REPLACES the former `if (wire === 'claude_code') … return 'lmstudio'` chain,
+ * which silently mis-mapped every unregistered/4th backend to `lmstudio`.
+ */
 function mapWireBackend(account: AccountLabel): StepBackend {
   const wire = backendForLabel(account);
   if (wire === 'claude_code') return 'claude';
-  if (wire === 'opencode') return 'opencode';
-  return 'lmstudio';
+  return wire as StepBackend;
 }
 
 function resolveCwd(

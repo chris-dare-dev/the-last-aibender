@@ -6,6 +6,7 @@
  * All fixtures synthesized.
  */
 
+import { registerBackend, unregisterBackend } from '@aibender/protocol';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
@@ -54,12 +55,13 @@ describe('events store — positive', () => {
     const meta = store.driver
       .prepare("SELECT value FROM schema_meta WHERE key = 'frozen_milestone'")
       .get();
-    // 0006 (M7 account-registry relaxation) bumps the events-store milestone.
-    expect(meta?.['value']).toBe('M7');
+    // 0008 (M8 backend-registry relaxation) is the newest events-store migration
+    // and bumps the milestone (M7→M8) + events_ddl_version (2→3).
+    expect(meta?.['value']).toBe('M8');
     const ddl = store.driver
       .prepare("SELECT value FROM schema_meta WHERE key = 'events_ddl_version'")
       .get();
-    expect(ddl?.['value']).toBe('2');
+    expect(ddl?.['value']).toBe('3');
   });
 
   it('the sibling migration list is well-ordered and repo-wide unique vs 0001', () => {
@@ -124,6 +126,43 @@ describe('events store — positive', () => {
     expect(store.events.list({ eventType: 'tool-use' })).toHaveLength(1);
     expect(store.events.list({ sinceTsMs: 2000, untilTsMs: 2600 })).toHaveLength(2);
     expect(store.events.list({ limit: 2 })).toHaveLength(2);
+  });
+
+  it('lands an event on a REGISTERED 4th backend (0008 relaxed backend/source/pairing, ICR-0016)', async () => {
+    const store = await openStore();
+    // Before registration the accessor refuses the backend id (isBackend gate).
+    expect(() =>
+      store.events.insert(
+        newEvent({
+          rawRef: 'synth:unreg',
+          account: 'SYNTH_L' as never,
+          backend: 'synthbackend' as never,
+          source: 'lmstudio',
+        }),
+      ),
+    ).toThrow();
+    registerBackend({
+      id: 'synthbackend',
+      servesLabel: (label) => label === 'SYNTH_L',
+      sourceName: 'lmstudio',
+      substrates: ['sdk'],
+      builtin: false,
+    });
+    try {
+      const { inserted, row } = store.events.insert(
+        newEvent({
+          rawRef: 'synth:1',
+          account: 'SYNTH_L' as never,
+          backend: 'synthbackend' as never,
+          source: 'lmstudio',
+        }),
+      );
+      expect(inserted).toBe(true);
+      expect(row.backend).toBe('synthbackend');
+      expect(store.events.getByRawRef('synthbackend' as never, 'synth:1')?.id).toBe(row.id);
+    } finally {
+      unregisterBackend('synthbackend');
+    }
   });
 
   it('quota snapshots: latest() returns one row per (account, window)', async () => {

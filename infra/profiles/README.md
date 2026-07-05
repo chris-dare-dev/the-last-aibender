@@ -17,6 +17,13 @@ appears here [X2]; the real mapping lives machine-locally per
 manifest-only change — see
 [docs/runbooks/add-an-account.md](../../docs/runbooks/add-an-account.md).
 
+Adding a whole new *backend* (a new local LLM / substrate beyond the built-in
+three) is a different, code-side procedure — a `BackendDescriptor` +
+`registerBackend`, with the backend declaring its **own** account-label form
+(never a new `AWS_DEV`/`LOCAL`-style fixed label, which stays closed). See
+[docs/runbooks/add-a-backend.md](../../docs/runbooks/add-a-backend.md)
+(ICR-0016). Such a backend has no `*.profile.json` here.
+
 Every consumer (`infra/scripts/accounts/*.sh`, the schema, the FE picker)
 **enumerates the `*.profile.json` glob and validates the form** — nothing
 hardcodes the count. The manifests shipped today are the seed registry

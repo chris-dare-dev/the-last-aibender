@@ -10,7 +10,13 @@
  * ids, `/synthetic/…` paths, placeholder labels.
  */
 
-import { describe, expect, it } from 'vitest';
+import {
+  registerBackend,
+  unregisterBackend,
+  type AccountLabel,
+  type BackendDescriptor,
+} from '@aibender/protocol';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { openKernelStore, PipelineStoreError, type KernelStore } from './index.js';
 
@@ -41,8 +47,8 @@ describe('pipeline store (migration 0004, FROZEN-M5)', () => {
   it('records the pipeline DDL slice in its OWN schema_meta keys (not the shared base)', async () => {
     const store = await memoryStore();
     // The base frozen_milestone advances with the newest kernel migration
-    // (0005 = M7, ICR-0013); the LINEAGE + PIPELINE slices keep their OWN keys.
-    expect(store.schemaMeta.get('frozen_milestone')).toBe('M7');
+    // (0007 = M8, ICR-0016); the LINEAGE + PIPELINE slices keep their OWN keys.
+    expect(store.schemaMeta.get('frozen_milestone')).toBe('M8');
     expect(store.schemaMeta.get('lineage_frozen_milestone')).toBe('M4'); // untouched
     expect(store.schemaMeta.get('pipeline_ddl_version')).toBe('1');
     expect(store.schemaMeta.get('pipeline_frozen_milestone')).toBe('M5');
@@ -253,5 +259,116 @@ describe('pipeline store (migration 0004, FROZEN-M5)', () => {
       store.pipelines.runs.setStatus('run_fake_1', 'exploded'),
     ).toThrow(PipelineStoreError);
     store.close();
+  });
+});
+
+// ===========================================================================
+// Migration 0009 — step_attempt.account backend-registry relaxation (OS-1,
+// ICR-0016 step_attempt amendment). Migration 0007 relaxed the backend-carrying
+// kernel tables but explicitly SKIPPED step_attempt ("no backend column"),
+// leaving its account CHECK pinned to the built-in M7 form. That refused a full
+// pipeline RUN on a REGISTERED 4th backend's own account label at the journal
+// write. 0009 relaxes the CHECK; these tests pin the new acceptance + prove the
+// built-in labels/NULL still validate byte-identically and an EMPTY account is
+// still refused (defense-in-depth), while the app-layer registry gate stays the
+// authoritative screen for a non-built-in label. [X2]: `synthbackend`/`SYNTH_L`
+// are generic synthesized identifiers, never a real backend name.
+// ===========================================================================
+describe('step_attempt account: migration 0009 registry relaxation (OS-1)', () => {
+  // A minimal synthetic descriptor registered LOCALLY (schema does not depend on
+  // @aibender/testkit — that would be a dependency cycle). Byte-equivalent to
+  // testkit's SYNTHETIC_BACKEND_DESCRIPTOR for what this suite needs: it makes
+  // isAccountLabel('SYNTH_L') true so the accessor admits the label.
+  const SYNTH: BackendDescriptor = Object.freeze({
+    id: 'synthbackend',
+    servesLabel: (label: string) => label === 'SYNTH_L',
+    sourceName: 'lmstudio',
+    substrates: Object.freeze(['sdk'] as const),
+    builtin: false,
+  });
+
+  beforeEach(() => {
+    registerBackend(SYNTH);
+  });
+  afterEach(() => {
+    unregisterBackend(SYNTH.id);
+  });
+
+  async function runWithOneAttempt(): Promise<KernelStore> {
+    const store = await memoryStore();
+    await seededDefinition(store);
+    store.pipelines.runs.insert({ id: 'run_fake_1', pipelineId: 'wf_fake_1', schemaHash: 'sha256:deadbeef' });
+    return store;
+  }
+
+  it("admits a registered 4th backend's own account label (SYNTH_L) at the journal write", async () => {
+    const store = await runWithOneAttempt();
+    // Pre-0009 this INSERT threw `CHECK constraint failed: account IS NULL ...`;
+    // 0009 relaxes the CHECK and the accessor's registry-aware isAccountLabel()
+    // now admits SYNTH_L (the descriptor is registered), so the row lands.
+    const attempt = store.pipelines.stepAttempts.record({
+      id: 'sa_synth',
+      runId: 'run_fake_1',
+      stepId: 'a',
+      inputHash: 'sha256:synth',
+      status: 'running',
+      account: 'SYNTH_L' as AccountLabel,
+    });
+    expect(attempt.account).toBe('SYNTH_L');
+    // The completion patch carries the same label through the UPDATE path.
+    const done = store.pipelines.stepAttempts.complete('sa_synth', {
+      status: 'completed',
+      account: 'SYNTH_L' as AccountLabel,
+      costEstimatedUsd: 0.05,
+      tokensIn: 300,
+      tokensOut: 120,
+    });
+    expect(done.account).toBe('SYNTH_L');
+    expect(done.status).toBe('completed');
+    store.close();
+  });
+
+  it('still admits the built-in account form and NULL byte-identically (M7 form is a subset)', async () => {
+    const store = await runWithOneAttempt();
+    // Built-in MAX_<X> label.
+    const builtin = store.pipelines.stepAttempts.record({
+      id: 'sa_builtin',
+      runId: 'run_fake_1',
+      stepId: 'a',
+      inputHash: 'sha256:builtin',
+      account: 'MAX_A',
+    });
+    expect(builtin.account).toBe('MAX_A');
+    // NULL account (the runner records attempts without an account for some
+    // step kinds) — the nullable CHECK still admits NULL.
+    const nullAcct = store.pipelines.stepAttempts.record({
+      id: 'sa_null',
+      runId: 'run_fake_1',
+      stepId: 'a',
+      iteration: 1,
+      inputHash: 'sha256:null',
+    });
+    expect(nullAcct.account).toBeNull();
+    store.close();
+  });
+
+  it('the app-layer registry gate is the REAL screen — unregistered label refused (no leak)', async () => {
+    // Unregister first: without the descriptor, isAccountLabel('SYNTH_L') is
+    // false, so the accessor refuses the label BEFORE the DB — proving 0009 did
+    // not turn the account column into anything-goes; the registry is the gate.
+    unregisterBackend(SYNTH.id);
+    const store = await runWithOneAttempt();
+    expect(() =>
+      store.pipelines.stepAttempts.record({
+        id: 'sa_synth_leak',
+        runId: 'run_fake_1',
+        stepId: 'a',
+        inputHash: 'sha256:leak',
+        account: 'SYNTH_L' as AccountLabel,
+      }),
+    ).toThrow(PipelineStoreError);
+    store.close();
+    // Re-register so afterEach's unregister is symmetric teardown.
+    registerBackend(SYNTH);
   });
 });

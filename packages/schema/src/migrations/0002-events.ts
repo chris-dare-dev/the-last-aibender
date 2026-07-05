@@ -40,6 +40,7 @@
 import type { Migration } from '../index.js';
 
 import { MIGRATION_0006_ACCOUNT_REGISTRY_EVENTS } from './0006-account-registry-events.js';
+import { MIGRATION_0008_BACKEND_REGISTRY_EVENTS } from './0008-backend-registry-events.js';
 
 export const MIGRATION_0002_EVENTS: Migration = {
   id: 2,
@@ -184,10 +185,13 @@ CREATE TABLE prices (
  * (`~/.aibender/db/events.db`) — the sibling list sqlite-ddl.md §6 reserved.
  * Later observability DDL appends here via ICR; kernel-ledger DDL (X4 at M4)
  * appends to KERNEL_MIGRATIONS instead. 0006 = the M7 account-registry
- * relaxation (account CHECKs widen to the open MAX_<X> form — ICR-0013). Never
- * reorder, never edit 0002.
+ * relaxation (account CHECKs widen to the open MAX_<X> form — ICR-0013);
+ * 0008 = the M8 BACKEND-registry relaxation (the events `backend` + `source`
+ * CHECKs + built-in pairing widen to the open, app-layer-gated form — ICR-0016,
+ * finding OS-1). Never reorder, never edit 0002/0006.
  */
 export const EVENTS_STORE_MIGRATIONS: readonly Migration[] = Object.freeze([
   MIGRATION_0002_EVENTS,
   MIGRATION_0006_ACCOUNT_REGISTRY_EVENTS,
+  MIGRATION_0008_BACKEND_REGISTRY_EVENTS,
 ]);

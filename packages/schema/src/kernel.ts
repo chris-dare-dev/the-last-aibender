@@ -28,6 +28,7 @@ import {
   isBackend,
   isSessionState,
   isSubstrate,
+  substrateLegalFor,
   type AccountLabel,
   type Backend,
   type SessionState,
@@ -228,8 +229,15 @@ export function createResumeLedgerStore(
             `${backendForLabel(input.accountLabel)}, got ${String(input.backend)}`,
         );
       }
-      if (input.substrate === 'pty' && input.backend !== 'claude_code') {
-        throw new KernelStoreError('substrate pty is claude_code-only (blueprint §4.1)');
+      // pty-eligibility resolves through the backend registry (ICR-0016): the
+      // built-in rule (pty is claude_code-only, blueprint §4.1) is byte-identical
+      // because only claude_code's descriptor lists 'pty'; a registered backend
+      // declares its own substrate set.
+      if (!substrateLegalFor(input.substrate, input.backend)) {
+        throw new KernelStoreError(
+          `substrate ${input.substrate} is not legal for backend ${String(input.backend)} ` +
+            '(pty is claude_code-only for the built-ins; a registered backend declares its substrates)',
+        );
       }
       if (!input.cwd.startsWith('/')) {
         throw new KernelStoreError('cwd must be an absolute, byte-stable path (blueprint §3 rule 2)');

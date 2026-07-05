@@ -27,6 +27,8 @@ import type { Migration } from '../index.js';
 import { MIGRATION_0003_LINEAGE } from './0003-lineage.js';
 import { MIGRATION_0004_PIPELINES } from './0004-pipelines.js';
 import { MIGRATION_0005_ACCOUNT_REGISTRY } from './0005-account-registry.js';
+import { MIGRATION_0007_BACKEND_REGISTRY } from './0007-backend-registry.js';
+import { MIGRATION_0009_BACKEND_REGISTRY_STEP_ATTEMPT } from './0009-backend-registry-step-attempt.js';
 
 export const MIGRATION_0001_KERNEL: Migration = {
   id: 1,
@@ -109,12 +111,20 @@ CREATE INDEX resume_ledger_native_idx ON resume_ledger (native_session_id)
  * tables; 0003 = the M4 [X4] lineage tables; 0004 = the M5 pipeline tables +
  * memoization journal; 0005 = the M7 account-registry relaxation (the
  * account-label CHECKs widen from the closed 5-set to the open MAX_<X> form —
- * ICR-0013). 0002 is the events store on the SEPARATE collector database
- * (EVENTS_STORE_MIGRATIONS; 0006 is its M7 sibling); ids stay repo-wide unique.
+ * ICR-0013); 0007 = the M8 BACKEND-registry relaxation (the `backend` CHECK +
+ * built-in pairing/pty clauses widen from the closed 3-set to an open,
+ * app-layer-gated form — ICR-0016, finding OS-1); 0009 = the step_attempt
+ * amendment 0007 explicitly skipped (its `account` CHECK widens to admit a
+ * registered 4th backend's own account label — ICR-0016 step_attempt amendment,
+ * keyed on the label form since the table has no backend column). 0002 is the
+ * events store on the SEPARATE collector database (EVENTS_STORE_MIGRATIONS; 0006
+ * is its M7 sibling, 0008 its M8 sibling); ids stay repo-wide unique.
  */
 export const KERNEL_MIGRATIONS: readonly Migration[] = Object.freeze([
   MIGRATION_0001_KERNEL,
   MIGRATION_0003_LINEAGE,
   MIGRATION_0004_PIPELINES,
   MIGRATION_0005_ACCOUNT_REGISTRY,
+  MIGRATION_0007_BACKEND_REGISTRY,
+  MIGRATION_0009_BACKEND_REGISTRY_STEP_ATTEMPT,
 ]);

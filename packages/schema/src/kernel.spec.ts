@@ -1,3 +1,4 @@
+import { registerBackend, unregisterBackend } from '@aibender/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -39,12 +40,14 @@ const newRow = (overrides: Partial<NewResumeLedgerRow> = {}): NewResumeLedgerRow
   ...overrides,
 });
 
-describe('kernel migrations: 0001 seeds + 0005 account-registry relaxation', () => {
-  it('seeds the five account profiles and reflects the M7 relaxation in schema_meta', async () => {
+describe('kernel migrations: 0001 seeds + 0005/0007/0009 registry relaxations', () => {
+  it('seeds the five account profiles and reflects the M8 relaxation in schema_meta', async () => {
     const store = await openStore();
-    // 0005 (M7 account-registry relaxation) bumps the kernel schema_meta.
-    expect(store.schemaMeta.get('ddl_version')).toBe('5');
-    expect(store.schemaMeta.get('frozen_milestone')).toBe('M7');
+    // 0009 (the M8 step_attempt account amendment 0007 skipped) is the latest
+    // kernel migration and bumps schema_meta (ddl_version 7→9, milestone stays
+    // M8 — 0009 is part of the same ICR-0016 backend-registry freeze).
+    expect(store.schemaMeta.get('ddl_version')).toBe('9');
+    expect(store.schemaMeta.get('frozen_milestone')).toBe('M8');
     // The SEED set is still the five originally provisioned placeholders — the
     // migration RELAXES validation, it does not seed new accounts.
     const profiles = store.accountProfiles.list();
@@ -71,6 +74,80 @@ describe('kernel migrations: 0001 seeds + 0005 account-registry relaxation', () 
       store.resumeLedger.insertBeforeSpawn(
         newRow({ id: 'ses_pair', accountLabel: 'MAX_C' as never, backend: 'opencode' }),
       ),
+    ).toThrow();
+  });
+
+  it('admits a REGISTERED 4th backend end-to-end + still rejects an unregistered one (ICR-0016)', async () => {
+    const store = await openStore();
+    // Unregistered backend id is refused by the accessor (isBackend gate) AND
+    // by an accessor-bypassing raw insert would fail the non-empty/other CHECKs
+    // — prove the accessor first.
+    expect(() =>
+      store.resumeLedger.insertBeforeSpawn(
+        newRow({ id: 'ses_unreg', accountLabel: 'SYNTH_L' as never, backend: 'synthbackend' as never }),
+      ),
+    ).toThrow(); // SYNTH_L is not a valid account label until the descriptor is registered
+
+    // Register a synthetic 4th backend serving its own label form.
+    registerBackend({
+      id: 'synthbackend',
+      servesLabel: (label) => label === 'SYNTH_L',
+      sourceName: 'lmstudio',
+      substrates: ['sdk'],
+      builtin: false,
+    });
+    try {
+      // Now the migration-relaxed DB CHECK + accessor accept the row — with NO
+      // schema edit and NO new migration.
+      const row = store.resumeLedger.insertBeforeSpawn(
+        newRow({ id: 'ses_synth', accountLabel: 'SYNTH_L' as never, backend: 'synthbackend' as never }),
+      );
+      expect(row.backend).toBe('synthbackend');
+      expect(row.accountLabel).toBe('SYNTH_L');
+      // The registered backend is sdk-only: a pty launch is refused (registry-driven).
+      expect(() =>
+        store.resumeLedger.insertBeforeSpawn(
+          newRow({
+            id: 'ses_synth_pty',
+            accountLabel: 'SYNTH_L' as never,
+            backend: 'synthbackend' as never,
+            substrate: 'pty',
+          }),
+        ),
+      ).toThrow();
+      // The built-in three are unaffected while the 4th is registered.
+      const claudeRow = store.resumeLedger.insertBeforeSpawn(
+        newRow({ id: 'ses_claude', accountLabel: 'MAX_A', backend: 'claude_code' }),
+      );
+      expect(claudeRow.backend).toBe('claude_code');
+    } finally {
+      unregisterBackend('synthbackend');
+    }
+  });
+
+  it('the DDL backend CHECK still refuses an EMPTY backend even via a bypassing writer', async () => {
+    const store = await openStore();
+    // The relaxed CHECK is length(backend) > 0 — an empty string is still refused.
+    expect(() =>
+      store.driver
+        .prepare(
+          `INSERT INTO resume_ledger
+             (id, account_label, backend, cwd, substrate, purpose, workstream_hint,
+              native_session_id, state, pid, spawn_nonce, created_at_iso, updated_at_iso)
+           VALUES ('e', 'MAX_A', '', '/w', 'sdk', 'p', NULL, NULL, 'spawning', NULL, NULL, 't', 't')`,
+        )
+        .run(),
+    ).toThrow();
+    // And the BUILT-IN pairing CHECK is still enforced for a built-in backend.
+    expect(() =>
+      store.driver
+        .prepare(
+          `INSERT INTO resume_ledger
+             (id, account_label, backend, cwd, substrate, purpose, workstream_hint,
+              native_session_id, state, pid, spawn_nonce, created_at_iso, updated_at_iso)
+           VALUES ('p', 'MAX_A', 'opencode', '/w', 'sdk', 'p', NULL, NULL, 'spawning', NULL, NULL, 't', 't')`,
+        )
+        .run(),
     ).toThrow();
   });
 });
@@ -294,7 +371,7 @@ describe('account_profiles + schema_meta accessors', () => {
     store.schemaMeta.set('kernel_boot_count', '2');
     expect(store.schemaMeta.get('kernel_boot_count')).toBe('2');
     expect(store.schemaMeta.get('missing')).toBeUndefined();
-    expect(store.schemaMeta.all()['ddl_version']).toBe('5');
+    expect(store.schemaMeta.all()['ddl_version']).toBe('9');
     expect(() => store.schemaMeta.set('  ', 'x')).toThrow(KernelStoreError);
   });
 

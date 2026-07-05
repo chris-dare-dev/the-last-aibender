@@ -36,8 +36,8 @@ describe('lineage store (migration 0003, FROZEN-M4)', () => {
   it('records the lineage DDL slice in its OWN schema_meta keys (not the shared base)', async () => {
     const store = await memoryStore();
     // The base frozen_milestone advances with the newest kernel migration
-    // (0005 = M7, ICR-0013); the LINEAGE slice keeps its OWN per-slice keys.
-    expect(store.schemaMeta.get('frozen_milestone')).toBe('M7');
+    // (0007 = M8, ICR-0016); the LINEAGE slice keeps its OWN per-slice keys.
+    expect(store.schemaMeta.get('frozen_milestone')).toBe('M8');
     expect(store.schemaMeta.get('lineage_ddl_version')).toBe('1');
     expect(store.schemaMeta.get('lineage_frozen_milestone')).toBe('M4');
     store.close();

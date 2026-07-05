@@ -659,3 +659,48 @@ STUB
   grep -q '(release-packaging.md)' "$idx"
   ! grep -q 'planned (M6)' "$idx"
 }
+
+# --- add-a-backend runbook (OS-1 backend-registry scalability proof) -----------
+
+@test "add-a-backend runbook exists and is indexed" {
+  # OS-1 (ICR-0016): the backend twin of add-an-account.md. Its presence in the
+  # index is the operator-facing "yes, adding a backend is easy" proof.
+  [ -f "$REPO_ROOT/docs/runbooks/add-a-backend.md" ]
+  idx="$REPO_ROOT/docs/runbooks/README.md"
+  grep -q '(add-a-backend.md)' "$idx"
+}
+
+@test "add-a-backend runbook links resolve (relative doc + source paths exist)" {
+  # Every relative path the runbook points at must exist, so a renamed contract
+  # / registry / adapter surface surfaces as a failing test, not a dead link.
+  rb="$REPO_ROOT/docs/runbooks/add-a-backend.md"
+  [ -f "$rb" ]
+  base="$(dirname "$rb")"
+  # linked docs
+  [ -f "$base/../contracts/icr/icr-0016-backend-registry.md" ]
+  [ -f "$base/account-registry.md" ]
+  [ -f "$base/add-an-account.md" ]
+  # the registry + schema + adapter surfaces the prose cites by path
+  [ -f "$REPO_ROOT/packages/protocol/src/vocab.ts" ]
+  [ -f "$REPO_ROOT/packages/protocol/src/events.ts" ]
+  [ -f "$REPO_ROOT/packages/schema/src/migrations/0007-backend-registry.ts" ]
+  [ -f "$REPO_ROOT/packages/schema/src/migrations/0008-backend-registry-events.ts" ]
+  [ -f "$REPO_ROOT/core/src/adapters/index.ts" ]
+  [ -f "$REPO_ROOT/core/src/adapters/lmstudio/health.ts" ]
+  [ -d "$REPO_ROOT/core/src/adapters/opencode" ]
+  [ -d "$REPO_ROOT/core/src/adapters/lmstudio" ]
+  [ -d "$REPO_ROOT/core/src/adapters/claude-sdk" ]
+  [ -f "$REPO_ROOT/docs/contracts/sqlite-ddl.md" ]
+}
+
+@test "add-a-backend runbook names the registry seams and the no-migration proof" {
+  # Guard the load-bearing claims: the descriptor + registration seam, and the
+  # explicit "no migration needed" scalability proof (the OS-1 crux).
+  rb="$REPO_ROOT/docs/runbooks/add-a-backend.md"
+  grep -q 'BackendDescriptor' "$rb"
+  grep -q 'registerBackend' "$rb"
+  grep -q 'No migration needed' "$rb"
+  # the sourceName caveat (isEventSource stays closed) must be stated so an
+  # operator does not invent a source value the accessor will reject.
+  grep -q 'EVENT_SOURCES' "$rb"
+}

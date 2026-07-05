@@ -145,6 +145,12 @@ export { MIGRATION_0005_ACCOUNT_REGISTRY } from './migrations/0005-account-regis
 
 export { MIGRATION_0006_ACCOUNT_REGISTRY_EVENTS } from './migrations/0006-account-registry-events.js';
 
+export { MIGRATION_0007_BACKEND_REGISTRY } from './migrations/0007-backend-registry.js';
+
+export { MIGRATION_0008_BACKEND_REGISTRY_EVENTS } from './migrations/0008-backend-registry-events.js';
+
+export { MIGRATION_0009_BACKEND_REGISTRY_STEP_ATTEMPT } from './migrations/0009-backend-registry-step-attempt.js';
+
 export {
   ACTIVE_SESSION_STATES,
   IllegalTransitionError,

@@ -6,7 +6,8 @@
 #   linux-tests    pnpm install (frozen) → -r typecheck → -r test
 #   design-tokens  DESIGN.md §8.3 gate: lint:tokens + committed-theme drift
 #   infra-tests    bats + shellcheck: the `pnpm run test:infra` composite
-#                  (infra/scripts + infra/launchd + infra/hooks) + infra/ci
+#                  (infra/scripts + infra/launchd + infra/hooks + infra/aws
+#                  + infra/colima) + infra/ci
 #   macos-build    BUILD-ONLY macOS job: core tsc, app build (when landed),
 #                  cargo check of src-tauri (when landed — NEVER a full tauri
 #                  bundle in CI), darwin-tagged units, app-build artifact
@@ -122,16 +123,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq bats shellcheck jq
 
-      # The next four steps are the literal `pnpm run test:infra` composite
+      # The next five steps are the literal `pnpm run test:infra` composite
       # (root package.json), kept as discrete steps for per-suite CI logs —
       # no node/pnpm setup needed in this job.
-      - name: SI script suite (accounts/provisioning — test:infra 1/4)
+      - name: SI script suite (accounts/provisioning — test:infra 1/5)
         run: bash infra/scripts/tests/run.sh
 
-      - name: SI-3 launchd suite (plist templates + render — test:infra 2/4)
+      - name: SI-3 launchd suite (plist templates + render — test:infra 2/5)
         run: bash infra/launchd/tests/run.sh
 
-      - name: SI-3 hooks suite (settings installer merge fidelity — test:infra 3/4)
+      - name: SI-3 hooks suite (settings installer merge fidelity — test:infra 3/5)
         run: bash infra/hooks/tests/run.sh
 
       # Provider download only (registry, network) — NO backend, NO cloud
@@ -144,8 +145,15 @@ jobs:
       - name: Terraform init for SI-4 (providers only, no backend)
         run: terraform -chdir=infra/aws init -backend=false || true
 
-      - name: SI-4 Bedrock IaC suite (fmt/validate + hygiene — test:infra 4/4)
+      - name: SI-4 Bedrock IaC suite (fmt/validate + hygiene — test:infra 4/5)
         run: bash infra/aws/tests/run.sh
+
+      # Fully headless: colima/limactl/kubectl are PATH stubs inside the
+      # suite; the only network activity is loopback GETs against a
+      # suite-owned python3 fake server (python3 + curl ship on runners).
+      # No VM, no k3s, no LM Studio — VM lifecycle stays owner-gated.
+      - name: SI-5 colima suite (pins + loopback probe — test:infra 5/5)
+        run: bash infra/colima/tests/run.sh
 
       - name: CI script suite (live-check runner + CI helpers)
         run: bash infra/ci/tests/run.sh

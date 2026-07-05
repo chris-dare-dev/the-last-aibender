@@ -71,6 +71,28 @@ aib_env_json() { # $1 = label, $2 = otlp endpoint
   }'
 }
 
+# The [X4] automation activation record for the state file (hooks-contract.md
+# §7.1, M4). Derived FROM the rendered fragment so the record and the
+# installed settings can never drift. The three slots ride the same
+# type:"http" envelope as every other event (contract §5.4); SessionStart is
+# the ONE slot whose `200` response the CLI applies as hook output — the
+# frozen brief-injection shape `hookSpecificOutput.additionalContext`
+# (contract §7.1). The collector's default stays 204 (no injection) until the
+# pinned-CLI interpretation of that body is verified on the real host (T3,
+# docs/runbooks/hooks-telemetry.md) — activation here is template-side only.
+aib_x4_state_json() { # $1 = rendered fragment JSON
+  printf '%s' "$1" | jq -cS '{
+    slots: ["SessionEnd", "PreCompact", "SessionStart"],
+    sessionStart: {
+      matcher: .hooks.SessionStart[0].matcher,
+      timeoutSeconds: .hooks.SessionStart[0].hooks[0].timeout,
+      responseApplied: "hookSpecificOutput.additionalContext (hooks-contract.md §7.1)"
+    },
+    injectionDefault:
+      "204 until the pinned-CLI additionalContext interpretation is verified (T3 — docs/runbooks/hooks-telemetry.md)"
+  }'
+}
+
 # Shell-quote guard: the statusline command string embeds paths in single
 # quotes; a single quote inside them would truncate the command.
 aib_no_squote() { # $1 = description, $2 = value

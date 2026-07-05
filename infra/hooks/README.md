@@ -20,13 +20,22 @@ plan §6/SI-3; the POST surface is the **FROZEN-M2**
 1. One template, three installs — **the only per-account difference is the
    `<ACCOUNT_LABEL>` path segment** of
    `http://127.0.0.1:<hooksPort>/hooks/v1/<LABEL>` (tested).
-2. Short hook `timeout` (5 s) — a dead collector can never stall a session.
+2. Short hook `timeout` (5 s; SessionStart 10 s — see 4) — a dead collector
+   can never stall a session.
 3. **No shell-outs**: every registered hook is a loopback http POST [X2]
    (tested against both the template and installed trees).
 4. The [X4] automation set (`SessionStart` matcher
    `startup|resume|clear|compact`, `SessionEnd`, `PreCompact`) rides the
-   **same** envelope — BE-7 consumes those events from the store at M4, not
-   via a second transport.
+   **same** envelope — no second transport. **ACTIVE since M4**
+   (hooks-contract.md §7.1 routing amendment): `SessionEnd`/`PreCompact`
+   are post-ack fire-and-forget collector-side and keep the 5 s window;
+   `SessionStart` is the ONE slot whose `200` response the CLI applies as
+   hook output — the frozen brief-injection shape
+   (`hookSpecificOutput.additionalContext`) — so its template entry carries
+   a widened 10 s response window for the collector's deadline race. The
+   per-account state file records the activation (`x4` block, derived from
+   the installed settings). Injection stays **204-default** until the T3
+   pinned-CLI verification lands (see below).
 
 ## Ports (configuration, not contract)
 
@@ -41,5 +50,7 @@ The OTel env block sets `CLAUDE_CODE_ENABLE_TELEMETRY=1`,
 **T3 (owner-run):** installing into the REAL account dirs and verifying the
 pinned CLI accepts every registration (incl. the http-hook
 `permissionDecision` response semantics before the policy floor ever turns
-enforcing — hooks-contract §4) — procedure in
+enforcing — hooks-contract §4 — and, since M4, the CLI-side interpretation
+of the SessionStart `200` `additionalContext` body before brief injection
+turns on — hooks-contract §7.1) — procedure in
 [docs/runbooks/hooks-telemetry.md](../../docs/runbooks/hooks-telemetry.md).

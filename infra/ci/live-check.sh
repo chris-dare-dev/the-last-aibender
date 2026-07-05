@@ -15,7 +15,7 @@
 # SKIP with its runbook pointer instead of failing.
 #
 # Usage:
-#   live-check.sh [--milestone M1|M2|M3|M6] [--check ID] [--list]
+#   live-check.sh [--milestone M1|M2|M3|M4|M6] [--check ID] [--list]
 #                 [--allow-real-accounts] [--aibender-home DIR]
 #
 #   --list                 print the check registry and exit
@@ -69,9 +69,11 @@ CHECKS=(
   "lmstudio-probe|M2|LM Studio reachable on 127.0.0.1 (host-native [X3])|docs/research/summaries/01-architecture-blueprint.md §9"
   "opencode-serve-probe|M2|temporary opencode serve: health/list/event only|docs/research/findings/opencode-serve-event-probe.md"
   "aws-sso-plan|M3|SI-4 terraform plan (owner-run; apply hard-gated)|docs/runbooks/bedrock-iac.md"
+  "x4-hook-slots|M4|SI-3 [X4] automation slots M4-active in per-account settings (read-only)|docs/runbooks/hooks-telemetry.md §[X4] automation"
+  "colima-probe|M4|SI-5 pod-to-host loopback gate, read-only (GREEN/DOWN/RED to PASS/SKIP/FAIL)|docs/runbooks/colima.md"
   "signing-dryrun|M6|signed (dry-run) sidecar artifact cold-start|docs/spikes/spike-e-signing-ant.md"
 )
-MILESTONES="M1 M2 M3 M6"
+MILESTONES="M1 M2 M3 M4 M6"
 
 usage() {
   sed -n '2,52p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -418,6 +420,94 @@ check_aws_sso_plan() {
     printf 'SKIP\tpending-owner: SI-4 IaC not landed in infra/aws/ — docs/runbooks/bedrock-iac.md · plan §6/SI-4 (gated)\n'; return
   fi
   printf 'SKIP\tpending-owner: SI-4 IaC landed (validate/bats green) — owner-run sequence: aws sso login, terraform plan, review, verbal OK; APPLY is hard-gated (External System Write Policy) and never run from this script; until applied BE-5 is estimate-only — docs/runbooks/bedrock-iac.md\n'
+}
+
+# SI-3/M4 edit (coordinate with SI-6): the [X4] automation slots must be
+# ACTIVE per the hooks-contract.md §7.1 routing amendment in every
+# provisioned account's settings.json — the aibender SessionStart entry
+# carries the frozen matcher and the widened 10 s response window (its 200
+# response is the frozen brief-injection shape), and SessionEnd/PreCompact
+# carry aibender loopback /hooks/v1/ entries (post-ack fire-and-forget
+# collector-side). Read-only. An M2/M3-era install (SessionStart still 5 s)
+# is SKIP pending-owner — the idempotent installer upgrade is owner-run (T3).
+# Injection stays 204-default until the §7.1 T3 pinned-CLI proof lands;
+# this check verifies TEMPLATE-side activation only.
+check_x4_hook_slots() {
+  local home labels label settings total=0 ok=0 stale="" missing=""
+  if [ ! -f "$ROOT/infra/hooks/templates/settings.fragment.json.template" ]; then
+    printf 'SKIP\tpending-owner: SI-3 hook settings template not landed in infra/hooks/templates/ — shape governed by docs/contracts/hooks-contract.md §7.1\n'; return
+  fi
+  command -v jq >/dev/null 2>&1 || { printf 'SKIP\tpending-owner: jq required to inspect per-account settings.json (brew install jq) — docs/runbooks/hooks-telemetry.md\n'; return; }
+  home="$(aib_home)"
+  labels="$(provisioned_labels)"
+  if [ -z "$labels" ]; then
+    printf 'SKIP\tpending-owner: no provisioned account dirs under %s/accounts — provision (SI-2), then install hooks per docs/runbooks/hooks-telemetry.md\n' "$home"; return
+  fi
+  for label in $labels; do
+    total=$((total + 1))
+    settings="$home/accounts/$label/settings.json"
+    if [ ! -f "$settings" ]; then
+      missing="$missing $label"
+      continue
+    fi
+    # The M4 activation signature (same aibender-ownership predicate as
+    # check_hooks_installed): SessionStart entry with the frozen matcher and
+    # a 10 s aibender http hook; SessionEnd + PreCompact each carrying an
+    # aibender http hook. Template constants, not configuration.
+    if jq -e '
+          def aibender: select(.type == "http"
+            and ((.url // "") | test("^http://127\\.0\\.0\\.1:[0-9]+/hooks/v1/")));
+          (.hooks // {}) as $h
+          | ([ ($h.SessionStart // []) | arrays | .[] | objects
+               | select(.matcher == "startup|resume|clear|compact")
+               | .hooks? // [] | arrays | .[] | objects | aibender
+               | select(.timeout == 10) ] | length >= 1)
+            and
+            ([ ($h.SessionEnd // []) | arrays | .[] | objects
+               | .hooks? // [] | arrays | .[] | objects | aibender ] | length >= 1)
+            and
+            ([ ($h.PreCompact // []) | arrays | .[] | objects
+               | .hooks? // [] | arrays | .[] | objects | aibender ] | length >= 1)
+        ' "$settings" >/dev/null 2>&1; then
+      ok=$((ok + 1))
+    else
+      stale="$stale $label"
+    fi
+  done
+  if [ "$ok" -eq "$total" ]; then
+    printf 'PASS\t%s/%s accounts carry the M4-active [X4] slots (SessionStart matcher + 10 s response window; SessionEnd/PreCompact registered); injection stays 204-default until the T3 pinned-CLI proof — hooks-contract §7.1\n' "$ok" "$total"
+  elif [ -n "$missing" ]; then
+    printf 'SKIP\tpending-owner: hooks not installed for account(s):%s%s — run infra/hooks/install-hook-settings.sh (owner, T3); docs/runbooks/hooks-telemetry.md\n' "$missing" "${stale:+ (and M2/M3-era:$stale)}"
+  else
+    printf 'SKIP\tpending-owner: M2/M3-era install (slots not M4-active) for account(s):%s — re-run infra/hooks/install-hook-settings.sh (idempotent in-place upgrade, owner T3); docs/runbooks/hooks-telemetry.md\n' "$stale"
+  fi
+}
+
+# SI-5/M4 edit (coordinate with SI-6): the [X3] pod-to-host loopback gate,
+# run read-only on the live host. Exit-code mapping is the honest one:
+# 0/GREEN → PASS (gate certified on the pinned stack), 3/DOWN → SKIP
+# pending-owner (toolchain/VM/target down — VM lifecycle and LM Studio start
+# are owner-gated and NEVER performed from here), 1/RED → FAIL (loopback
+# regression or unapproved version drift — do not accept the state). The
+# probe itself never starts, stops, resizes, or deletes anything.
+check_colima_probe() {
+  local probe out rc=0 summary
+  probe="$ROOT/infra/colima/probe-pod-host-loopback.sh"
+  if [ ! -f "$probe" ]; then
+    printf 'SKIP\tpending-owner: SI-5 probe not landed in infra/colima/ — plan §6/SI-5 · docs/runbooks/colima.md\n'; return
+  fi
+  if is_offline; then
+    printf 'SKIP\tpending-owner: offline mode (AIBENDER_LIVECHECK_OFFLINE=1) — the probe GETs the host target and sshes into the VM; re-run on the live host — docs/runbooks/colima.md\n'; return
+  fi
+  out="$(bash "$probe" 2>&1)" || rc=$?
+  printf '%s\n' "$out" >&2
+  summary="$(printf '%s\n' "$out" | sed -n 's/^RESULT: //p' | head -n 1)"
+  case "$rc" in
+    0) printf 'PASS\t%s — colima/lima upgrade gate certified (docs/runbooks/colima.md)\n' "${summary:-GREEN}" ;;
+    3) printf 'SKIP\tpending-owner: %s — VM/target lifecycle is owner-gated and never started from here; docs/runbooks/colima.md\n' "${summary:-DOWN (prerequisite down)}" ;;
+    1) printf 'FAIL\t%s — do NOT accept this colima/lima state; docs/runbooks/colima.md fallback ladder\n' "${summary:-RED (loopback regression)}" ;;
+    *) printf 'FAIL\tprobe exited %s unexpectedly — infra/colima/probe-pod-host-loopback.sh --help\n' "$rc" ;;
+  esac
 }
 
 check_signing_dryrun() {

@@ -18,7 +18,7 @@
     "SessionStart": [
       {
         "matcher": "startup|resume|clear|compact",
-        "hooks": [{ "type": "http", "url": "{{HOOKS_URL}}", "timeout": 5 }]
+        "hooks": [{ "type": "http", "url": "{{HOOKS_URL}}", "timeout": 10 }]
       }
     ],
     "SessionEnd": [

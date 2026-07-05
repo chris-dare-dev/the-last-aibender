@@ -4,7 +4,10 @@
 # Plan §9.2 SI-3 row:
 #   positive — hook templates install idempotently (plus: fragment matches
 #              the FROZEN-M2 hooks-contract.md — 29-event vocabulary, http
-#              POSTs to /hooks/v1/<LABEL>, label-only per-account delta)
+#              POSTs to /hooks/v1/<LABEL>, label-only per-account delta;
+#              M4: the [X4] slots are ACTIVE per the §7.1 routing amendment
+#              — SessionStart response window + state-file record + clean
+#              upgrade from an M2/M3-era install)
 #   negative — invalid settings.json REFUSED and untouched (fail closed);
 #              unmanaged dir (no provenance marker) REFUSED; hook entries
 #              are http-only (no shell-outs — hooks-contract §5.3 [X2])
@@ -112,6 +115,78 @@ EOF
   [ "$(jq '.hooks.PreCompact | length' "$s")" -eq 1 ]
   url="$(jq -r '.hooks.PreCompact[0].hooks[0].url' "$s")"
   [[ "$url" == "http://127.0.0.1:4319/hooks/v1/MAX_A" ]]
+}
+
+# --- [X4] M4 activation (hooks-contract.md §7.1 routing amendment) ---------------
+
+@test "[X4] M4: SessionStart carries the widened response window; SessionEnd/PreCompact stay fire-and-forget" {
+  provision
+  "$INSTALL" >/dev/null
+  for a in max-a max-b ent; do
+    s="$(settings_of "$a")"
+    # SessionStart's 200 response is the frozen brief injection
+    # (hookSpecificOutput.additionalContext) — give the collector's
+    # deadline race room to answer before the CLI-side hook timeout.
+    [ "$(jq '.hooks.SessionStart[0].hooks[0].timeout' "$s")" -eq 10 ]
+    # the fire-and-forget slots keep the short window (collector answers
+    # 204 FIRST, handler runs post-ack — §7.1)
+    [ "$(jq '.hooks.SessionEnd[0].hooks[0].timeout' "$s")" -eq 5 ]
+    [ "$(jq '.hooks.PreCompact[0].hooks[0].timeout' "$s")" -eq 5 ]
+  done
+  # the committed template pins the same split
+  [ "$(jq '.hooks.SessionStart[0].hooks[0].timeout' "$HOOKS/templates/settings.fragment.json.template")" -eq 10 ]
+  # activation adds NO second transport: SessionStart stays ONE plain http
+  # POST — the injection rides the RESPONSE (same envelope, §7.1)
+  [ "$(jq '.hooks.SessionStart[0].hooks | length' "$(settings_of max-a)")" -eq 1 ]
+  [ "$(jq -r '.hooks.SessionStart[0].hooks[0].type' "$(settings_of max-a)")" = "http" ]
+}
+
+@test "[X4] M4: state file records the activation (slots + SessionStart response contract)" {
+  provision
+  "$INSTALL" --label MAX_A >/dev/null
+  st="$AIBENDER_HOME/accounts/max-a/.aibender-hooks.json"
+  [ "$(jq -r '.x4.slots | join(",")' "$st")" = "SessionEnd,PreCompact,SessionStart" ]
+  [ "$(jq -r '.x4.sessionStart.matcher' "$st")" = "startup|resume|clear|compact" ]
+  [ "$(jq '.x4.sessionStart.timeoutSeconds' "$st")" -eq 10 ]
+  [[ "$(jq -r '.x4.sessionStart.responseApplied' "$st")" == *"additionalContext"* ]]
+  # honest posture: injection is 204-default until the T3 pinned-CLI proof
+  [[ "$(jq -r '.x4.injectionDefault' "$st")" == *"204"* ]]
+  # the record is DERIVED from the installed settings — assert lockstep
+  [ "$(jq '.x4.sessionStart.timeoutSeconds' "$st")" -eq "$(jq '.hooks.SessionStart[0].hooks[0].timeout' "$(settings_of max-a)")" ]
+}
+
+@test "[X4] M4: upgrade from an M2/M3-era install replaces aibender slots in place (no dupes, user settings kept)" {
+  provision
+  user_settings_fixture > "$(settings_of max-a)"
+  "$INSTALL" --label MAX_A >/dev/null
+  s="$(settings_of max-a)"
+  # simulate the M2/M3-era tree: aibender SessionStart entry at the old 5 s window
+  jq '.hooks.SessionStart[0].hooks[0].timeout = 5' "$s" > "$s.tmp" && mv "$s.tmp" "$s"
+  run "$INSTALL" --label MAX_A
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'hooks\tMAX_A\t'*$'\tINSTALLED'* ]]
+  [ "$(jq '.hooks.SessionStart | length' "$s")" -eq 1 ]
+  [ "$(jq '.hooks.SessionStart[0].hooks[0].timeout' "$s")" -eq 10 ]
+  # hostile fixture survives the upgrade pass untouched
+  [ "$(jq -r '.model' "$s")" = "opus" ]
+  [ "$(jq -r '.somethingUnknown.keep' "$s")" = "true" ]
+  [ "$(jq '.hooks.PreToolUse | length' "$s")" -eq 2 ]
+  [ "$(jq -r '.hooks.PreToolUse[0].hooks[0].command' "$s")" = "echo user-hook" ]
+  # and a further re-run is byte-stable
+  before="$(cat "$s")"
+  "$INSTALL" --label MAX_A >/dev/null
+  [ "$(cat "$s")" = "$before" ]
+}
+
+@test "[X4] M4: uninstall removes the activated slots and the x4 state record with them" {
+  provision
+  "$INSTALL" --label MAX_B >/dev/null
+  st="$AIBENDER_HOME/accounts/max-b/.aibender-hooks.json"
+  [ "$(jq -r '.x4.slots[2]' "$st")" = "SessionStart" ]
+  run "$UNINSTALL" --label MAX_B
+  [ "$status" -eq 0 ]
+  [ ! -e "$(settings_of max-b)" ]
+  [ ! -e "$st" ]
 }
 
 @test "install is idempotent (second run UNCHANGED, byte-identical)" {

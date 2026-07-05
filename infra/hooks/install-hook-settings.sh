@@ -20,9 +20,17 @@
 #                 http://127.0.0.1:<hooks-port>/hooks/v1/<LABEL> with a
 #                 short timeout. The [X4] automation events
 #                 (SessionStart/SessionEnd/PreCompact) ride the SAME
-#                 envelope (hooks-contract.md §5.4). User hook entries are
-#                 preserved; aibender entries (loopback /hooks/v1/ POSTs)
-#                 are replaced in place — idempotent by construction.
+#                 envelope (hooks-contract.md §5.4); at M4 the slots are
+#                 ACTIVE per the §7.1 routing amendment — SessionEnd and
+#                 PreCompact stay fire-and-forget (5 s), while SessionStart
+#                 carries a widened response window (10 s) because its `200`
+#                 response is the frozen brief-injection shape
+#                 (hookSpecificOutput.additionalContext) the CLI applies as
+#                 hook output. Injection stays 204-default collector-side
+#                 until the T3 pinned-CLI verification lands. User hook
+#                 entries are preserved; aibender entries (loopback
+#                 /hooks/v1/ POSTs) are replaced in place — idempotent by
+#                 construction, so an M2/M3-era install upgrades cleanly.
 #
 # MERGE, NEVER OVERWRITE (plan §9.2 SI-3 edge row): unknown keys, user
 # permissions, user hooks, user env all survive. Invalid existing JSON is
@@ -170,9 +178,10 @@ install_account() { # $1 = label, $2 = dir
     --argjson env "$(aib_env_json "$label" "$OTLP_ENDPOINT")" \
     --argjson ours "$(printf '%s' "$fragment" | jq -c '.statusLine')" \
     --argjson orig "$original_sl" \
+    --argjson x4 "$(aib_x4_state_json "$fragment")" \
     --arg pt "$passthrough" \
     '{schemaVersion: 1, label: $label, hooksUrl: $hooksUrl, otlpEndpoint: $otlp,
-      env: $env, statusLine: $ours, originalStatusLine: $orig,
+      env: $env, statusLine: $ours, originalStatusLine: $orig, x4: $x4,
       passthroughFile: (if $orig != null and ($orig.type? == "command") then $pt else null end)}')"
 
   if [ "$DRY_RUN" -eq 1 ]; then

@@ -34,7 +34,7 @@ setup() {
 }
 
 # Number of rows in the live-check registry — update alongside CHECKS=().
-REGISTRY_COUNT=11
+REGISTRY_COUNT=13
 
 run_livecheck_bare() { # extra args forwarded
   HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
@@ -50,12 +50,13 @@ run_livecheck_bare() { # extra args forwarded
   # Every row is 4 tab-separated fields with a known milestone tag.
   while IFS=$'\t' read -r id ms desc pointer; do
     [ -n "$id" ] && [ -n "$desc" ] && [ -n "$pointer" ]
-    case "$ms" in M1|M2|M3|M6) : ;; *) return 1 ;; esac
+    case "$ms" in M1|M2|M3|M4|M6) : ;; *) return 1 ;; esac
   done <<<"$output"
   # The checks the plan names explicitly are all present.
   for id in keychain-probe version-gate auth-status x1-live-demo \
             sigkill-orphan aqua-launchd hooks-installed lmstudio-probe \
-            opencode-serve-probe aws-sso-plan signing-dryrun; do
+            opencode-serve-probe aws-sso-plan x4-hook-slots colima-probe \
+            signing-dryrun; do
     grep -q "^$id	" <<<"$output"
   done
 }
@@ -267,6 +268,152 @@ STUB
   [ "$status" -eq 0 ]
   grep -q $'^check\tversion-gate\tM1\tSKIP\t' <<<"$output"
   grep -q 'version-gate.md' <<<"$output"
+}
+
+# --- M4 checks: SI-3 [X4] slots + SI-5 colima probe (surgical append) ----------
+
+# Per-account fixture with the M4-active [X4] slots ($1 = label, $2 = SessionStart timeout).
+x4_settings_fixture() {
+  cat <<JSON
+{
+  "hooks": {
+    "SessionStart": [
+      { "matcher": "startup|resume|clear|compact",
+        "hooks": [{ "type": "http", "url": "http://127.0.0.1:4319/hooks/v1/$1", "timeout": $2 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:4319/hooks/v1/$1", "timeout": 5 }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:4319/hooks/v1/$1", "timeout": 5 }] }
+    ]
+  }
+}
+JSON
+}
+
+@test "x4-hook-slots: PASS when every provisioned account carries the M4-active slots" {
+  aib="$BATS_TEST_TMPDIR/x4active"
+  for label in max-a ent; do
+    mkdir -p "$aib/accounts/$label"
+    printf '{"label":"%s"}\n' "$label" > "$aib/accounts/$label/.aibender-account.json"
+    x4_settings_fixture "MAX_A" 10 > "$aib/accounts/$label/settings.json"
+  done
+  HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
+    run bash "$LIVECHECK" --aibender-home "$aib" --check x4-hook-slots
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tx4-hook-slots\tM4\tPASS\t' <<<"$output"
+  # honest posture rides the detail: injection stays 204-default until T3
+  grep -q '204-default' <<<"$output"
+  grep -q '§7.1' <<<"$output"
+}
+
+@test "x4-hook-slots: M2/M3-era install (SessionStart 5 s) SKIPs pending-owner naming the stale account" {
+  aib="$BATS_TEST_TMPDIR/x4stale"
+  mkdir -p "$aib/accounts/max-b"
+  printf '{"label":"max-b"}\n' > "$aib/accounts/max-b/.aibender-account.json"
+  x4_settings_fixture "MAX_B" 5 > "$aib/accounts/max-b/settings.json"
+  HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
+    run bash "$LIVECHECK" --aibender-home "$aib" --check x4-hook-slots
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tx4-hook-slots\tM4\tSKIP\t' <<<"$output"
+  grep -q 'pending-owner' <<<"$output"
+  grep -q 'max-b' <<<"$output"
+  grep -q 'hooks-telemetry.md' <<<"$output"
+}
+
+@test "x4-hook-slots: hooks installed but the SessionStart matcher missing is NOT M4-active" {
+  aib="$BATS_TEST_TMPDIR/x4nomatcher"
+  mkdir -p "$aib/accounts/ent"
+  printf '{"label":"ent"}\n' > "$aib/accounts/ent/.aibender-account.json"
+  x4_settings_fixture "ENT" 10 \
+    | jq 'del(.hooks.SessionStart[0].matcher)' \
+    > "$aib/accounts/ent/settings.json"
+  HOME="$FAKE_HOME" PATH="$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
+    run bash "$LIVECHECK" --aibender-home "$aib" --check x4-hook-slots
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tx4-hook-slots\tM4\tSKIP\t' <<<"$output"
+  grep -q 'pending-owner' <<<"$output"
+}
+
+@test "x4-hook-slots: bare host SKIPs pending-owner" {
+  run_livecheck_bare --check x4-hook-slots
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tx4-hook-slots\tM4\tSKIP\t' <<<"$output"
+  grep -q 'pending-owner' <<<"$output"
+}
+
+# Minimal colima/limactl stubs for the probe's version + status legs only —
+# the mapping tests below never reach a network leg by construction.
+write_colima_stubs() { # $1 = dir, $2 = colima version, $3 = status exit
+  mkdir -p "$1"
+  cat > "$1/colima" <<STUB
+#!/usr/bin/env bash
+case "\$1" in
+  version) printf 'colima version %s\n' "$2" ;;
+  status) exit $3 ;;
+  *) echo "stub colima: unexpected: \$*" >&2; exit 64 ;;
+esac
+STUB
+  cat > "$1/limactl" <<'STUB'
+#!/usr/bin/env bash
+printf 'limactl version 2.1.1\n'
+STUB
+  chmod +x "$1/colima" "$1/limactl"
+}
+
+@test "colima-probe: offline kill-switch SKIPs and provably never invokes the toolchain" {
+  stubdir="$BATS_TEST_TMPDIR/bin-colima-sentinel"
+  mkdir -p "$stubdir"
+  sentinel="$BATS_TEST_TMPDIR/colima-invoked"
+  cat > "$stubdir/colima" <<STUB
+#!/usr/bin/env bash
+touch "$sentinel"
+STUB
+  chmod +x "$stubdir/colima"
+  cp "$stubdir/colima" "$stubdir/limactl"
+  HOME="$FAKE_HOME" PATH="$stubdir:$SYS_PATH" AIBENDER_LIVECHECK_OFFLINE=1 \
+    run bash "$LIVECHECK" --aibender-home "$EMPTY_AIB" --check colima-probe
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tcolima-probe\tM4\tSKIP\t' <<<"$output"
+  grep -q 'pending-owner' <<<"$output"
+  grep -q 'colima.md' <<<"$output"
+  [ ! -e "$sentinel" ]
+}
+
+@test "colima-probe: probe DOWN (exit 3 — VM stopped) maps to SKIP pending-owner, run exit 0" {
+  # Pinned versions + VM not running: the probe exits 3 before any network
+  # leg; the check must report DOWN-as-state, never FAIL.
+  stubdir="$BATS_TEST_TMPDIR/bin-colima-down"
+  write_colima_stubs "$stubdir" "0.10.1" 1
+  HOME="$FAKE_HOME" PATH="$stubdir:$SYS_PATH" \
+    run bash "$LIVECHECK" --aibender-home "$EMPTY_AIB" --check colima-probe
+  [ "$status" -eq 0 ]
+  grep -q $'^check\tcolima-probe\tM4\tSKIP\t' <<<"$output"
+  grep -q 'pending-owner' <<<"$output"
+  grep -q 'owner-gated' <<<"$output"
+  grep -q '^RESULT: PASS' <<<"$output"
+}
+
+@test "colima-probe: probe RED (exit 1 — unapproved drift) maps to FAIL and fails the run" {
+  # Drifted colima version + VM down: pins leg FAILs, RED wins over DOWN
+  # (probe exit 1) with zero network activity — the check must FAIL.
+  stubdir="$BATS_TEST_TMPDIR/bin-colima-red"
+  write_colima_stubs "$stubdir" "0.9.0" 1
+  HOME="$FAKE_HOME" PATH="$stubdir:$SYS_PATH" \
+    run bash "$LIVECHECK" --aibender-home "$EMPTY_AIB" --check colima-probe
+  [ "$status" -eq 1 ]
+  grep -q $'^check\tcolima-probe\tM4\tFAIL\t' <<<"$output"
+  grep -q 'colima.md' <<<"$output"
+  grep -q '^RESULT: FAIL' <<<"$output"
+}
+
+@test "--milestone M4 selects exactly the two M4 checks" {
+  run_livecheck_bare --milestone M4
+  [ "$status" -eq 0 ]
+  [ "$(grep -c $'^check\t' <<<"$output")" -eq 2 ]
+  grep -q $'^check\tx4-hook-slots\tM4\t' <<<"$output"
+  grep -q $'^check\tcolima-probe\tM4\t' <<<"$output"
 }
 
 # --- playwright-browsers.sh --------------------------------------------------

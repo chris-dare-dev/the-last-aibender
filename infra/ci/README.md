@@ -87,6 +87,8 @@ Registry (ids are stable; `--list` is authoritative):
 | `lmstudio-probe` | M2 | LM Studio reachability on 127.0.0.1 (never auto-started; down ⇒ SKIP) |
 | `opencode-serve-probe` | M2 | temp `opencode serve`: `/global/health`, `/session`, `/event` **only** |
 | `aws-sso-plan` | M3 | owner-run terraform plan (apply is hard-gated) |
+| `x4-hook-slots` | M4 | SI-3 [X4] automation slots M4-active in the per-account settings (SessionStart matcher + 10 s response window, SessionEnd/PreCompact registered — read-only; injection stays 204-default until the hooks-contract §7.1 T3 proof) |
+| `colima-probe` | M4 | SI-5 pod→host loopback gate run read-only; GREEN/DOWN/RED → PASS/SKIP(pending-owner)/FAIL (VM/LM Studio never started; docs/runbooks/colima.md) |
 | `signing-dryrun` | M6 | signed (dry-run) sidecar artifact cold-start (spike ix follow-on) |
 
 Hard rules baked in (and enforced by the bats static-hygiene test): no

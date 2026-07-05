@@ -139,6 +139,8 @@ export {
 export {
   GOLDEN_WS_CORPUS_FREEZE,
   GOLDEN_WS_FIXTURES,
+  SYNTHETIC_BACKEND_DESCRIPTOR,
+  SYNTHETIC_BACKEND_WS_FIXTURE,
   goldenFrameBytes,
   replayGoldenWsFixture,
   type GoldenWsBinaryFixture,

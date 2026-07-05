@@ -3,6 +3,25 @@
  * aibender-core gateway (BE-3) and every frontend client (FE-2).
  *
  * ============================================================================
+ * FROZEN-M8 (2026-07-05) — owner BE-ORCH, FE-ORCH co-signs (ICR-0016). The
+ * BACKEND-registry generalization ([X1] scalability, finding OS-1): the BACKEND
+ * twin of the ICR-0013 account problem. Before this, `BACKENDS` was a CLOSED
+ * frozen 3-tuple and `isBackend` tested membership in it; adding a fourth local
+ * LLM / backend was a cross-codebase fork. vocab.ts now carries a
+ * `BackendDescriptor` (id, the account-label form it serves, events source,
+ * legal substrates, adapter/probe keys) + a registry (`registerBackend` /
+ * `backendById` / `allBackends`), pre-populated with the three built-ins as
+ * descriptors. `isBackend` validates registry membership (built-ins + any
+ * registered), `backendForLabel`/`isAccountLabel` resolve through the
+ * descriptors, and `sourceForBackend`/`substrateLegalFor` move onto the registry.
+ * `BACKENDS` stays a KNOWN/SEED list (like `ACCOUNT_LABELS` after M7). This is a
+ * validation-WIDENING additive change — every M1–M7 backend id/label is still
+ * valid, the label↔backend + pty-is-claude-only pairing invariants are
+ * preserved, and NO wire SHAPE changed — so a minor bump: `1.5.0` → `1.6.0`,
+ * `FROZEN-M7` → `FROZEN-M8`. Prose of record: docs/contracts/ws-protocol.md §4.1
+ * (backend vocabulary); docs/contracts/sqlite-ddl.md;
+ * docs/contracts/icr/icr-0016-backend-registry.md.
+ *
  * FROZEN-M7 (2026-07-05) — owner BE-ORCH, FE-ORCH co-signs (ICR-0013). The
  * account-registry generalization ([X1] scalability): the CLOSED 5-label
  * account set becomes an OPEN, validated FORM so a new Claude Max subscription
@@ -141,7 +160,12 @@
  */
 
 /**
- * Protocol version. `1.5.0` = the M7 account-registry generalization (ICR-0013,
+ * Protocol version. `1.6.0` = the M8 BACKEND-registry generalization (ICR-0016,
+ * additive/validation-widening: the backend CLOSED 3-tuple became a
+ * `BackendDescriptor` REGISTRY — `isBackend` validates registry membership,
+ * `backendForLabel`/`sourceForBackend`/`substrateLegalFor` resolve through
+ * descriptors; the three built-ins behave byte-identically; no wire SHAPE
+ * changed). `1.5.0` = the M7 account-registry generalization (ICR-0013,
  * additive/validation-widening: the account-label CLOSED 5-set became an OPEN
  * validated FORM — `^MAX_[A-Z]$` + `ENT` + fixed backend labels — and
  * `LABEL_BACKENDS` became `backendForLabel()`; no wire SHAPE changed).
@@ -152,21 +176,28 @@
  * `1.0.0-m1-core` the M1-CORE freeze. Consumers may assert against
  * {@link PROTOCOL_FREEZE}.
  */
-export const PROTOCOL_VERSION = '1.5.0' as const;
+export const PROTOCOL_VERSION = '1.6.0' as const;
 
 /** Freeze marker for runtime assertions and golden fixtures. */
-export const PROTOCOL_FREEZE = 'FROZEN-M7' as const;
+export const PROTOCOL_FREEZE = 'FROZEN-M8' as const;
 
-// FROZEN surfaces (M1-CORE; account-label form widened at M7 — ICR-0013) ------
+// FROZEN surfaces (M1-CORE; account-label form widened at M7 — ICR-0013;
+// backend registry added at M8 — ICR-0016) -----------------------------------
 export {
   ACCOUNT_LABELS,
   BACKENDS,
+  BUILTIN_BACKEND_DESCRIPTORS,
+  BackendRegistrationError,
   CLAUDE_ACCOUNT_LABEL_RE,
   ENTERPRISE_ACCOUNT_LABEL,
   FIXED_BACKEND_LABELS,
   SESSION_STATES,
   SUBSTRATES,
   UnknownAccountLabelError,
+  UnknownBackendError,
+  allBackendIds,
+  allBackends,
+  backendById,
   backendForLabel,
   backendForLabelOrUndefined,
   isAccountLabel,
@@ -175,8 +206,14 @@ export {
   isFixedBackendLabel,
   isSessionState,
   isSubstrate,
+  registerBackend,
+  sourceForBackend,
+  substrateLegalFor,
+  unregisterBackend,
   type AccountLabel,
   type Backend,
+  type BackendDescriptor,
+  type BackendId,
   type ClaudeAccountLabel,
   type EnterpriseAccountLabel,
   type FixedBackendLabel,

@@ -58,11 +58,12 @@ import {
   validateWorkstreamServerPayload,
   validatePipelineClientMessage,
   validatePipelineServerPayload,
+  type BackendDescriptor,
   type ErrorCode,
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M7';
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M8';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -631,6 +632,49 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     stage: 'control-request',
     expect: { valid: false, code: 'bad-request' },
     notes: 'the form is case-sensitive and anchored — lowercase max_c is NOT MAX_C',
+  },
+  {
+    name: 'control-launch-unregistered-backend',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(35, {
+      kind: 'launch',
+      id: 'req_45',
+      params: {
+        accountLabel: 'LOCAL',
+        backend: 'ollama',
+        substrate: 'sdk',
+        cwd: '/synthetic/workspace',
+        purpose: 'golden unregistered-backend rejection',
+      },
+    }),
+    stage: 'control-request',
+    expect: { valid: false, code: 'bad-request' },
+    notes:
+      'ICR-0016: the backend REGISTRY is a REAL gate — an UNREGISTERED backend id ' +
+      "('ollama' is not one of the built-in three and not registerBackend()'d in the " +
+      'pure corpus replay) is REFUSED by isBackend, proving the widening is not anything-goes',
+  },
+  {
+    name: 'control-launch-garbage-backend',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(36, {
+      kind: 'launch',
+      id: 'req_46',
+      params: {
+        accountLabel: 'MAX_A',
+        backend: 'CLAUDE_CODE',
+        substrate: 'sdk',
+        cwd: '/synthetic/workspace',
+        purpose: 'golden garbage-backend rejection',
+      },
+    }),
+    stage: 'control-request',
+    expect: { valid: false, code: 'bad-request' },
+    notes:
+      'ICR-0016: a case-mangled backend id (CLAUDE_CODE) is NOT a registered id — ' +
+      'the registry membership check is exact, so it is REFUSED',
   },
   {
     name: 'control-launch-pty-non-claude',
@@ -2908,6 +2952,66 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     expect: { valid: false, code: 'oversized-frame' },
   },
 ] satisfies readonly GoldenWsFixture[]);
+
+// ---------------------------------------------------------------------------
+// Synthetic 4th-backend fixture (ICR-0016) — NOT part of GOLDEN_WS_FIXTURES
+// ---------------------------------------------------------------------------
+
+/**
+ * A synthetic FOURTH backend descriptor + a VALID launch fixture that routes
+ * through it (ICR-0016 / finding OS-1). This is deliberately OUTSIDE the frozen
+ * {@link GOLDEN_WS_FIXTURES} array, which is a PURE replay artifact: every entry
+ * there must replay to its pinned verdict with NO runtime registration (the
+ * built-in three are always pre-registered). This fixture proves the OTHER half
+ * of the finding — that a REGISTERED backend routes end-to-end with no branch
+ * edits — and so its VALID verdict is CONDITIONAL on the descriptor being
+ * registered first. The consuming suite does:
+ *
+ *     registerBackend(SYNTHETIC_BACKEND_DESCRIPTOR);
+ *     try { expect(replayGoldenWsFixture(SYNTHETIC_BACKEND_WS_FIXTURE).valid).toBe(true); }
+ *     finally { unregisterBackend(SYNTHETIC_BACKEND_DESCRIPTOR.id); }
+ *
+ * The corpus retains the UNREGISTERED/garbage-backend rejection fixtures inside
+ * GOLDEN_WS_FIXTURES (`control-launch-unregistered-backend`,
+ * `control-launch-garbage-backend`) so the pure corpus still proves the registry
+ * is a REAL gate. [X2]: the id + label are generic synthesized identifiers.
+ */
+export const SYNTHETIC_BACKEND_DESCRIPTOR: BackendDescriptor = Object.freeze({
+  id: 'synthbackend',
+  servesLabel: (label: string) => label === 'SYNTH_L',
+  sourceName: 'lmstudio',
+  substrates: Object.freeze(['sdk'] as const),
+  builtin: false,
+});
+
+/**
+ * A control-launch on the synthetic 4th backend. VALID iff
+ * {@link SYNTHETIC_BACKEND_DESCRIPTOR} is registered (see its doc). Shape is
+ * byte-identical to a built-in launch — proving the wire SHAPE did not change,
+ * only which (backend, accountLabel) values validate.
+ */
+export const SYNTHETIC_BACKEND_WS_FIXTURE: GoldenWsFixture = Object.freeze({
+  name: 'control-launch-synthetic-4th-backend',
+  kind: 'text' as const,
+  direction: 'client-to-broker' as const,
+  frame: controlFrame(37, {
+    kind: 'launch',
+    id: 'req_47',
+    params: {
+      accountLabel: 'SYNTH_L',
+      backend: 'synthbackend',
+      substrate: 'sdk',
+      cwd: '/synthetic/workspace',
+      purpose: 'golden launch on a registered 4th backend',
+    },
+  }),
+  stage: 'control-request' as const,
+  expect: { valid: true as const },
+  notes:
+    'ICR-0016: a REGISTERED 4th backend routes end-to-end (isBackend + ' +
+    'backendForLabel + pairing) with NO branch edit — valid only once its ' +
+    'descriptor is registered; unregistered it is refused like any garbage id',
+});
 
 // ---------------------------------------------------------------------------
 // Reference replay

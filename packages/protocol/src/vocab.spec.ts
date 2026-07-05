@@ -7,19 +7,32 @@
  * REJECTED; and every account label maps to the one legal backend.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   ACCOUNT_LABELS,
+  BACKENDS,
+  BUILTIN_BACKEND_DESCRIPTORS,
+  BackendRegistrationError,
   CLAUDE_ACCOUNT_LABEL_RE,
   ENTERPRISE_ACCOUNT_LABEL,
   FIXED_BACKEND_LABELS,
   UnknownAccountLabelError,
+  UnknownBackendError,
+  allBackendIds,
+  allBackends,
+  backendById,
   backendForLabel,
   backendForLabelOrUndefined,
   isAccountLabel,
+  isBackend,
   isClaudeAccountLabel,
   isFixedBackendLabel,
+  registerBackend,
+  sourceForBackend,
+  substrateLegalFor,
+  unregisterBackend,
+  type BackendDescriptor,
 } from './vocab.js';
 
 describe('account-label FORM (ICR-0013)', () => {
@@ -116,5 +129,220 @@ describe('backendForLabel pairing (ICR-0013)', () => {
     expect(backendForLabelOrUndefined('HACKER')).toBeUndefined();
     expect(backendForLabelOrUndefined(undefined)).toBeUndefined();
     expect(backendForLabelOrUndefined(123)).toBeUndefined();
+  });
+});
+
+describe('backend registry (ICR-0016) — the built-in three, byte-identical', () => {
+  it('pre-registers exactly the three built-in descriptors in seed order', () => {
+    const builtins = allBackends().filter((d) => d.builtin);
+    expect(builtins.map((d) => d.id)).toEqual(['claude_code', 'opencode', 'lmstudio']);
+    // The seed BACKENDS list and the built-in descriptor ids agree.
+    expect([...BACKENDS]).toEqual(BUILTIN_BACKEND_DESCRIPTORS.map((d) => d.id));
+    expect(allBackendIds()).toEqual(['claude_code', 'opencode', 'lmstudio']);
+  });
+
+  it('isBackend accepts the built-in three and rejects garbage (registry is a gate)', () => {
+    for (const id of BACKENDS) expect(isBackend(id)).toBe(true);
+    for (const bad of ['CLAUDE_CODE', 'openrouter', 'ollama', '', ' claude_code', 42, null, undefined]) {
+      expect(isBackend(bad)).toBe(false);
+    }
+  });
+
+  it('sourceForBackend resolves the former hardcoded if-chain verbatim', () => {
+    expect(sourceForBackend('claude_code')).toBe('claude-otel');
+    expect(sourceForBackend('opencode')).toBe('opencode-sse');
+    expect(sourceForBackend('lmstudio')).toBe('lmstudio');
+    expect(() => sourceForBackend('nope')).toThrow(UnknownBackendError);
+  });
+
+  it('substrateLegalFor encodes pty-is-claude-only (blueprint §4.1)', () => {
+    expect(substrateLegalFor('sdk', 'claude_code')).toBe(true);
+    expect(substrateLegalFor('pty', 'claude_code')).toBe(true);
+    expect(substrateLegalFor('sdk', 'opencode')).toBe(true);
+    expect(substrateLegalFor('pty', 'opencode')).toBe(false);
+    expect(substrateLegalFor('sdk', 'lmstudio')).toBe(true);
+    expect(substrateLegalFor('pty', 'lmstudio')).toBe(false);
+    // Fail-closed for an unregistered backend.
+    expect(substrateLegalFor('sdk', 'nope')).toBe(false);
+  });
+
+  it('backendById returns descriptors for built-ins and undefined otherwise', () => {
+    expect(backendById('claude_code')?.id).toBe('claude_code');
+    expect(backendById('opencode')?.builtin).toBe(true);
+    expect(backendById('nope')).toBeUndefined();
+  });
+});
+
+describe('backend registry (ICR-0016) — a synthetic 4th backend routes end-to-end', () => {
+  const SYNTH: BackendDescriptor = {
+    id: 'synthbackend',
+    // Serves its own label form that CANNOT collide with a built-in one.
+    servesLabel: (label) => label === 'SYNTH_LOCAL',
+    sourceName: 'lmstudio',
+    substrates: ['sdk'],
+    builtin: false,
+  };
+
+  afterEach(() => {
+    unregisterBackend('synthbackend');
+    unregisterBackend('other');
+  });
+
+  it('registers, validates, routes its label, and enumerates — with NO built-in edit', () => {
+    // Before registration the id + label are unknown.
+    expect(isBackend('synthbackend')).toBe(false);
+    expect(isAccountLabel('SYNTH_LOCAL')).toBe(false);
+    expect(backendForLabelOrUndefined('SYNTH_LOCAL')).toBeUndefined();
+
+    registerBackend(SYNTH);
+
+    // After registration: id is a valid backend, its label validates + pairs.
+    // A registered label is outside the compile-time AccountLabel union (the
+    // seed forms), so backendForLabel takes a cast here — registry-driven
+    // callers use the total backendForLabelOrUndefined (accepts `unknown`).
+    expect(isBackend('synthbackend')).toBe(true);
+    expect(isAccountLabel('SYNTH_LOCAL')).toBe(true);
+    expect(backendForLabel('SYNTH_LOCAL' as never)).toBe('synthbackend');
+    expect(backendForLabelOrUndefined('SYNTH_LOCAL')).toBe('synthbackend');
+    expect(sourceForBackend('synthbackend')).toBe('lmstudio');
+    expect(substrateLegalFor('sdk', 'synthbackend')).toBe(true);
+    expect(substrateLegalFor('pty', 'synthbackend')).toBe(false);
+    expect(backendById('synthbackend')?.id).toBe('synthbackend');
+
+    // Enumeration: built-ins first, then the addition.
+    expect(allBackendIds()).toEqual(['claude_code', 'opencode', 'lmstudio', 'synthbackend']);
+  });
+
+  it('the three built-ins are unchanged while a 4th is registered', () => {
+    registerBackend(SYNTH);
+    expect(backendForLabel('MAX_A')).toBe('claude_code');
+    expect(backendForLabel('ENT')).toBe('claude_code');
+    expect(backendForLabel('AWS_DEV')).toBe('opencode');
+    expect(backendForLabel('LOCAL')).toBe('lmstudio');
+    expect(sourceForBackend('claude_code')).toBe('claude-otel');
+  });
+
+  it('idempotent re-registration of the same descriptor is a no-op', () => {
+    registerBackend(SYNTH);
+    expect(() => registerBackend(SYNTH)).not.toThrow();
+    expect(allBackendIds().filter((id) => id === 'synthbackend')).toHaveLength(1);
+  });
+
+  it('unregisterBackend removes the addition and returns false when absent', () => {
+    registerBackend(SYNTH);
+    expect(unregisterBackend('synthbackend')).toBe(true);
+    expect(isBackend('synthbackend')).toBe(false);
+    expect(isAccountLabel('SYNTH_LOCAL')).toBe(false);
+    expect(unregisterBackend('synthbackend')).toBe(false);
+  });
+});
+
+describe('backend registry (ICR-0016) — registration is a REAL gate', () => {
+  afterEach(() => {
+    unregisterBackend('collider');
+    unregisterBackend('dup');
+    unregisterBackend('ptyclaimer');
+  });
+
+  it('refuses re-registering a built-in id', () => {
+    for (const id of ['claude_code', 'opencode', 'lmstudio']) {
+      expect(() =>
+        registerBackend({
+          id,
+          servesLabel: () => false,
+          sourceName: 'lmstudio',
+          substrates: ['sdk'],
+          builtin: false,
+        }),
+      ).toThrow(BackendRegistrationError);
+    }
+  });
+
+  it('refuses a descriptor flagged builtin', () => {
+    expect(() =>
+      registerBackend({
+        id: 'sneaky',
+        servesLabel: () => false,
+        sourceName: 'lmstudio',
+        substrates: ['sdk'],
+        builtin: true,
+      }),
+    ).toThrow(BackendRegistrationError);
+  });
+
+  it('refuses a servesLabel that overlaps ANY built-in label form', () => {
+    // Overlaps the open Claude MAX form.
+    expect(() =>
+      registerBackend({
+        id: 'collider',
+        servesLabel: (label) => /^MAX_[A-Z]$/.test(label),
+        sourceName: 'lmstudio',
+        substrates: ['sdk'],
+        builtin: false,
+      }),
+    ).toThrow(BackendRegistrationError);
+    // Overlaps a fixed backend label.
+    expect(() =>
+      registerBackend({
+        id: 'collider',
+        servesLabel: (label) => label === 'AWS_DEV',
+        sourceName: 'lmstudio',
+        substrates: ['sdk'],
+        builtin: false,
+      }),
+    ).toThrow(BackendRegistrationError);
+    // Overlaps ENT.
+    expect(() =>
+      registerBackend({
+        id: 'collider',
+        servesLabel: (label) => label === 'ENT',
+        sourceName: 'lmstudio',
+        substrates: ['sdk'],
+        builtin: false,
+      }),
+    ).toThrow(BackendRegistrationError);
+    // The built-in labels still resolve to the built-ins (never hijacked).
+    expect(backendForLabel('MAX_A')).toBe('claude_code');
+    expect(backendForLabel('AWS_DEV')).toBe('opencode');
+  });
+
+  it('refuses a malformed descriptor and an unknown substrate', () => {
+    expect(() =>
+      registerBackend({
+        id: '',
+        servesLabel: () => false,
+        sourceName: 'lmstudio',
+        substrates: ['sdk'],
+        builtin: false,
+      } as BackendDescriptor),
+    ).toThrow(BackendRegistrationError);
+    expect(() =>
+      registerBackend({
+        id: 'ptyclaimer',
+        servesLabel: () => false,
+        sourceName: 'lmstudio',
+        substrates: ['warp'],
+        builtin: false,
+      } as unknown as BackendDescriptor),
+    ).toThrow(BackendRegistrationError);
+  });
+
+  it('refuses re-registering a DIFFERENT descriptor under an existing id', () => {
+    registerBackend({
+      id: 'dup',
+      servesLabel: (label) => label === 'DUP_A',
+      sourceName: 'lmstudio',
+      substrates: ['sdk'],
+      builtin: false,
+    });
+    expect(() =>
+      registerBackend({
+        id: 'dup',
+        servesLabel: (label) => label === 'DUP_B',
+        sourceName: 'lmstudio',
+        substrates: ['sdk'],
+        builtin: false,
+      }),
+    ).toThrow(BackendRegistrationError);
   });
 });

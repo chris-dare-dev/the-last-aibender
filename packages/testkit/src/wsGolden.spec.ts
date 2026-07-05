@@ -6,12 +6,16 @@ import {
   READ_MODEL_IDS,
   decodePtyFrame,
   encodePtyFrame,
+  registerBackend,
+  unregisterBackend,
 } from '@aibender/protocol';
 
 import { assertSynthesizedSafeText } from './jsonl.js';
 import {
   GOLDEN_WS_CORPUS_FREEZE,
   GOLDEN_WS_FIXTURES,
+  SYNTHETIC_BACKEND_DESCRIPTOR,
+  SYNTHETIC_BACKEND_WS_FIXTURE,
   goldenFrameBytes,
   replayGoldenWsFixture,
   type GoldenWsBinaryFixture,
@@ -25,7 +29,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M7');
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M8');
   });
 
   it('every fixture replays to its pinned verdict at its pinned stage', () => {
@@ -39,6 +43,30 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
         expect(outcome.code, fixture.name).toBeUndefined();
       }
     }
+  });
+
+  it('a synthetic 4th backend is REFUSED unregistered and VALID once registered (ICR-0016)', () => {
+    // Unregistered, the synthetic-backend launch replays to a rejection — the
+    // registry is a real gate (same class as the corpus's unregistered/garbage
+    // backend fixtures, which replay purely).
+    const unregistered = replayGoldenWsFixture(SYNTHETIC_BACKEND_WS_FIXTURE);
+    expect(unregistered.valid).toBe(false);
+    expect(unregistered.stage).toBe('control-request');
+
+    // Registered, the SAME frame routes end-to-end (isBackend + backendForLabel
+    // pairing) with NO branch edit — the OS-1 goal.
+    registerBackend(SYNTHETIC_BACKEND_DESCRIPTOR);
+    try {
+      const registered = replayGoldenWsFixture(SYNTHETIC_BACKEND_WS_FIXTURE);
+      expect(registered.valid).toBe(true);
+      expect(registered.code).toBeUndefined();
+      expect(registered.stage).toBe('control-request');
+    } finally {
+      unregisterBackend(SYNTHETIC_BACKEND_DESCRIPTOR.id);
+    }
+
+    // And after cleanup it is refused again (no registry leak).
+    expect(replayGoldenWsFixture(SYNTHETIC_BACKEND_WS_FIXTURE).valid).toBe(false);
   });
 
   it('valid binary fixtures decode to their pinned fields AND re-encode byte-identically', () => {

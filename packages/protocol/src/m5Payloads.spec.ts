@@ -55,10 +55,11 @@ function baseDoc(): DagDocument {
 describe('M5 protocol freeze registration', () => {
   it('advances the freeze marker + version', () => {
     // The freeze marker advances at each landing; these M5 pipeline surfaces
-    // are carried forward UNCHANGED by the M6 freeze (1.3.0 → 1.4.0) and the
-    // M7 account-registry generalization (1.4.0 → 1.5.0, ICR-0013).
-    expect(PROTOCOL_FREEZE).toBe('FROZEN-M7');
-    expect(PROTOCOL_VERSION).toBe('1.5.0');
+    // are carried forward UNCHANGED by the M6 freeze (1.3.0 → 1.4.0), the
+    // M7 account-registry generalization (1.4.0 → 1.5.0, ICR-0013), and the
+    // M8 backend-registry generalization (1.5.0 → 1.6.0, ICR-0016).
+    expect(PROTOCOL_FREEZE).toBe('FROZEN-M8');
+    expect(PROTOCOL_VERSION).toBe('1.6.0');
   });
 
   it('registers the pipelines channel and marks it replayable', () => {

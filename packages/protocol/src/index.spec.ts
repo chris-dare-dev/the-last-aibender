@@ -17,11 +17,13 @@ import {
 describe('@aibender/protocol (M6 freeze)', () => {
   // M0 asserted 'prefreeze'; M1 asserted '1.0.0-m1-core'; M2 asserted
   // '1.0.0'; M3 asserted '1.1.0'; M4 asserted '1.2.0'; M5 asserted '1.3.0';
-  // M6 asserted '1.4.0'. Updated at each freeze landing — this change IS the
-  // M7 account-registry generalization (ICR-0013), a validation-widening minor.
-  it('imports and self-identifies as FROZEN-M7', () => {
-    expect(PROTOCOL_VERSION).toBe('1.5.0');
-    expect(PROTOCOL_FREEZE).toBe('FROZEN-M7');
+  // M6 asserted '1.4.0'; M7 asserted '1.5.0'. Updated at each freeze landing —
+  // this change IS the M8 BACKEND-registry generalization (ICR-0016), a
+  // validation-widening minor (backend closed 3-tuple → BackendDescriptor
+  // registry; three built-ins byte-identical, no wire SHAPE changed).
+  it('imports and self-identifies as FROZEN-M8', () => {
+    expect(PROTOCOL_VERSION).toBe('1.6.0');
+    expect(PROTOCOL_FREEZE).toBe('FROZEN-M8');
   });
 
   // -- positive ------------------------------------------------------------

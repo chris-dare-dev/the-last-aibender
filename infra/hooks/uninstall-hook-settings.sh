@@ -163,7 +163,11 @@ EOF_MANIFESTS
 if [ "$PURGE_SHARED" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
   rm -f "$AIB_HOME/bin/aibender-statusline.sh"
   rm -rf "$AIB_HOME/quota"
-  printf 'unhook\t-\t%s\tPURGED (statusline tee + quota files)\n' "$AIB_HOME"
+  # SEC-3 per-install hook token is shared machine state (like the tee) — the
+  # per-account header entries are already gone with the aibender hook entries
+  # above; only --purge-shared removes the secret itself.
+  rm -f "$AIB_HOME/$AIB_HOOK_TOKEN_NAME"
+  printf 'unhook\t-\t%s\tPURGED (statusline tee + quota files + hook token)\n' "$AIB_HOME"
 fi
 
 if [ "$FAILED" -ne 0 ]; then

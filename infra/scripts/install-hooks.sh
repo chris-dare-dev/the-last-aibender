@@ -36,9 +36,12 @@ cat > "$HOOK" <<'HOOK_EOF'
 #         chmod 600, NEVER in the repo) — always run with --redact so the
 #         hook's own output never echoes a literal into a terminal transcript.
 #
-# THIS HOOK FAILS CLOSED: missing gitleaks or a missing Tier-2 config blocks
-# the commit. That is deliberate — agents are commit authors in this repo and
-# hook-level scanning, not agent diligence, is the enforcement (X2 §4.4).
+# THIS HOOK FAILS CLOSED: missing gitleaks, a missing Tier-2 config, OR a
+# Tier-2 config that is not mode 600 all block the commit. That is deliberate —
+# agents are commit authors in this repo and hook-level scanning, not agent
+# diligence, is the enforcement (X2 §4.4). The Tier-2 file holds exact private
+# literals, so a group/world-readable copy is itself an exposure; the hook
+# refuses to run it until it is locked down (SEC-4).
 
 set -u
 
@@ -83,6 +86,35 @@ if [ ! -f "$TIER2_CONFIG" ]; then
         personal emails).
     3. chmod 600 ~/.aibender/private/gitleaks-tier2.toml
   Do NOT copy the file's contents into the repo, an issue, or a transcript."
+fi
+
+# ---- Tier 2 permission assertion: FAIL CLOSED unless mode 600 (SEC-4) -------
+# The Tier-2 config holds exact private literals; a group/world-readable copy
+# (e.g. created under a permissive umask) is itself an exposure. Refuse to run
+# it until it is locked to owner-only read/write. `stat` differs by platform:
+# BSD/macOS is `-f %Lp`, GNU/Linux is `-c %a` — probe both; if neither works
+# (no stat), fail closed rather than skip the check.
+tier2_mode=""
+if tier2_mode="$(stat -f '%Lp' "$TIER2_CONFIG" 2>/dev/null)"; then
+  :
+elif tier2_mode="$(stat -c '%a' "$TIER2_CONFIG" 2>/dev/null)"; then
+  :
+else
+  tier2_mode=""
+fi
+if [ -z "$tier2_mode" ]; then
+  fail "Cannot read the permission bits of the Tier-2 config: $TIER2_CONFIG
+  'stat' produced no mode (neither BSD '-f %Lp' nor GNU '-c %a' worked).
+  This gate fails closed rather than run a config whose permissions it cannot
+  verify — the file holds exact private literals and must be chmod 600."
+fi
+if [ "$tier2_mode" != "600" ]; then
+  fail "Tier-2 private scanner config is GROUP/WORLD-READABLE (mode $tier2_mode): $TIER2_CONFIG
+  It holds exact private identifier literals and must be readable ONLY by you.
+  Lock it down, then retry:
+    chmod 600 $TIER2_CONFIG
+  (Set 'umask 0077' before creating machine-local private files — see
+   docs/runbooks/hygiene.md.)"
 fi
 
 if ! gitleaks git --pre-commit --staged --redact --no-banner -v \

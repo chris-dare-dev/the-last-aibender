@@ -32,6 +32,7 @@ if command -v shellcheck >/dev/null 2>&1; then
     "$ACCOUNTS_DIR/provision-accounts.sh" \
     "$ACCOUNTS_DIR/keychain-probe.sh" \
     "$ACCOUNTS_DIR/version-gate.sh" \
+    "$ROOT/infra/scripts/install-hooks.sh" \
     "$TESTS_DIR/run.sh")
 else
   echo "test:infra: WARN — shellcheck not installed, lint skipped (brew install shellcheck)" >&2

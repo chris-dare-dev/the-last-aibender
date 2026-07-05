@@ -49,11 +49,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 usage() {
   cat <<'EOF'
 usage: install-hook-settings.sh [--home DIR] [--profiles-dir DIR] [--label LABEL]
-                                [--hooks-port N] [--otlp-port N] [--dry-run]
+                                [--hooks-port N] [--otlp-port N]
+                                [--hook-token] [--hook-token-file PATH] [--dry-run]
 
 Merges the aibender hook/statusline/OTel settings fragment into each
 account's settings.json. Idempotent; preserves unrelated user settings.
 Ports default to 4319 (AIBENDER_HOOKS_PORT) and 4318 (AIBENDER_OTLP_PORT).
+
+--hook-token (or AIBENDER_HOOK_TOKEN_ENABLE=1) OPTS IN to the SEC-3 endpoint
+auth: a stable per-install secret ($AIBENDER_HOME/hook-token, 0600, minted
+once) is stamped as the x-aibender-hook-token header on every loopback hook
+POST so the collector's authToken gate accepts it (hooks-contract.md §4.2).
+OFF by default — the default install is byte-identical to the open posture,
+and stays off until the T3 pinned-CLI header-forwarding proof lands. The
+broker reads the SAME token file and passes it as startHooksServer authToken.
 EOF
 }
 
@@ -62,6 +71,11 @@ PROFILES_DIR=""
 ONLY_LABEL=""
 HOOKS_PORT="${AIBENDER_HOOKS_PORT:-$AIB_DEFAULT_HOOKS_PORT}"
 OTLP_PORT="${AIBENDER_OTLP_PORT:-$AIB_DEFAULT_OTLP_PORT}"
+# SEC-3 opt-in: off by default (T3-gated). Env AIBENDER_HOOK_TOKEN_ENABLE=1
+# is equivalent to --hook-token; anything else (incl. unset) stays off.
+HOOK_AUTH=0
+[ "${AIBENDER_HOOK_TOKEN_ENABLE:-0}" = "1" ] && HOOK_AUTH=1
+HOOK_TOKEN_FILE_OVERRIDE=""
 DRY_RUN=0
 
 while [ $# -gt 0 ]; do
@@ -71,6 +85,8 @@ while [ $# -gt 0 ]; do
     --label) ONLY_LABEL="${2:?--label needs a value}"; shift 2 ;;
     --hooks-port) HOOKS_PORT="${2:?--hooks-port needs a value}"; shift 2 ;;
     --otlp-port) OTLP_PORT="${2:?--otlp-port needs a value}"; shift 2 ;;
+    --hook-token) HOOK_AUTH=1; shift ;;
+    --hook-token-file) HOOK_TOKEN_FILE_OVERRIDE="${2:?--hook-token-file needs a value}"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) usage >&2; aib_die "unknown argument: $1" ;;
@@ -90,6 +106,10 @@ OTLP_ENDPOINT="$(aib_otlp_endpoint "$OTLP_PORT")"
 STATUSLINE_BIN="$AIB_HOME/bin/aibender-statusline.sh"
 aib_no_squote "AIBENDER_HOME" "$AIB_HOME"
 
+# SEC-3 per-install token: file location + the resolved value ("" = header off).
+HOOK_TOKEN_FILE="${HOOK_TOKEN_FILE_OVERRIDE:-$AIB_HOME/$AIB_HOOK_TOKEN_NAME}"
+HOOK_TOKEN=""
+
 # ---- shared machine-local pieces (once, not per account) ----------------------
 
 install_statusline_bin() {
@@ -108,6 +128,37 @@ install_statusline_bin() {
   fi
 }
 
+# SEC-3: resolve the per-install hook token into $HOOK_TOKEN (a no-op unless
+# --hook-token/AIBENDER_HOOK_TOKEN_ENABLE opted in). Minted once and reused
+# thereafter → byte-stable installs; the broker reads the SAME file for its
+# startHooksServer authToken (hooks-contract.md §4.2). Distinct from the
+# per-boot WS gateway token.
+resolve_hook_token() {
+  [ "$HOOK_AUTH" -eq 1 ] || return 0
+  if [ "$DRY_RUN" -eq 1 ]; then
+    if [ -f "$HOOK_TOKEN_FILE" ]; then
+      HOOK_TOKEN="$(aib_read_hook_token "$HOOK_TOKEN_FILE")"
+      printf 'hooks\t-\t%s\tDRY-RUN (would reuse per-install hook token)\n' "$HOOK_TOKEN_FILE"
+    else
+      HOOK_TOKEN="$AIB_HOOK_TOKEN_DRYRUN"
+      printf 'hooks\t-\t%s\tDRY-RUN (would mint a per-install hook token)\n' "$HOOK_TOKEN_FILE"
+    fi
+    return 0
+  fi
+  mkdir -p "$AIB_HOME"
+  chmod 700 "$AIB_HOME" 2>/dev/null || true
+  if [ -f "$HOOK_TOKEN_FILE" ]; then
+    HOOK_TOKEN="$(aib_read_hook_token "$HOOK_TOKEN_FILE")"
+    [ -n "$HOOK_TOKEN" ] || aib_die "hook token file present but empty: $HOOK_TOKEN_FILE (delete it to re-mint)"
+    printf 'hooks\t-\t%s\tUNCHANGED (per-install hook token)\n' "$HOOK_TOKEN_FILE"
+  else
+    HOOK_TOKEN="$(aib_gen_token)"
+    [ -n "$HOOK_TOKEN" ] || aib_die "could not mint a hook token (need openssl or /dev/urandom)"
+    printf '%s\n' "$HOOK_TOKEN" | aib_write_600 "$HOOK_TOKEN_FILE"
+    printf 'hooks\t-\t%s\tINSTALLED (per-install hook token)\n' "$HOOK_TOKEN_FILE"
+  fi
+}
+
 # ---- per-account install -------------------------------------------------------
 
 FAILED=0
@@ -115,7 +166,7 @@ FAILED=0
 install_account() { # $1 = label, $2 = dir
   local label="$1" dir="$2"
   local settings state_file passthrough quota_file hooks_url statusline_cmd
-  local fragment existing merged original_sl had_original state_json
+  local fragment existing merged original_sl had_original state_json hook_token_state
 
   settings="$dir/settings.json"
   state_file="$dir/$AIB_HOOKS_STATE_NAME"
@@ -140,7 +191,12 @@ install_account() { # $1 = label, $2 = dir
     fi
   fi
 
-  fragment="$(aib_render_fragment "$label" "$hooks_url" "$OTLP_ENDPOINT" "$statusline_cmd")"
+  fragment="$(aib_render_fragment "$label" "$hooks_url" "$OTLP_ENDPOINT" "$statusline_cmd" "$HOOK_TOKEN")"
+  if [ -n "$HOOK_TOKEN" ]; then
+    hook_token_state="$(aib_hook_token_state_json "$AIB_HOOK_TOKEN_HEADER" "$HOOK_TOKEN_FILE")"
+  else
+    hook_token_state="null"
+  fi
 
   # Pre-existing statusline (not ours) → capture for passthrough + restore.
   original_sl="$(printf '%s' "$existing" | jq -c '.statusLine // null')"
@@ -179,9 +235,11 @@ install_account() { # $1 = label, $2 = dir
     --argjson ours "$(printf '%s' "$fragment" | jq -c '.statusLine')" \
     --argjson orig "$original_sl" \
     --argjson x4 "$(aib_x4_state_json "$fragment")" \
+    --argjson hookToken "$hook_token_state" \
     --arg pt "$passthrough" \
     '{schemaVersion: 1, label: $label, hooksUrl: $hooksUrl, otlpEndpoint: $otlp,
       env: $env, statusLine: $ours, originalStatusLine: $orig, x4: $x4,
+      hookToken: $hookToken,
       passthroughFile: (if $orig != null and ($orig.type? == "command") then $pt else null end)}')"
 
   if [ "$DRY_RUN" -eq 1 ]; then
@@ -218,6 +276,7 @@ install_account() { # $1 = label, $2 = dir
 }
 
 install_statusline_bin
+resolve_hook_token
 
 FOUND=0
 while IFS= read -r manifest; do

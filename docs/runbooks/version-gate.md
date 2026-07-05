@@ -1,10 +1,13 @@
 # Runbook — version gate: mandatory checks before any Claude Code / SDK bump
 
-**Status:** live (M1, SI-2) · **Audience:** owner (T3 steps are owner-run, never headless)
-**Script:** `infra/scripts/accounts/version-gate.sh`
+**Status:** live (M1, SI-2; §7 OpenCode guard re-validation added Stage-3, SEC-6)
+· **Audience:** owner (T3 steps are owner-run, never headless)
+**Script:** `infra/scripts/accounts/version-gate.sh` (§1–§6, Claude CLI only; §7
+OpenCode guard re-validation is a manual schema check)
 **Sources of record:** blueprint §3 rule 4, plan §6/SI-2 + §10 risk row
 ("Keychain scoping changes in an SDK bump"),
-[x1-parallel-multi-account](../research/findings/x1-parallel-multi-account.md).
+[x1-parallel-multi-account](../research/findings/x1-parallel-multi-account.md),
+[../../SECURITY.md](../../SECURITY.md) §6 (SEC-6/SEC-7, the OpenCode guard).
 
 ## Why this gate exists
 
@@ -142,6 +145,49 @@ infra/scripts/accounts/version-gate.sh          # must print RESULT: PASS
 ```
 
 Record the bump (old → new version) in the commit that changes the pin.
+
+### 7. OpenCode SDK/binary bump — re-validate the `opencode.db` credential guard (SEC-6)
+
+The steps above certify a **Claude CLI/SDK** bump against the keychain
+derivation. A bump of the **OpenCode** SDK/binary is a *separate* security
+event, gated on a *different* invariant: the credential-table read guard in
+`core/src/adapters/opencode/dbAccess.ts`.
+
+That guard is a **negative blocklist over the current OpenCode table names**
+(`FORBIDDEN_OPENCODE_TABLES = ['account', 'credential']`). `opencode.db` is a
+foreign, externally-owned database the harness opens read-only and cannot
+migrate. If an OpenCode version **renames** its credential tables, the
+name-based guard silently stops covering them (external-schema drift, SEC-6 in
+[../../SECURITY.md](../../SECURITY.md) §6). So:
+
+**No OpenCode SDK/binary version bump lands without this check passing.**
+
+Before adopting a candidate OpenCode version:
+
+1. **Inspect the candidate schema.** In a sandbox (not the pinned binary),
+   enumerate the candidate's `opencode.db` table set — e.g. `sqlite3
+   <candidate opencode.db> '.tables'`, or read the OpenCode release's migration
+   DDL. Confirm the credential-bearing tables are still named exactly
+   `account` and `credential`.
+2. **BLOCK on a rename.** If either table is renamed / split / a new
+   credential-bearing table appears (e.g. `secret`, `token_store`,
+   `provider_credential`), the guard under-covers. Update
+   `FORBIDDEN_OPENCODE_TABLES` to the candidate's names **and** extend
+   `core/src/adapters/opencode/dbAccess.spec.ts`'s negative `it.each` with a
+   `SELECT … FROM <new table>` refusal before rolling the pin. Hold the pin
+   until the guard and its tests match the candidate schema.
+3. **Re-run the guard suite against the candidate.** `pnpm --filter
+   @aibender/core test dbAccess` (the guard's negative/positive matrix) must be
+   green with the updated blocklist.
+4. **Record the schema re-validation** (old → new OpenCode version, table set
+   confirmed) in the commit that changes the OpenCode pin, the same way §6
+   records a Claude-CLI bump.
+
+Field-level column tagging (mark credential columns protected rather than table
+names) and a runtime positive-allowlist validated against the live schema are
+the stronger, post-M7 hardening forms tracked in SECURITY.md §6 — they would
+make step 1 automatic rather than a manual re-validation, but are not required
+to close SEC-6/SEC-7 today.
 
 ## On BLOCK
 

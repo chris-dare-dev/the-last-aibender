@@ -10,9 +10,9 @@ plan §6/SI-3; the POST surface is the **FROZEN-M2**
 |---|---|
 | `templates/settings.fragment.json.template` | The merged fragment: `env` (OTel block), `statusLine` (quota tee), `hooks` (the 29-event contract vocabulary, each a `type:"http"` POST). Double-brace tokens are rendered per account. |
 | `statusline/aibender-statusline.sh` | Statusline tee: writes each render tick's stdin JSON **verbatim, atomically, 0600** to `$AIBENDER_HOME/quota/<LABEL>.json` (BE-5's quota feed, ws-protocol §11), then emits the visible line — the user's captured pre-install statusline via passthrough, else a minimal `<LABEL> 5h:NN% 7d:NN%`. Never breaks a tick (always exits 0). Installed to `$AIBENDER_HOME/bin/`. |
-| `install-hook-settings.sh` | Idempotent installer: **merge, never overwrite** — user permissions/env/hooks/unknown keys all survive; aibender-owned hook entries (all-http, loopback `/hooks/v1/` URLs) are replaced in place; invalid JSON is refused untouched. Writes a per-account state file (`.aibender-hooks.json`) for surgical uninstall. |
+| `install-hook-settings.sh` | Idempotent installer: **merge, never overwrite** — user permissions/env/hooks/unknown keys all survive; aibender-owned hook entries (all-http, loopback `/hooks/v1/` URLs) are replaced in place; invalid JSON is refused untouched. Writes a per-account state file (`.aibender-hooks.json`) for surgical uninstall. `--hook-token` opts in to the SEC-3 endpoint auth header (see below). |
 | `uninstall-hook-settings.sh` | Removes exactly what the installer added; restores a captured user statusline; leaves user-edited values in place with a warning; deletes `settings.json` only when nothing but aibender keys ever lived in it. |
-| `lib.sh` | Shared helpers (builds on `infra/scripts/accounts/lib.sh`): URL/env builders, fragment renderer, the aibender-entry jq predicate, provenance-marker guard. |
+| `lib.sh` | Shared helpers (builds on `infra/scripts/accounts/lib.sh`): URL/env builders, fragment renderer (incl. SEC-3 header injection), the aibender-entry jq predicate, provenance-marker guard, per-install hook-token mint/read. |
 | `tests/` | Headless bats + shellcheck against temp `$AIBENDER_HOME` + fixture settings trees. `bash infra/hooks/tests/run.sh` |
 
 ## Contract obligations honored here (hooks-contract.md §5)
@@ -36,6 +36,41 @@ plan §6/SI-3; the POST surface is the **FROZEN-M2**
    per-account state file records the activation (`x4` block, derived from
    the installed settings). Injection stays **204-default** until the T3
    pinned-CLI verification lands (see below).
+
+## SEC-3 endpoint auth — the per-install hook token (opt-in, off by default)
+
+The collector's hooks endpoint takes an OPTIONAL per-boot-*safe* token gate
+(`HooksServerOptions.authToken`, `core/src/collector/hooks/server.ts`): when the
+composed broker sets it, every POST must carry the token in the
+`x-aibender-hook-token` header (constant-time checked) or it is rejected **401
+before any body parse/insert/relay**. It closes a LOCAL-process spoofing gap —
+any other process on the box can reach `127.0.0.1:<hooksPort>` and forge
+`PermissionRequest`/`SessionEnd`/`PreCompact` events. The loopback bind is
+preserved; this is defense-in-depth against local spoofing, **not** network
+exposure (no firewall framing — hooks-contract.md §4.2).
+
+- **Opt-in.** `--hook-token` (or `AIBENDER_HOOK_TOKEN_ENABLE=1`) stamps the
+  header on every loopback hook. **Off by default** — a default install stays
+  byte-identical to the open (M2–M6) posture. Off until the T3 proof (below).
+- **Stable per-install secret.** The value is minted **once** to
+  `$AIBENDER_HOME/hook-token` (0600, 32-byte base64url — the gateway-token
+  shape) and reused thereafter, so installs stay byte-stable. It is **read**,
+  not re-minted, on every run. `--hook-token-file PATH` overrides the location.
+- **Shared with the broker.** BE-MAIN reads the SAME file at boot and passes it
+  as `startHooksServer`'s `authToken` — the two sides must agree, which a
+  per-boot token could never do against on-disk settings. **Distinct** from the
+  per-boot WS gateway token (that lives in the gateway bootstrap file).
+- **Lifecycle.** The per-account header rides with the aibender hook entries, so
+  a normal uninstall removes it; the secret file is shared machine state and is
+  removed only by `uninstall --purge-shared`. The state file records the
+  activation (`hookToken` block: enabled/header/tokenFile) but **never** the
+  value.
+- **T3 (owner-run) gate.** Whether the pinned CLI forwards a custom request
+  header on a `type:"http"` hook is UNVERIFIED — same class as the §4/§7.1
+  CLI-response items. Verify on the real host before enabling `authToken` in
+  production (a CLI that silently drops the header, or rejects the unknown key,
+  would 401 or break every POST). Procedure:
+  [docs/runbooks/hooks-telemetry.md](../../docs/runbooks/hooks-telemetry.md).
 
 ## Ports (configuration, not contract)
 

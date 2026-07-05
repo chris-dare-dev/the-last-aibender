@@ -99,67 +99,90 @@ The single highest-severity, highest-confidence issue and the rest of the HIGH t
 
 ---
 
+## Fix-run status (Stage-3 fix-team + gate, Opus 4.8)
+
+The fix run below is **complete**. Full summary + per-finding proof:
+[`docs/runbooks/stage3-fixes.md`](../runbooks/stage3-fixes.md). Commit batches:
+(a) `828ab83`, (b) `24ee98a`, (c) `a9e1734`, (d) `2f2e0c5`, (e) docs (this batch).
+
+| Finding | Status | Commit |
+|---|---|---|
+| SEC-1 · SEC-2 · FE-1 · FE-4 | **FIXED** | `828ab83` |
+| SEC-3 · X-1 · X-2 · SEC-5 | **FIXED** | `24ee98a` |
+| OS-3 · OS-4 · OS-5 | **FIXED** | `a9e1734` |
+| FE-2 · FE-3 | **FIXED** | `2f2e0c5` |
+| DOC-1..8 · SEC-4 · SEC-6 · SEC-7 | **FIXED** | (e) docs batch |
+| **OS-1** | **OPEN — deferred** | separate future workflow (backend-adapter registry) |
+| **OS-2** | **OPEN — deferred** | separate future workflow (projection SQL aggregation) |
+| **OS-6** | **OPEN** | not implemented this run; joiner pending-map still time-window-bounded only |
+| SEC-8 · X-3 · X-4 | no action (intentional / verified control) | — |
+
+Gate: workspace tests **2272 pass / 1 skip** (baseline 2210 -> +62, no
+regression); 166 integration; 107 infra bats (+8) / 46 CI bats; both soaks PASS;
+gitleaks both tiers clean except the known 12 `.git/logs` reflog echoes.
+
 ## Recommended fix order (for the fix-team workflow)
 
 Ordered by severity, then by exploiting shared fix surfaces so related items are
-fixed together. Verdicts: (C) confirmed, (P) partial.
+fixed together. Verdicts: (C) confirmed, (P) partial. **Status tags added by the
+fix-run gate.**
 
-**Batch A — bootstrap-carrier + restart lifecycle (do first; one code surface, three HIGH/related items)**
-1. **SEC-1** (HIGH, C) — atomic re-validate-before-unlink in
+**Batch A — bootstrap-carrier + restart lifecycle (do first; one code surface, three HIGH/related items)** — **FIXED `828ab83`**
+1. **SEC-1** (HIGH, C) — **FIXED** — atomic re-validate-before-unlink in
    `removeBootstrapFile`; treat ENOENT as idempotent success; race test.
-2. **FE-1** (HIGH, C) — move configured accounts into a reactive store; re-sync
+2. **FE-1** (HIGH, C) — **FIXED** — move configured accounts into a reactive store; re-sync
    on `onBrokerRestart` (boot-identity change).
-3. **SEC-2** (HIGH, C) — load + pass the identity map into the gateway
+3. **SEC-2** (HIGH, C) — **FIXED** — load + pass the identity map into the gateway
    `createLineScrubber`; make it reloadable on the same restart trigger as FE-1.
-4. **FE-4** (LOW, C) — log the account-registry fallback reason (self-heals once
+4. **FE-4** (LOW, C) — **FIXED** — log the account-registry fallback reason (self-heals once
    FE-1 lands; same file).
 
 > A, items 2–4 share the bootstrap→registry→restart seam; read bootstrap-file.md
 > §3–§4 once and land them as a cluster.
 
-**Batch B — onboarding (independent, docs-only, unblocks new engineers/agents)**
-5. **DOC-1** (HIGH, C) — write `docs/runbooks/local-dev-start.md`.
-6. **DOC-2** (MED, C) — add "how to read a frozen contract" §0 to
+**Batch B — onboarding (independent, docs-only, unblocks new engineers/agents)** — **FIXED (docs batch e)**
+5. **DOC-1** (HIGH, C) — **FIXED** — write `docs/runbooks/local-dev-start.md`.
+6. **DOC-2** (MED, C) — **FIXED** — add "how to read a frozen contract" §0 to
    `docs/contracts/README.md`.
-7. **DOC-4** (MED, C) — document the protocol-version/freeze-cadence rule.
-8. **DOC-3** (MED, C) — one-sentence determinism rationale in DESIGN.md.
-9. **DOC-5/6/7/8** (LOW, C) — README purpose column + `core/` README; forward
+7. **DOC-4** (MED, C) — **FIXED** — document the protocol-version/freeze-cadence rule (§0.1).
+8. **DOC-3** (MED, C) — **FIXED** — one-sentence determinism rationale in DESIGN.md.
+9. **DOC-5/6/7/8** (LOW, C) — **FIXED** — README purpose column + `core/` README; forward
    references to `add-an-account.md`; promote workflow-orchestration link;
    flag M7 as a critical fix in HANDOFF §3.
 
-**Batch C — [X2]/[X4] hardening**
-10. **X-1** (MED, P) — require `briefId` for `kind:'merge'` (port type or
+**Batch C — [X2]/[X4] hardening** — **FIXED `24ee98a`** (SEC-4 in docs batch e)
+10. **X-1** (MED, P) — **FIXED `24ee98a`** — require `briefId` for `kind:'merge'` (port type +
     runtime guard in `recorder.ts`); negative test.
-11. **X-2** (MED, P) — derive the X2-audit source list from `EVENT_SOURCES`;
+11. **X-2** (MED, P) — **FIXED `24ee98a`** — derive the X2-audit source list from `EVENT_SOURCES`;
     fail if a defined source is unswept.
-12. **SEC-3** (MED, P) — per-boot HMAC/token auth on the hooks endpoint (keep
-    loopback bind; drop the firewall framing).
-13. **SEC-4** (MED, P) — add a `chmod 600` assertion for the Tier-2 config to
-    the pre-commit hook.
+12. **SEC-3** (MED, P) — **FIXED `24ee98a`** — per-install token auth on the hooks endpoint (keep
+    loopback bind; firewall framing dropped).
+13. **SEC-4** (MED, P) — **FIXED (docs batch e)** — `chmod 600` assertion for the Tier-2 config in
+    the pre-commit hook + bats.
 
-**Batch D — low-severity hygiene / observability (opportunistic)**
-14. **FE-2** (LOW, C) — `deciding` state in approvalsStore to prevent
+**Batch D — low-severity hygiene / observability (opportunistic)** — **FIXED `2f2e0c5`** (SEC-5 in `24ee98a`, SEC-6/7 in docs batch e)
+14. **FE-2** (LOW, C) — **FIXED `2f2e0c5`** — `deciding` state in approvalsStore to prevent
     double-send/stutter.
-15. **FE-3** (LOW, P) — DEBUG-log dropped opaque workstream kinds.
-16. **SEC-5** (LOW, P) — secret-shaped-name fail-close in `buildSessionEnv`.
-17. **SEC-6/7** (LOW, P) — document the opencode.db frozen/external + OS-level
-    read-only assumptions; consider runtime-schema allowlist.
+15. **FE-3** (LOW, P) — **FIXED `2f2e0c5`** — DEBUG-log dropped opaque workstream kinds.
+16. **SEC-5** (LOW, P) — **FIXED `24ee98a`** — secret-shaped-name fail-close in `buildSessionEnv`.
+17. **SEC-6/7** (LOW, P) — **FIXED (docs batch e)** — document the opencode.db frozen/external + OS-level
+    read-only assumptions (dbAccess.ts header + SECURITY.md §6).
 
 **Batch E — scale hardening (the optimization/scalability dimension; do after A–C)**
-18. **OS-1** (HIGH) — a `BackendDescriptor` + `registerBackend()` registry so a
+18. **OS-1** (HIGH) — **OPEN — deferred to a separate future workflow.** A `BackendDescriptor` + `registerBackend()` registry so a
     new local LLM/backend is one descriptor, not ~42 edits + a migration; derive
     the migration backend CHECK from one generated constant. Direct sequel to the
     M7 account-registry pattern.
-19. **OS-3** (HIGH) — stop the per-account synchronous 2 s full-tree walk:
-    mtime-scoped rescan / FSEvents-driven + periodic reconcile, off the event loop.
-20. **OS-2** (HIGH) — push read-model aggregation into SQL (or a rollup table) +
+19. **OS-3** (HIGH) — **FIXED `a9e1734`** — stop the per-account synchronous 2 s full-tree walk:
+    async mtime-scoped rescan + periodic full reconcile, off the event loop.
+20. **OS-2** (HIGH) — **OPEN — deferred to a separate future workflow.** Push read-model aggregation into SQL (or a rollup table) +
     a covering index; bound recompute to the dirty-account set; fix before wiring
     the publish cadence timer.
-21. **OS-4** (MED) — generalize the [X1] supervision budget from 3 accounts to N
+21. **OS-4** (MED) — **FIXED `a9e1734`** — generalize the [X1] supervision budget from 3 accounts to N
     (resident-account soft ceiling + checkpoint-hibernation of idle accounts under
     red); document the N-account math in blueprint §11.
-22. **OS-5** (MED) — LRU/recency eviction on the GraphStore to enforce the 5k-node
-    render regime; **OS-6** (LOW) — bound the ApiRequestJoiner pending map.
+22. **OS-5** (MED) — **FIXED `a9e1734`** — LRU/recency eviction on the GraphStore to enforce the 5k-node
+    render regime; **OS-6** (LOW) — **OPEN** — bound the ApiRequestJoiner pending map (not implemented this run).
 
 **No action needed (documented as intentional):**
 - **SEC-8** (LOW, C) — bootstrap double-sanitization is intentional

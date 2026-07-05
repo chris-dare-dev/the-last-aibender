@@ -31,7 +31,9 @@ or docs is fine (it is the SAME class as `MAX_A`/`MAX_B`). `MAX_C` and `MAX_D`
 are already provisioned and first-class. The single machine-checkable regex of
 record is `CLAUDE_ACCOUNT_LABEL_RE = ^MAX_[A-Z]$` (packages/protocol/vocab.ts);
 `ENT` is the one exact enterprise literal. What stays out of the tree is the
-label→**real account** mapping, never the label form itself.
+label→**real account** mapping, never the label form itself. Adding a new Max
+account requires **no code change** — the operator procedure (manifest + one
+login + a probe) is [docs/runbooks/add-an-account.md](docs/runbooks/add-an-account.md).
 
 Rules:
 
@@ -204,6 +206,61 @@ pushes that expose my email"** at <https://github.com/settings/emails>.
 `gh api PATCH` on `chris-dare-dev/the-last-aibender`; `secret_scanning`
 was already active. Verified in the API response
 (`"secret_scanning_push_protection":{"status":"enabled"}`).
+
+---
+
+## 6. The `opencode.db` credential-table read guard (SEC-6 / SEC-7)
+
+`opencode.db` is a **foreign, externally-owned SQLite database** created and
+schema-managed by OpenCode, not by this harness. It contains `account` and
+`credential` tables holding real provider secrets. Harness readers (BE-4's
+adapter, BE-5's backfill/orphan reconciler, BE-7's reconciler) open it only to
+read the `event` / `session` rows they need. The single guarded accessor —
+`core/src/adapters/opencode/dbAccess.ts` (`select()` only) — is the one place
+any reader may touch the file, and it fails closed: read-only open
+(`node:sqlite` `readOnly: true`), single-`SELECT`-only, no `ATTACH`/`PRAGMA`,
+and a blocklist that refuses the `account` / `credential` identifiers in **any**
+SQL position (quoted, bracketed, schema-qualified, aliased, or as a CTE name),
+across comment/literal-stripped SQL. This is the enforcement for the plan §7
+[X2] row "no credential-table reads."
+
+Two **assumptions** this guard rests on — the Stage-3 review (SEC-6, SEC-7)
+flagged that they were enforced in code but not written down. They are documented
+here as the security contract of record:
+
+1. **Frozen external schema (SEC-6).** The guard is a *negative blocklist over
+   known table names* (`account`, `credential`). It is correct only while
+   OpenCode keeps those table names. If a future OpenCode version **renames**
+   the credential tables, the name-based guard silently stops covering them —
+   this is external-schema drift, NOT a harness schema migration (the harness
+   cannot migrate a database it opens read-only). **Therefore: every OpenCode
+   version bump is a security event.** Re-validate `FORBIDDEN_OPENCODE_TABLES`
+   against the new schema during SDK-integration testing before adopting the
+   bump — the same posture the version gate applies to the Claude CLI
+   ([version-gate.md](docs/runbooks/version-gate.md)). A field-level tagging of
+   credential columns (mark protected columns rather than table names) is the
+   post-M7 hardening on the watch list.
+
+2. **OS-level read-only, enforced by file permissions (SEC-7).** Opening the
+   connection `readOnly: true` prevents writes and schema mutation **on this
+   connection**. It does NOT prevent a *separate process with OS-level write
+   access* to the db file from creating an aliasing view
+   (`CREATE VIEW cred_alias AS SELECT secret FROM credential`) that a later
+   `SELECT … FROM cred_alias` would not match against the table-name blocklist.
+   That bypass requires OS-level write access to `opencode.db` — a pre-existing
+   breach. **The operational assumption is that `opencode.db` is an imported,
+   OS-level read-only artifact**; enforce it with file permissions on the real
+   host (the file is owned and locked down by OpenCode / the owner), not with
+   code logic alone. A positive allowlist of permitted tables/views validated
+   against the live schema at runtime is the stronger form and is on the same
+   post-M7 hardening watch list. The current guard is adequate for FROZEN-M7
+   (read-only open, only the BE-4/BE-5/BE-7 readers, all via the guarded
+   `select()`), given this assumption.
+
+Both items are LOW severity today (SEC-6 = external-drift-on-bump; SEC-7 =
+OS-write-access prerequisite) and require no code change to close the finding —
+they are documentation + a version-bump procedure hook. The dbAccess.ts header
+carries a cross-reference to this section (BE lane).
 
 ---
 

@@ -58,17 +58,22 @@ lock. The normative specs are:
 
 ## Repository layout (plan §2)
 
-| Path | What lives there |
-|---|---|
-| `packages/` | Shared contract packages: [`protocol`](packages/protocol/), [`schema`](packages/schema/), [`shared`](packages/shared/), [`testkit`](packages/testkit/) — stubs at M0, frozen per milestone |
-| `core/` | `aibender-core` broker daemon (Backend dept) — M0: placeholder entry point |
-| `app/` | Tauri v2 app (Frontend dept) — FE-1 theme/token chain landed ([DESIGN.md](DESIGN.md) AUTHORED); **all other FE surface gated until FE-ORCH locks DESIGN.md** (FE-1 gate) |
-| `infra/` | Server-side config & IaC (SI dept) — see [infra/README.md](infra/README.md); AWS applies are hard-gated |
-| `docs/contracts/` | Frozen interface specs + [ICR process](docs/contracts/icr/README.md) |
-| `docs/adr/` | Deviation records against the blueprint |
-| `docs/runbooks/` | Operator procedures ([hygiene gate](docs/runbooks/hygiene.md) is live) |
-| `spikes/` | M0 risk-spike harnesses — [quarantined](spikes/README.md), never imported by prod code |
-| `var/` | gitignored dev-mode runtime data |
+The **Owner** column names the department/lane that owns the directory (the
+exclusive-ownership rule that lets the multi-agent build run in parallel — see
+[docs/runbooks/workflow-orchestration.md](docs/runbooks/workflow-orchestration.md)).
+The dense full map is plan §2.
+
+| Path | Purpose | Owner |
+|---|---|---|
+| `packages/` | Shared contract packages: [`protocol`](packages/protocol/) (WS types + validators), [`schema`](packages/schema/) (SQLite migrations + accessors), [`shared`](packages/shared/) (identity map, redaction, logger), [`testkit`](packages/testkit/) (golden corpora + test doubles) | orchestrator-stewarded (BE-ORCH lands, FE-ORCH co-signs) |
+| `core/` | `aibender-core` broker daemon: `kernel/` (per-account spawn + resume ledger), `gateway/` (the one multiplexed WS + bootstrap file), `adapters/` (opencode/lmstudio), `collector/`+`readmodels/` (observability), `workstreams/` (X4 lineage), `pipelines/` (DAG engine), `supervision/` (governor), `main/` (`composeBroker`) — see [core/README.md](core/README.md) | Backend (BE) |
+| `app/` | Tauri v2 cockpit: `src/chrome/` (shell + panels + palette + inbox), `src/lib/` (WS client, bootstrap reader, stores), `src/islands/{terminal,transcript,graph}/`, `src/features/{launch,observability,workstreams,pipelines}/`, and the FE-ORCH-owned locked theme — see [app/README.md](app/README.md), [DESIGN.md](DESIGN.md) (LOCKED) | Frontend (FE) |
+| `infra/` | Server-side config & IaC: `profiles/`+`scripts/` (account provisioning), `launchd/`+`hooks/` (daemon + telemetry), `aws/` (Bedrock IaC, applies hard-gated), `colima/`, `ci/` — see [infra/README.md](infra/README.md) | Server-side infra (SI) |
+| `docs/contracts/` | Frozen interface specs + the [ICR process](docs/contracts/icr/README.md) (read [contracts/README.md §0](docs/contracts/README.md) first) | orchestrator-stewarded |
+| `docs/adr/` | Deviation records against the blueprint | any lane (owning ORCH signs) |
+| `docs/runbooks/` | Operator procedures + per-milestone DoD records — start local dev with [local-dev-start.md](docs/runbooks/local-dev-start.md); the [hygiene gate](docs/runbooks/hygiene.md) is live | SI (most), owning lane per topic |
+| `spikes/` | M0 risk-spike harnesses — [quarantined](spikes/README.md), never imported by prod code | M0 (frozen) |
+| `var/` | gitignored dev-mode runtime data | — |
 
 ## Getting started (development)
 
@@ -84,3 +89,13 @@ pnpm typecheck   # strict TS 5 across the workspace
 Committing requires the hygiene gate: `infra/scripts/install-hooks.sh`, then
 follow [docs/runbooks/hygiene.md](docs/runbooks/hygiene.md) — the pre-commit
 hook **fails closed** until the machine-local Tier-2 config exists.
+
+**To run the harness locally** (start a broker + the app and watch it render):
+[docs/runbooks/local-dev-start.md](docs/runbooks/local-dev-start.md) — the single
+cold-start guide.
+
+**Building on this repo as a multi-agent collaborator?** Read
+[docs/HANDOFF.md](docs/HANDOFF.md) first, then its companion
+[docs/runbooks/workflow-orchestration.md](docs/runbooks/workflow-orchestration.md)
+— the reusable Workflow pattern (department ownership, ICRs, the Freeze→Build→
+Review→Fix→Gate shape) that drove every milestone.

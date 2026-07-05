@@ -1,6 +1,7 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { SYNTHETIC_CREDENTIAL_VALUE, buildFakeOpencodeDb } from '@aibender/testkit';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -128,6 +129,24 @@ describe('opencode.db guarded reader — the [X2] hard guard (plan §9.2 BE-4 ne
 
   it('the forbidden list is exactly account + credential', () => {
     expect([...FORBIDDEN_OPENCODE_TABLES]).toEqual(['account', 'credential']);
+  });
+
+  it('the header documents the SEC-6/SEC-7 security contract (SECURITY.md §6 cross-ref)', () => {
+    // SEC-6/SEC-7: the frozen-external-schema and OS-level-read-only
+    // assumptions the guard rests on must be written down at BOTH doc sites —
+    // SECURITY.md §6 (the security lane) AND this file's header (the BE lane).
+    // SECURITY.md §6 asserts "the dbAccess.ts header carries a cross-reference
+    // to this section"; this test makes that assertion enforceable so the
+    // cross-reference cannot silently drift out. See SECURITY.md §6.
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'dbAccess.ts'), 'utf8');
+    const header = source.slice(0, source.indexOf('*/') + 2);
+    expect(header).toMatch(/SEC-6/);
+    expect(header).toMatch(/SEC-7/);
+    expect(header).toMatch(/SECURITY\.md §6/);
+    // The version-bump security-event posture must survive in the header too:
+    // renaming the OpenCode credential tables silently defeats the blocklist.
+    expect(header).toMatch(/version bump/i);
+    expect(header).toMatch(/version-gate\.md/);
   });
 
   it('stripSqlLiteralsAndComments removes literals and both comment styles', () => {

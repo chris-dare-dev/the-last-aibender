@@ -379,6 +379,127 @@ EOF
   [ ! -e "$AIBENDER_HOME/quota" ]
 }
 
+# --- SEC-3: per-install hook token header (hooks-contract.md §4.2) ----------------
+
+@test "SEC-3: default install carries NO token header and mints no token file (open posture)" {
+  provision
+  "$INSTALL" >/dev/null
+  s="$(settings_of max-a)"
+  [ "$(jq '[.hooks[][].hooks[] | select(has("headers"))] | length' "$s")" -eq 0 ]
+  [ ! -e "$AIBENDER_HOME/hook-token" ]
+  # state file records injection is OFF
+  [ "$(jq -r '.hookToken' "$AIBENDER_HOME/accounts/max-a/.aibender-hooks.json")" = "null" ]
+}
+
+@test "SEC-3: --hook-token mints a 0600 base64url secret and stamps it on every loopback hook" {
+  provision
+  run "$INSTALL" --hook-token
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"INSTALLED (per-install hook token)"* ]]
+  tf="$AIBENDER_HOME/hook-token"
+  [ -f "$tf" ]
+  [ "$(perms "$tf")" = "600" ]
+  tok="$(cat "$tf")"
+  [[ "$tok" =~ ^[A-Za-z0-9_-]{43}$ ]]     # same shape as the gateway boot token
+  for pair in "max-a MAX_A" "max-b MAX_B" "ent ENT"; do
+    set -- $pair
+    s="$(settings_of "$1")"
+    # still the frozen-contract fragment: 29 events, http-only, url unchanged
+    [ "$(jq '.hooks | length' "$s")" -eq 29 ]
+    [ "$(jq -r '[.hooks[][].hooks[].type] | unique | join(",")' "$s")" = "http" ]
+    [ "$(jq -r '[.hooks[][].hooks[].url] | unique | join(",")' "$s")" = "http://127.0.0.1:4319/hooks/v1/$2" ]
+    # EVERY http hook carries the header, all with the one shared token value
+    [ "$(jq '[.hooks[][].hooks[] | select(has("headers") | not)] | length' "$s")" -eq 0 ]
+    [ "$(jq -r '[.hooks[][].hooks[].headers["x-aibender-hook-token"]] | unique | length' "$s")" -eq 1 ]
+    [ "$(jq -r '.hooks.Stop[0].hooks[0].headers["x-aibender-hook-token"]' "$s")" = "$tok" ]
+  done
+}
+
+@test "SEC-3: the token is one shared per-install secret — identical across accounts" {
+  provision
+  "$INSTALL" --hook-token >/dev/null
+  ta="$(jq -r '.hooks.PreToolUse[0].hooks[0].headers["x-aibender-hook-token"]' "$(settings_of max-a)")"
+  tb="$(jq -r '.hooks.PreToolUse[0].hooks[0].headers["x-aibender-hook-token"]' "$(settings_of max-b)")"
+  [ -n "$ta" ]
+  [ "$ta" = "$tb" ]
+  [ "$ta" = "$(cat "$AIBENDER_HOME/hook-token")" ]
+}
+
+@test "SEC-3: install with --hook-token is idempotent and reuses the minted token" {
+  provision
+  "$INSTALL" --hook-token >/dev/null
+  before="$(cat "$(settings_of max-a)")"
+  tok_before="$(cat "$AIBENDER_HOME/hook-token")"
+  run "$INSTALL" --hook-token
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'hooks\tMAX_A\t'*UNCHANGED* ]]
+  [[ "$output" == *"UNCHANGED (per-install hook token)"* ]]
+  [ "$(cat "$(settings_of max-a)")" = "$before" ]
+  [ "$(cat "$AIBENDER_HOME/hook-token")" = "$tok_before" ]   # never re-minted
+}
+
+@test "SEC-3: state file records the activation but NEVER the token value" {
+  provision
+  "$INSTALL" --label MAX_A --hook-token >/dev/null
+  st="$AIBENDER_HOME/accounts/max-a/.aibender-hooks.json"
+  [ "$(jq -r '.hookToken.enabled' "$st")" = "true" ]
+  [ "$(jq -r '.hookToken.header' "$st")" = "x-aibender-hook-token" ]
+  [[ "$(jq -r '.hookToken.tokenFile' "$st")" == *"/hook-token" ]]
+  tok="$(cat "$AIBENDER_HOME/hook-token")"
+  run grep -F -- "$tok" "$st"
+  [ "$status" -ne 0 ]                       # the secret is not copied into state
+}
+
+@test "SEC-3: re-running WITHOUT --hook-token drops the header again (byte-stable toggle-off)" {
+  provision
+  "$INSTALL" --label MAX_A --hook-token >/dev/null
+  s="$(settings_of max-a)"
+  [ "$(jq '[.hooks[][].hooks[] | select(has("headers"))] | length' "$s")" -gt 0 ]
+  run "$INSTALL" --label MAX_A          # no token this time
+  [ "$status" -eq 0 ]
+  [ "$(jq '[.hooks[][].hooks[] | select(has("headers"))] | length' "$s")" -eq 0 ]
+  [ "$(jq -r '.hookToken' "$AIBENDER_HOME/accounts/max-a/.aibender-hooks.json")" = "null" ]
+}
+
+@test "SEC-3: AIBENDER_HOOK_TOKEN_ENABLE=1 is equivalent to --hook-token" {
+  provision
+  run env AIBENDER_HOOK_TOKEN_ENABLE=1 "$INSTALL" --label MAX_B
+  [ "$status" -eq 0 ]
+  [ -f "$AIBENDER_HOME/hook-token" ]
+  [ "$(jq -r '.hooks.Stop[0].hooks[0].headers["x-aibender-hook-token"] // "none"' "$(settings_of max-b)")" != "none" ]
+}
+
+@test "SEC-3: --hook-token --dry-run mints nothing and writes no settings" {
+  provision
+  run "$INSTALL" --hook-token --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"would mint a per-install hook token"* ]]
+  [ ! -e "$AIBENDER_HOME/hook-token" ]
+  [ ! -e "$(settings_of max-a)" ]
+}
+
+@test "SEC-3: install --hook-token → uninstall round-trips a populated settings.json to identity" {
+  provision
+  user_settings_fixture > "$(settings_of max-a)"
+  orig_norm="$(jq -S . "$(settings_of max-a)")"
+  "$INSTALL" --label MAX_A --hook-token >/dev/null
+  run "$UNINSTALL" --label MAX_A
+  [ "$status" -eq 0 ]
+  [[ "$output" == *$'unhook\tMAX_A\t'*REMOVED* ]]
+  [ "$(jq -S . "$(settings_of max-a)")" = "$orig_norm" ]
+}
+
+@test "SEC-3: token file is shared state — a normal uninstall leaves it; --purge-shared removes it" {
+  provision
+  "$INSTALL" --hook-token >/dev/null
+  [ -f "$AIBENDER_HOME/hook-token" ]
+  "$UNINSTALL" --label MAX_A >/dev/null
+  [ -f "$AIBENDER_HOME/hook-token" ]        # not touched by a per-account uninstall
+  run "$UNINSTALL" --purge-shared
+  [ "$status" -eq 0 ]
+  [ ! -e "$AIBENDER_HOME/hook-token" ]
+}
+
 # --- statusline tee ---------------------------------------------------------------
 
 @test "statusline tees stdin verbatim to the 0600 quota file and prints an instrument line" {

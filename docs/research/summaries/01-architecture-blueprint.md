@@ -432,13 +432,43 @@ gate three ways to prove it; (10) commit the policy doc. All as one hygiene comm
 
 Source of record: [local-resource-feasibility](../findings/local-resource-feasibility.md),
 amended by [opencode-serve-event-probe](../findings/opencode-serve-event-probe.md) and
-[session-substrate-tiebreak](../findings/session-substrate-tiebreak.md).
+[session-substrate-tiebreak](../findings/session-substrate-tiebreak.md); the [X1] supervision
+budget is generalized from a hardcoded 3 accounts to N by
+[OS-4](../reviews/optimization-scalability.md) (M6 supervision tied to the M7 N-account registry).
 
-- **Budget** (36 GB M4 Max): full target scenario — 3 claude sessions (~1.2 GB typical) +
+- **Budget** (36 GB M4 Max): the reference scenario — 3 claude sessions (~1.2 GB typical) +
   2 opencode (~0.6 GB) + broker + Tauri-class frontend (~0.3 GB) + LM Studio with an 8B Q4 model
   (~6.5 GB) — totals ~8.7 GB typical / ~17 GB pessimistic; machine total ~22 GB with ambient apps.
   CPU/GPU are not binding; memory is. Ceiling with supervision: 8–10 resident sessions + one
-  7–8B model (or 4–6 + one 12–14B), 24 registered sessions with hibernation.
+  7–8B model (or 4–6 + one 12–14B), 24 registered sessions with hibernation. **The "3 accounts"
+  here is the illustrative baseline of the reference scenario, not a cap — the account registry is
+  N (M7) and the budget below is stated in N.**
+- **N-account footprint envelope (OS-4)**: the account *registry* generalizes to N, so the
+  supervision *budget* is expressed in N rather than a fixed 3. Each **simultaneously-active**
+  claude account carries a resident footprint of **~3 GB** (the watchdog's warn band — heavier than
+  the ~1.2 GB idle-typical figure above), so N active accounts is **~3 GB × N**. Measured against
+  the **~17 GB pessimistic envelope** — from which the ~6.5 GB local model, ~0.6 GB opencode, and
+  ~0.3 GB frontend also draw — only **~3 fully-active accounts** fit alongside a resident model
+  (`~17 − 6.5 − 0.6 − 0.3 ≈ 9.6 GB ÷ 3 GB ≈ 3`). **This is why the original budget was scoped to
+  3**; it was the account share of the envelope, not an arbitrary limit. Unloading the model (shed
+  step 1) or accounts sitting idle-light (~1.2 GB) frees room for more. Because [X1] makes account
+  spawns **absolute** (never refused, even at red), "account spawns always honored" is bounded not
+  by refusal but by a resident **soft cap** plus **reversible relief**, never unbounded growth:
+  - **Resident-account soft ceiling** (governor config `residentAccountSoftCeiling`, an N): at or
+    above it, the resident (live, non-hibernated) account count puts the spawner into back-pressure
+    — the account spawn is **STILL admitted** ([X1] absolute; account spawns are never refused) but
+    the admission carries an **amber advisory** `resident-account-soft-ceiling`, so the operator
+    sees the resident cap being crossed and can hibernate an idle account before the envelope is
+    exhausted. It is advisory, never a hard gate; absent / non-positive → no ceiling evaluated (the
+    M6 3-account behavior exactly).
+  - **Sustained-red account checkpoint-hibernation** (governor config
+    `sustainedRedTicksForAccountHibernation`, consecutive red ticks): under **SUSTAINED red** (this
+    many consecutive red ticks) an **IDLE** account session becomes eligible for a **reversible
+    CHECKPOINT hibernation** — the resume ledger resumes it, and account **activity un-hibernates it
+    immediately**. This is **NOT a shed**: an account session is still **never involuntarily
+    killed**, only checkpointed and resumable. **Default 0 = DISABLED** (the M6 rule — account
+    sessions are never auto-hibernated); a positive value (e.g. 3 ticks ≈ 90 s at a ~30 s cadence)
+    opts into the relief, and it requires a hibernate port to be actionable.
 - **Supervision is the core feature, not an add-on**: per-session footprint watchdog (claude warn
   3 GB / recycle 6 GB; opencode warn 1 GB / recycle 1.5 GB; serve >500 MB sustained 5 min);
   recycle = checkpoint→kill→resume, doubling as the [X4] continuation mechanism. Health signals
@@ -447,11 +477,15 @@ amended by [opencode-serve-event-probe](../findings/opencode-serve-event-probe.m
 - **Thresholds**: amber at pressure level 2 / free <25% / swap >20 GB (stop prewarm, shorten
   model TTL, offer hibernation); red at level 4 / free <12% / swap >26 GB (refuse non-account
   spawns, unload the local model, force-hibernate idle sessions — **account spawns are still
-  honored after shedding**).
+  honored after shedding**, and remain honored above the resident soft ceiling, carrying only the
+  amber `resident-account-soft-ceiling` advisory).
 - **[X1] sacrifice order, encoded in the scheduler**: local model size → local model KV/context →
-  frontend shell weight → non-Claude session hibernation → scrollback/buffers. The three account
-  sessions are never the victim.
-- Idle hibernation after 30 min (never auto-applied to the three account sessions);
+  frontend shell weight → non-Claude session hibernation → scrollback/buffers. **Account sessions
+  (any of the N) are never the involuntary victim** — the sole account-touching relief is the
+  opt-in, idle-only, sustained-red **checkpoint**-hibernation above, which is reversible and never a
+  shed or kill.
+- Idle hibernation after 30 min (never auto-applied to account sessions, for any N — **except** the
+  opt-in sustained-red account checkpoint-hibernation above, which is reversible and idle-only);
   `iogpu.wired_limit_mb` stays default; `~/.claude.json` size monitored per account dir.
 
 ---

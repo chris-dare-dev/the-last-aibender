@@ -24,6 +24,24 @@
  * swap path documented there applies here too; opening bypasses
  * openNodeSqliteDatabase only because that helper applies WRITE pragmas
  * (WAL) that a read-only foreign database must never receive.
+ *
+ * SECURITY CONTRACT (SEC-6 / SEC-7): this guard rests on two documented
+ * assumptions written up in SECURITY.md §6 ("The `opencode.db` credential-table
+ * read guard") — READ IT before touching `FORBIDDEN_OPENCODE_TABLES` or the
+ * screening logic:
+ *   1. Frozen external schema. The blocklist is a negative match over the
+ *      *current* OpenCode table names (`account`, `credential`). It stops
+ *      covering them if OpenCode renames the credential tables in a future
+ *      version, so **every OpenCode SDK/binary version bump is a security
+ *      event** — re-validate `FORBIDDEN_OPENCODE_TABLES` against the new schema
+ *      during SDK-integration testing before adopting the bump
+ *      (docs/runbooks/version-gate.md §7, mirroring the Claude-CLI posture).
+ *   2. OS-level read-only. `readOnly: true` blocks writes on THIS connection
+ *      only; it does not stop a separate write-capable process from creating an
+ *      aliasing view. The operational assumption is that `opencode.db` is an
+ *      imported, OS-level read-only artifact enforced by file permissions.
+ * Field-level column tagging / a runtime positive allowlist are the post-M7
+ * hardening options on the watch list (SECURITY.md §6).
  */
 
 import { DatabaseSync } from 'node:sqlite';

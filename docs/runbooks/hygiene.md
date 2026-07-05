@@ -20,6 +20,7 @@ brew install gitleaks
 infra/scripts/install-hooks.sh
 
 # 3. Create the Tier-2 private config (see §2) and lock it down
+umask 0077                         # so nothing you create here is group/world-readable
 mkdir -p ~/.aibender/private
 chmod 700 ~/.aibender ~/.aibender/private
 $EDITOR ~/.aibender/private/gitleaks-tier2.toml
@@ -28,6 +29,18 @@ chmod 600 ~/.aibender/private/gitleaks-tier2.toml
 
 Until step 3 is done, **every commit on this machine is blocked** — the hook
 fails closed when the Tier-2 file is absent. That is deliberate.
+
+**The Tier-2 file MUST be mode `600` (SEC-4).** It holds exact private
+identifier literals, so a group- or world-readable copy is itself an exposure.
+The pre-commit hook now **fails closed on the permission bits too**: if
+`~/.aibender/private/gitleaks-tier2.toml` is not exactly mode `600`, the hook
+refuses to run it and blocks the commit with a `chmod 600` instruction — the
+same fail-closed posture it already applies to a *missing* Tier-2 file. Set
+`umask 0077` before creating any machine-local private file under `~/.aibender/`
+so the mode is right from creation; the explicit `chmod 600` above is the
+belt-and-braces. (Enforced by the SEC-4 assertion in
+`infra/scripts/install-hooks.sh`; covered by
+`infra/scripts/tests/hooks-install.bats`.)
 
 ## 2. Tier-2 config schema (contents documented NOWHERE)
 

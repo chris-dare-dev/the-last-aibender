@@ -71,8 +71,9 @@ Acceptance rules (collector, M3):
 
 | Condition | Response |
 |---|---|
+| endpoint auth configured (§4.2) **and** the `x-aibender-hook-token` header is missing/repeated/mismatched | **401** — rejected *before any parse/insert/relay*; precedes even the 404 label check (no label oracle). Not emitted when auth is unconfigured (the default) |
 | well-formed JSON object with `hook_event_name` + `session_id` strings | **204** accepted (no body) — including **unknown** event names, which are parked as `unmapped` rather than rejected (the CLI adds events in minor bumps; ingestion must not break on a vocabulary bump) |
-| gating-capable event the policy floor has an opinion on (§4) | **200** + JSON hook output |
+| gating-capable event the policy floor has an opinion on (§4.1) | **200** + JSON hook output |
 | unknown `<ACCOUNT_LABEL>` path segment | **404** — never a guess |
 | unparseable body / missing required fields | **400** — the collector logs a redacted line; the session is unaffected |
 
@@ -110,7 +111,9 @@ settings template fires for every session in that config dir, which is
 exactly why the context graph and the reconciler see sessions the harness
 did not spawn (blueprint §4.1).
 
-## 4. Gating responses (the permission policy floor)
+## 4. Endpoint responses (policy floor + authentication)
+
+### 4.1 Gating responses (the permission policy floor)
 
 For gating-capable events (`PermissionRequest`, `PreToolUse`), a `200`
 response body is hook output in the CLI's own schema, e.g.:
@@ -133,6 +136,50 @@ response body is hook output in the CLI's own schema, e.g.:
   floor is switched from observe-only to enforcing (plan §9.4 posture). The
   REQUEST shape above is frozen either way.
 
+### 4.2 Endpoint authentication — the per-install token gate (SEC-3)
+
+The hooks endpoint is **internal-only**: it binds loopback (`127.0.0.1`) and is
+never exposed off-host. That bind stops off-box traffic but NOT other local
+processes — any process on the machine can reach `127.0.0.1:<hooksPort>` and
+POST forged `PermissionRequest`/`SessionEnd`/`PreCompact` events into the
+approval floor and the session ledger. SEC-3 closes that **local-process
+spoofing** gap with an OPTIONAL per-install token:
+
+- **The gate.** `HooksServerOptions.authToken` (collector). When set, EVERY
+  POST must present the token in the **`x-aibender-hook-token`** header
+  (`HOOK_TOKEN_HEADER`, constant-time compared) or it is rejected **`401`
+  before any body parse, normalization, events-store insert, or approval-floor
+  relay**. The 401 precedes even the 404 unknown-label check, so a token-less
+  caller gets no path/label oracle. Missing, repeated (`string[]`), or
+  mismatched header → 401.
+- **Off by default = the open posture.** ABSENT `authToken` keeps the M2–M6
+  behavior exactly (loopback-only, no header demanded); the guard is a no-op.
+  This is the back-compat default until the T3 proof below lands.
+- **The token is a STABLE per-install secret — NOT per-boot.** SI-3 mints it
+  once (32-byte base64url, the gateway-token shape) to
+  `$AIBENDER_HOME/hook-token` (0600) and, under `install --hook-token`, stamps
+  the matching header onto every loopback hook entry in each account's
+  `settings.json`. The broker (BE-MAIN) READS that same file at boot and passes
+  the value as `authToken`. A per-boot token could never match a header baked
+  into on-disk settings, so per-boot is explicitly wrong here. One shared secret
+  serves all accounts (the endpoint is one server with one `authToken`), so it
+  does **not** widen the `<LABEL>`-only per-account delta (§1). It is kept
+  **distinct** from the per-boot WS gateway token (which lives in the gateway
+  bootstrap file).
+- **Threat model — local spoofing, not network exposure.** The loopback bind is
+  preserved either way; the token is defense-in-depth against a co-resident
+  local process, NOT a substitute for network controls and NOT a firewall
+  concern. *(This supersedes the network-exposure framing of the original SEC-3
+  write-up.)*
+- **T3 verification item (SI-3 install, milestone gate).** Whether the pinned
+  CLI forwards a custom request header on a `type:"http"` hook — and does not
+  reject the unknown `headers` key — is UNVERIFIED, the same class as the §4.1
+  gating and §7.1 injection CLI-response items. It MUST be verified against the
+  pinned CLI on the real host before `authToken` is switched on in production;
+  until then both the SI-3 header injection (opt-in) and the collector gate stay
+  OFF and the endpoint keeps its open, loopback-only posture. The REQUEST shape
+  (the header name + the 401 class) is frozen either way.
+
 ## 5. Template obligations (SI-3)
 
 1. One settings template per account config dir; the ONLY per-account
@@ -145,6 +192,16 @@ response body is hook output in the CLI's own schema, e.g.:
 4. The [X4] automation set (`SessionStart`/`SessionEnd`/`PreCompact`) is part
    of the same template — BE-7 consumes those events from the store, not via
    a second transport.
+5. **SEC-3 endpoint auth (opt-in, §4.2).** Under `install --hook-token`, every
+   loopback hook entry additionally carries the `x-aibender-hook-token` header
+   whose value is the stable per-install secret at `$AIBENDER_HOME/hook-token`
+   (0600), shared with the broker's `authToken`. **OFF by default** (a plain
+   install is byte-identical to the open posture) and T3-gated (§4.2). The
+   header rides the *same* loopback POST — it adds no transport and no shell-out
+   (§5.3) — and the token is one shared secret across all accounts, so the
+   per-account delta stays `<LABEL>`-only (§1). A normal uninstall removes the
+   header with the aibender hook entries; the secret file is shared machine
+   state, removed only by `uninstall --purge-shared`.
 
 ## 6. Fixtures — LANDED (M3)
 
@@ -258,4 +315,5 @@ and non-automation accepts staying route-less.
 |---|---|---|
 | 2026-07-04 | Initial FROZEN-M2 freeze: versioned `/hooks/v1/<LABEL>` envelope; native-vocabulary body with `hook_event_name`/`session_id` required; accept-unknown-events rule; label-from-template-only attribution [X2]; gating-response shape with the T3 verification flag. SI-ORCH co-sign: **co-signed (M4 review)** — SI-3 templates POST exactly this envelope: `/hooks/v1/<LABEL>` with the label as the ONLY per-account delta, the full 29-event vocabulary, http-only (no shell-outs [X2]), short timeouts, idempotent merge-never-overwrite installer — all pinned by the hooks bats suite (27/27 green, re-run at this review). | — (M2 freeze) |
 | 2026-07-04 | **M3 acceptance-side freeze (§7):** typed POST validation outcome + ack shape + PermissionRequest→hook-floor relay contract landed in `packages/protocol` (`hooks.ts`); §3 vocabulary machine-checkable (`HOOK_EVENT_VOCABULARY`, 29 names/8 groups); golden hook-POST corpus landed in `packages/testkit` (§6, `GOLDEN_HOOK_FIXTURES`). No change to any §1–§5 shape — this freeze makes the M2 prose machine-checkable and pins the collector/gateway agreement surface. §4 T3 gating-verification flag unchanged. SI-ORCH co-sign: **co-signed (M4 review)** — the golden hook-POST corpus replays green against the real collector handler (every §2 acceptance class incl. 404 label case-sensitivity and each 400 class); the SI-3 template URL shape matches the frozen endpoint constants (`HOOK_PATH_PREFIX`, default port 4319) byte-for-byte, verified by the SI suites at this review. | — (M3 freeze) |
+| 2026-07-05 | **SEC-3 endpoint-auth amendment (§2 table 401 row; §4→§4.1/§4.2; §5.5):** documents the OPTIONAL per-install token gate on the accepting endpoint — `HooksServerOptions.authToken` + the `x-aibender-hook-token` header, the `401`-before-parse reject class (precedes the 404 label check — no label oracle), the STABLE per-install secret (`$AIBENDER_HOME/hook-token`, SI-3-minted 0600, broker-read at boot) kept DISTINCT from the per-boot WS gateway token, OFF by default (the open loopback posture is preserved), and a local-process-spoofing threat model with the loopback bind preserved (the original SEC-3 firewall/network-exposure framing is dropped). New T3 item: pinned-CLI custom-`headers` forwarding must be proven before `authToken` turns on. No change to any §1–§3 REQUEST shape or the §7/§7.1 acceptance/routing types; the accepting collector already implements the gate (`core/src/collector/hooks/server.ts`, SEC-3 spec green) and SI-3 the header injection (`infra/hooks`, opt-in `--hook-token`, bats green). **Owning orchestrator BE-ORCH: ratification PENDING. SI-ORCH co-sign: PENDING.** | [ICR-0015](icr/icr-0015-hooks-endpoint-token.md) |
 | 2026-07-04 | **M4 [X4] routing freeze (§7.1):** the SessionStart/SessionEnd/PreCompact automation routing contract landed in `packages/protocol` (`hooks.ts` amendment): `X4_AUTOMATION_HOOK_EVENTS` + `x4AutomationRouteFor`; the `WorkstreamHookRouting` handler port BE-7 registers with BE-5's endpoint (SessionEnd/PreCompact post-ack fire-and-forget; SessionStart deadline-raced); the frozen SessionStart injection response `HookSessionStartOutput` (`hookSpecificOutput.additionalContext`, CLI hook-output schema) + `ackForSessionStart` (injection only on accepted SessionStart posts; empty context → 204); `HookAck` 200 body widened additively. Hook corpus advanced to `FROZEN-M4` with per-fixture `x4Route` pins + SessionEnd/SessionStart(resume) fixtures. NEW T3 verification item: CLI-side `additionalContext` interpretation before injection turns on (204 stays the default). No change to any §1–§6 REQUEST shape. SI-ORCH co-sign: **co-signed (M5 review)** — the [X4] routing contract is proven end-to-end: the X4 routing e2e suite (`core/src/collector/hooks/x4Routing.spec.ts`, 8/8 green) exercises `x4AutomationRouteFor` over accepted posts (SessionStart injection deadline-race → `HookSessionStartOutput`/204, SessionEnd/PreCompact POST-ACK fire-and-forget, non-automation accepts route-less); the SI-3 hooks bats suite is 27/27 green (the per-account templates POST the frozen `/hooks/v1/<LABEL>` envelope carrying the full event vocabulary, re-run at this review); and the golden hook corpus pins `x4Route` per accepted post (`GOLDEN_HOOK_FIXTURES`, SessionStart startup+resume · SessionEnd · PreCompact, derived from the frozen `x4AutomationRouteFor`). No SI-authored request-side surface changed at M5. | — (M4 freeze) |

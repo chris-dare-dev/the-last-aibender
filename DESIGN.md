@@ -3,6 +3,7 @@
 **System name:** Instrument Grade · token namespace `--ig-*`
 **Status:** **LOCKED** (FE-ORCH, 2026-07-04, M1 lock-mark pass). The FE-1 gate (plan §5) is satisfied — other FE packages may merge UI code against this document.
 **Amendment rule (in force while locked):** *any* change to this document, `tokens.ts`, or the generated CSS requires an ADR in `docs/adr/` **plus** FE-ORCH sign-off — this strengthens the M0 change-control note below (which required an ADR only for set-widening changes). Agents never edit values directly; they file an ICR/ADR.
+**Why the lock (for non-FE devs):** this token set is injected into every build agent's context during FE builds, so an uncoordinated change (even a "harmless" new backend-status color) breaks agent-driven-build determinism — different agents would render against different token sets. Treat the tokens as a frozen contract; propose changes via ICR/ADR, never inline (blueprint §8).
 **Normative sources:** [ui-anti-slop-design](docs/research/findings/ui-anti-slop-design.md) · blueprint §8 · plan §5/FE-1.
 **Implementation:** `app/src/chrome/theme/tokens.ts` (typed source of truth) → generated `tokens.css` + `tailwind.theme.css` → enforced by `app/scripts/lint-tokens.mjs` (§8).
 

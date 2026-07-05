@@ -47,12 +47,22 @@ import {
   validateEventsPayload,
   type ContextGraphTouch,
   type EventSummary,
+  type LineageRecorder,
   type QuotaSnapshot,
   type ReadModelSnapshot,
+  type SessionIdResolver,
   type SessionState,
+  type WorkstreamHookRouting,
+  type WorkstreamServerPayload,
 } from '@aibender/protocol';
 import { openKernelStore, type KernelStore, type ResumeLedgerStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
+
+import {
+  createWorkstreamSlice,
+  type BriefSynthesizer,
+  type WorkstreamSlice,
+} from '../workstreams/index.js';
 
 import {
   KernelVerbError,
@@ -121,6 +131,14 @@ export interface ComposeKernelOptions {
    * tee runs first, then this tap — both observe every message.
    */
   readonly messageTap?: RunnerMessageTap;
+  /**
+   * [X4] lineage recorder for the kernel spawn paths (ws-protocol.md §15.1,
+   * M4 — BE-7 wiring). A factory form receives the freshly opened store so
+   * a recorder over the SAME kernel database (migration 0003) can be built
+   * before the kernel exists; composeBroker uses it. Absent → no recording
+   * (the frozen noop default inside the kernel).
+   */
+  readonly lineage?: LineageRecorder | ((store: KernelStore) => LineageRecorder);
   /** Kernel logger (tap-throw warnings, native-id drift, …). */
   readonly logger?: Logger;
 }
@@ -156,6 +174,9 @@ export async function composeKernel(options: ComposeKernelOptions): Promise<Comp
     (options.liveSpawn?.enabled === true
       ? createSdkQueryRunner({ liveSpawnOptIn: true })
       : createRefusingQueryRunner());
+  // [X4] M4: resolve the lineage recorder (factory form gets the store).
+  const lineage =
+    typeof options.lineage === 'function' ? options.lineage(store) : options.lineage;
   const kernel = createSessionKernel({
     ledger: store.resumeLedger,
     profiles,
@@ -163,6 +184,7 @@ export async function composeKernel(options: ComposeKernelOptions): Promise<Comp
     ...(options.baseEnv !== undefined ? { baseEnv: options.baseEnv } : {}),
     ...(options.approvalRelay !== undefined ? { approvals: options.approvalRelay } : {}),
     ...(options.messageTap !== undefined ? { messageTap: options.messageTap } : {}),
+    ...(lineage !== undefined ? { lineage } : {}),
     ...(options.logger !== undefined ? { logger: options.logger } : {}),
   });
   return {
@@ -303,6 +325,22 @@ export interface BrokerPublishSinks {
   publishContextTouch(touch: ContextGraphTouch): void;
   /** The FROZEN-M3 events union (ws-protocol.md §13): summaries + read models. */
   publishEvent(payload: EventSummary | ReadModelSnapshot): void;
+  /**
+   * M4 [X4] (BE-7 injection, additive — present only when the workstream
+   * slice is composed): the frozen native→harness resolver (ws-protocol.md
+   * §15.2). Publisher lanes constructing the graphfeed MUST pass it as
+   * `resolveSessionId`, and lanes starting the hooks endpoint as
+   * `sessionIdOfNative` — this is the composition seam that flips the
+   * frozen §12 relay pin.
+   */
+  readonly resolveSessionId?: SessionIdResolver;
+  /**
+   * M4 [X4] (BE-7 injection, additive): the automation routing handlers
+   * (hooks-contract.md §7.1). A lane starting the hooks endpoint passes
+   * this as its `workstreams` option so SessionEnd/PreCompact/SessionStart
+   * reach the brief automation.
+   */
+  readonly workstreamHooks?: WorkstreamHookRouting;
 }
 
 /** Returned by a starter that owns resources (watchers, pollers, timers). */
@@ -390,6 +428,31 @@ export interface ComposeBrokerOptions extends ComposeKernelOptions {
   };
   /** M3 publisher lanes (see {@link BrokerPublisherStarter}). */
   readonly publishers?: readonly BrokerPublisherStarter[];
+  /**
+   * M4 [X4]: the BE-7 workstream slice. Present → composeBroker builds the
+   * lineage recorder/ledger/engine/automation/resolver over the SAME kernel
+   * store (migration 0003 lives in the kernel database, sqlite-ddl.md §8.1),
+   * injects the recorder into the kernel spawn paths and the ptyHost
+   * continuation-edge stub, wires the engine into the gateway's frozen merge
+   * verb, feeds the context-pressure watch from the ICR-0009 tap, exposes
+   * the resolver + hook routing on {@link BrokerPublishSinks}, and pushes
+   * the §16.5 boot list snapshot once the gateway is up. Absent → M1–M3
+   * behavior exactly (no lineage anywhere).
+   */
+  readonly workstreams?: {
+    /** Brief synthesis ports (fakes in tests; LM Studio drafter at runtime). */
+    readonly synthesizer?: BriefSynthesizer;
+    /** READ-ONLY transcript reader override (tests inject fixtures). */
+    readonly readTranscript?: (path: string) => string | undefined;
+    /** Context-pressure tuning (~70% default; the EVENT is the contract). */
+    readonly pressure?: {
+      readonly thresholdPct?: number;
+      readonly rearmBelowPct?: number;
+      readonly contextWindowTokens?: number;
+    };
+    readonly logger?: Logger;
+    readonly nowMs?: () => number;
+  };
 }
 
 export interface ComposedBroker extends ComposedKernel {
@@ -404,6 +467,13 @@ export interface ComposedBroker extends ComposedKernel {
    * The composed broker OWNS its shutdown (before the store closes).
    */
   readonly ptyHost?: PtyHost;
+  /**
+   * M4 [X4]: the composed BE-7 slice (present iff `options.workstreams` was
+   * given) — recorder, ledger, engine, automation, pressure watch, resolver,
+   * guardrails. Operator wiring (reconciler roots, hooks-endpoint start)
+   * builds on these; tests drive them directly.
+   */
+  readonly workstreams?: WorkstreamSlice;
 }
 
 /**
@@ -440,15 +510,28 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       : {}),
   });
 
+  // -- [X4] workstream slice publisher (M4, BE-7): LATE-BOUND — the slice ----
+  // -- must exist before the kernel (the recorder rides every spawn) but the
+  // -- gateway boots after it; payloads published before the bind (none in
+  // -- practice: nothing spawns during composition) drop silently. -----------
+  let workstreamSink: ((payload: WorkstreamServerPayload) => void) | undefined;
+  const publishWorkstream = (payload: WorkstreamServerPayload): void => {
+    workstreamSink?.(payload);
+  };
+
   // -- transcript tee (ICR-0009): ONE kernel tap fans raw messages out to ----
-  // -- however many TranscriptSource listeners subscribe (the gateway: one) --
+  // -- however many TranscriptSource listeners subscribe (the gateway: one);
+  // -- the [X4] context-pressure watch consumes the SAME tap (M4). -----------
   const transcriptListeners = new Set<(sessionId: string, message: unknown) => void>();
   const userTap = options.messageTap;
+  let workstreamSlice: WorkstreamSlice | undefined;
   const teeTap: RunnerMessageTap = (sessionId, message) => {
+    const raw = rawOfRunnerMessage(message);
     if (transcriptListeners.size > 0) {
-      const raw = rawOfRunnerMessage(message);
       for (const listener of transcriptListeners) listener(sessionId, raw);
     }
+    // [X4]: pressure watch on the same axis (observe never throws).
+    workstreamSlice?.pressure.observe(sessionId, raw);
     userTap?.(sessionId, message); // composed, never replaced
   };
   const transcripts: TranscriptSource = {
@@ -458,11 +541,38 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     },
   };
 
-  // -- kernel over the shared store ------------------------------------------
+  // -- kernel over the shared store (+ [X4] recorder over the SAME store) ----
   const composed = await composeKernel({
     ...options,
     approvalRelay,
     messageTap: teeTap,
+    ...(options.workstreams !== undefined
+      ? {
+          lineage: (store: KernelStore): LineageRecorder => {
+            workstreamSlice = createWorkstreamSlice({
+              store: store.lineage,
+              resumeLedger: store.resumeLedger,
+              publish: publishWorkstream,
+              ...(options.workstreams?.synthesizer !== undefined
+                ? { synthesizer: options.workstreams.synthesizer }
+                : {}),
+              ...(options.workstreams?.readTranscript !== undefined
+                ? { readTranscript: options.workstreams.readTranscript }
+                : {}),
+              ...(options.workstreams?.pressure !== undefined
+                ? { pressure: options.workstreams.pressure }
+                : {}),
+              ...(options.workstreams?.logger !== undefined
+                ? { logger: options.workstreams.logger }
+                : {}),
+              ...(options.workstreams?.nowMs !== undefined
+                ? { nowMs: options.workstreams.nowMs }
+                : {}),
+            });
+            return workstreamSlice.recorder;
+          },
+        }
+      : {}),
   });
 
   // -- ptyHost over the SAME ledger + profiles (optional slice) --------------
@@ -473,6 +583,10 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
         ledger: composed.store.resumeLedger,
         profiles: composed.profiles,
         backend: options.pty.backend,
+        // [X4] M4: the ptyHost's M2 ContinuationEdgeEmitter stub adapted onto
+        // the frozen LineageRecorder port (ws-protocol.md §15.1) — recycle
+        // continuations record at action time.
+        ...(workstreamSlice !== undefined ? { edges: workstreamSlice.continuationEdges } : {}),
         ...(options.baseEnv !== undefined ? { baseEnv: options.baseEnv } : {}),
         ...(options.pty.flowControl !== undefined
           ? { flowControl: options.pty.flowControl }
@@ -498,6 +612,26 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     throw cause;
   }
 
+  // -- [X4] attended-pty launches record their lineage node at announce time --
+  // (the ptyHost writes the resume-ledger row before announcing; the recorder
+  // reads attribution from that row's twin fields — never guessed [X2]).
+  if (ptyHost !== undefined && workstreamSlice !== undefined) {
+    const slice = workstreamSlice;
+    ptyHost.onSession((session) => {
+      const row = composed.store.resumeLedger.get(session.sessionId);
+      if (row === undefined) return;
+      slice.recorder.record({
+        kind: 'launch',
+        sessionId: row.id,
+        accountLabel: row.accountLabel,
+        backend: row.backend,
+        cwd: row.cwd,
+        ...(row.workstreamHint !== null ? { workstreamHint: row.workstreamHint } : {}),
+        atEpochMs: Date.now(),
+      });
+    });
+  }
+
   // -- gateway over every port ------------------------------------------------
   const port = adaptSessionKernel(composed.kernel, composed.store.resumeLedger);
   let gateway: GatewayHandle;
@@ -506,6 +640,9 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       kernel: port,
       approvals: toApprovalBrokerGatewayPort(approvals),
       transcripts,
+      // [X4] M4 (ICR-0011): the frozen merge verb goes live when the BE-7
+      // engine is composed; absent → the documented empty-broker degrade.
+      ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice.engine } : {}),
       ...(ptyHost !== undefined ? { ptyHost: toGatewayPtyHostPort(ptyHost) } : {}),
       ...(options.gateway?.aibenderHome !== undefined
         ? { aibenderHome: options.gateway.aibenderHome }
@@ -531,6 +668,18 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     throw cause;
   }
 
+  // -- [X4] bind the late publisher + push the §16.5 boot list snapshot ------
+  if (workstreamSlice !== undefined) {
+    workstreamSink = (payload) => gateway.publishWorkstream(payload);
+    try {
+      workstreamSlice.ledger.publishListSnapshot();
+    } catch (cause) {
+      options.workstreams?.logger?.warn('boot workstream snapshot failed (non-fatal)', {
+        detail: (cause as Error).message,
+      });
+    }
+  }
+
   // -- M3 publisher lanes over the frozen-typed sinks -------------------------
   const sinks: BrokerPublishSinks = {
     publishQuota: (snapshot) => gateway.publishQuota(snapshot),
@@ -544,6 +693,14 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       // the union was validated above, so the widening is sound.
       gateway.publishEvent(payload as unknown as Readonly<Record<string, unknown>>);
     },
+    // [X4] M4 injection (BE-7): the frozen resolver + automation routing —
+    // publisher lanes wiring the graphfeed / hooks endpoint consume these.
+    ...(workstreamSlice !== undefined
+      ? {
+          resolveSessionId: workstreamSlice.resolveSessionId,
+          workstreamHooks: workstreamSlice.automation,
+        }
+      : {}),
   };
   const publisherHandles: BrokerPublisherHandle[] = [];
   const closePublishers = async (): Promise<void> => {
@@ -573,9 +730,14 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     gateway,
     approvals,
     ...(ptyHost !== undefined ? { ptyHost } : {}),
+    ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice } : {}),
     close: async () => {
       await closePublishers();
+      // [X4]: drain in-flight brief automation before the wire goes down
+      // (fire-and-forget work settles; late publishes still fan out).
+      await workstreamSlice?.automation.settle();
       await gateway.close();
+      workstreamSink = undefined; // the wire is gone; late publishes drop
       await ptyHost?.shutdown();
       await composed.close();
       approvals.close();

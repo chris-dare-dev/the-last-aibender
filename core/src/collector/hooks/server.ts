@@ -38,10 +38,15 @@ import {
   HOOKS_PORT_ENV_VAR,
   HOOK_PATH_PREFIX,
   ackForHookOutcome,
+  ackForSessionStart,
   hookFloorRelayInput,
   validateHookPost,
+  x4AutomationRouteFor,
+  type AcceptedHookPost,
   type HookAck,
   type HookGatingOutput,
+  type HookSessionStartOutput,
+  type WorkstreamHookRouting,
 } from '@aibender/protocol';
 import type { EventsTableStore } from '@aibender/schema';
 
@@ -67,6 +72,10 @@ export interface HooksServerStats {
   readonly rowsInserted: number;
   readonly relaysRaised: number;
   readonly gatingAnswered: number;
+  /** M4 [X4]: accepted posts routed to a registered automation handler. */
+  readonly automationRouted: number;
+  /** M4 [X4]: SessionStart posts answered 200 + injection. */
+  readonly injectionsAnswered: number;
 }
 
 export interface HooksServer {
@@ -91,6 +100,21 @@ export interface HooksServerOptions {
   readonly floorPosture?: 'observe' | 'escalate';
   /** Escalate-mode decision window, ms. Default 3000 (short hook timeout). */
   readonly floorTimeoutMs?: number;
+  /**
+   * BE-7 [X4] automation routing (hooks-contract.md §7.1, M4 — BE-7's
+   * narrow wiring into this endpoint, registered by the composition root;
+   * BE-ORCH reviews). Frozen semantics: `onSessionEnd`/`onPreCompact` are
+   * POST-ACK fire-and-forget — the 204 is written FIRST and a slow or
+   * throwing handler can never stall or fail a session; `onSessionStart` is
+   * the ONE handler whose output rides the response, raced against
+   * {@link HooksServerOptions.sessionStartTimeoutMs} and answered
+   * `200 + HookSessionStartOutput` via the frozen `ackForSessionStart`
+   * discipline (empty context degrades to 204). Absent slots keep the M3
+   * events-store-only behavior exactly.
+   */
+  readonly workstreams?: WorkstreamHookRouting;
+  /** SessionStart injection deadline, ms. Default 2000 (§4 floor pattern). */
+  readonly sessionStartTimeoutMs?: number;
   /** Default: AIBENDER_HOOKS_PORT env, else 4319. Tests pass 0. */
   readonly port?: number;
   readonly nowMs?: () => number;
@@ -107,6 +131,7 @@ export async function startHooksServer(options: HooksServerOptions): Promise<Hoo
   const nowMs = options.nowMs ?? Date.now;
   const floorPosture = options.floorPosture ?? 'observe';
   const floorTimeoutMs = options.floorTimeoutMs ?? 3000;
+  const sessionStartTimeoutMs = options.sessionStartTimeoutMs ?? 2000;
   const stats = {
     accepted: 0,
     rejected400: 0,
@@ -114,8 +139,57 @@ export async function startHooksServer(options: HooksServerOptions): Promise<Hoo
     rowsInserted: 0,
     relaysRaised: 0,
     gatingAnswered: 0,
+    automationRouted: 0,
+    injectionsAnswered: 0,
   };
   let receipt = 0;
+
+  /**
+   * [X4] §7.1: race the SessionStart handler against the injection deadline.
+   * A slow, rejecting, or throwing handler degrades to `undefined` (→ 204) —
+   * the <50 ms ack posture only stretches for a handler that answers fast.
+   */
+  const raceSessionStart = async (
+    accepted: AcceptedHookPost,
+  ): Promise<HookSessionStartOutput | undefined> => {
+    const handler = options.workstreams?.onSessionStart;
+    if (handler === undefined) return undefined;
+    stats.automationRouted += 1;
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const deadline = new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), sessionStartTimeoutMs);
+        timer.unref?.();
+      });
+      return await Promise.race([
+        Promise.resolve(handler.call(options.workstreams, accepted)).catch(() => undefined),
+        deadline,
+      ]);
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** [X4] §7.1: POST-ACK fire-and-forget slots (throws logged-and-swallowed). */
+  const routePostAck = (accepted: AcceptedHookPost): void => {
+    const routing = options.workstreams;
+    if (routing === undefined) return;
+    const route = x4AutomationRouteFor(accepted);
+    try {
+      if (route === 'SessionEnd' && routing.onSessionEnd !== undefined) {
+        stats.automationRouted += 1;
+        routing.onSessionEnd(accepted);
+      } else if (route === 'PreCompact' && routing.onPreCompact !== undefined) {
+        stats.automationRouted += 1;
+        routing.onPreCompact(accepted);
+      }
+    } catch {
+      // A throwing handler can never fail a session (§7.1) — the ack is
+      // already on the wire; nothing to answer differently.
+    }
+  };
 
   /** Relay a PermissionRequest into the hook-floor slot; maybe await it. */
   const relayPermissionRequest = async (
@@ -203,6 +277,7 @@ export async function startHooksServer(options: HooksServerOptions): Promise<Hoo
 
         const outcome = validateHookPost(segment, body);
         let gating: HookGatingOutput | undefined;
+        let injection: HookSessionStartOutput | undefined;
 
         if (outcome.ok) {
           stats.accepted += 1;
@@ -216,22 +291,41 @@ export async function startHooksServer(options: HooksServerOptions): Promise<Hoo
           );
           if (insert.inserted) stats.rowsInserted += 1;
           gating = await relayPermissionRequest(outcome.accepted);
+          // [X4] §7.1: the ONE handler whose output rides the response.
+          if (x4AutomationRouteFor(outcome.accepted) === 'SessionStart') {
+            injection = await raceSessionStart(outcome.accepted);
+          }
         } else if (outcome.httpStatus === 404) {
           stats.rejected404 += 1;
         } else {
           stats.rejected400 += 1;
         }
 
-        const ack: HookAck = ackForHookOutcome(outcome, gating);
+        // ackForSessionStart owns the injection discipline (only on accepted
+        // SessionStart posts; empty context → 204); gating keeps priority on
+        // gating-capable events — SessionStart is not one, so the branches
+        // never both produce a 200 body for the same post.
+        const ack: HookAck =
+          injection !== undefined
+            ? ackForSessionStart(outcome, injection)
+            : ackForHookOutcome(outcome, gating);
         if (ack.status === 200) {
-          stats.gatingAnswered += 1;
+          if (injection !== undefined) {
+            stats.injectionsAnswered += 1;
+          } else {
+            stats.gatingAnswered += 1;
+          }
           const payload = JSON.stringify(ack.body);
           res.writeHead(200, { 'content-type': 'application/json' });
           res.end(payload);
-          return;
+        } else {
+          res.writeHead(ack.status);
+          res.end();
         }
-        res.writeHead(ack.status);
-        res.end();
+
+        // [X4] §7.1 POST-ACK fire-and-forget: SessionEnd / PreCompact route
+        // AFTER the answer is on the wire — a slow handler stalls nothing.
+        if (outcome.ok) routePostAck(outcome.accepted);
       })().catch(() => {
         res.destroy();
       });

@@ -36,8 +36,8 @@
 
 import { isAbsolute, join } from 'node:path';
 
-import type { LaunchParams, SessionStatus } from '@aibender/protocol';
-import { LABEL_BACKENDS } from '@aibender/protocol';
+import type { LaunchParams, LineageRecorder, SessionStatus } from '@aibender/protocol';
+import { LABEL_BACKENDS, noopLineageRecorder } from '@aibender/protocol';
 import type { ResumeLedgerRow, ResumeLedgerStore } from '@aibender/schema';
 import type { Logger } from '@aibender/shared';
 import { newId } from '@aibender/shared';
@@ -154,6 +154,16 @@ export interface SessionKernelOptions {
    * approval supersession) is unaffected. Absent → M1/M2 behavior exactly.
    */
   readonly messageTap?: RunnerMessageTap;
+  /**
+   * [X4] LINEAGE RECORDER (ws-protocol.md §15.1, M4 — BE-7's narrow wiring
+   * into the kernel, the BE-2 `edges` precedent; BE-ORCH reviews): the
+   * frozen edge-recording port, called AT ACTION TIME — the same tick as the
+   * ledger write, before any spawn await — on every launch (new node), fork
+   * (fork edge to the child) and un-forked dead resume (`continue`
+   * self-edge). `record` never throws by its frozen contract and is never
+   * awaited. Absent → {@link noopLineageRecorder} (M1–M3 behavior exactly).
+   */
+  readonly lineage?: LineageRecorder;
   readonly logger?: Logger;
   /**
    * Test seams for race proofs (SPIKE-D `--crash-after-ledger` analogue).
@@ -195,6 +205,7 @@ interface LiveSession {
 
 export function createSessionKernel(options: SessionKernelOptions): SessionKernel {
   const { ledger, profiles, runner } = options;
+  const lineage = options.lineage ?? noopLineageRecorder;
   const locateTranscript = options.transcriptLocator ?? defaultTranscriptLocator;
   const pidProbe = options.pidProbe ?? defaultPidLivenessProbe;
   const logger = options.logger;
@@ -318,6 +329,8 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
     readonly resumeNativeSessionId?: string;
     readonly forkSession?: boolean;
     readonly resumeSessionAt?: string;
+    /** [X4]: when set, this spawn is a fork CHILD of the named session. */
+    readonly lineageForkFrom?: string;
   }): Promise<KernelSession> => {
     const profile = profiles.resolve(args.accountLabel);
     const env = buildEnvFor(profile);
@@ -332,6 +345,28 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
       purpose: args.purpose,
       ...(args.workstreamHint !== undefined ? { workstreamHint: args.workstreamHint } : {}),
     });
+
+    // [X4] action-time recording (ws-protocol.md §15.1): the node — and the
+    // fork edge, when this spawn is a fork child — land in the SAME tick as
+    // the row-before-spawn write, before the spawn is awaited. Deterministic
+    // by construction: every kernel-mediated action records exactly once.
+    lineage.record({
+      kind: 'launch',
+      sessionId: args.id,
+      accountLabel: args.accountLabel,
+      backend: 'claude_code',
+      cwd: args.cwd,
+      ...(args.workstreamHint !== undefined ? { workstreamHint: args.workstreamHint } : {}),
+      atEpochMs: Date.now(),
+    });
+    if (args.lineageForkFrom !== undefined) {
+      lineage.record({
+        kind: 'fork',
+        fromSessionId: args.lineageForkFrom,
+        toSessionId: args.id,
+        atEpochMs: Date.now(),
+      });
+    }
 
     await options.testHooks?.afterLedgerInsert?.(args.id);
 
@@ -403,6 +438,8 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
       resumeNativeSessionId: parent.nativeSessionId,
       forkSession: true,
       ...(resumeSessionAt !== undefined ? { resumeSessionAt } : {}),
+      // [X4]: sibling-creating CHILD from the fork point (§15.1 `fork`).
+      lineageForkFrom: parent.id,
     });
     return {
       ...session,
@@ -568,6 +605,15 @@ export function createSessionKernel(options: SessionKernelOptions): SessionKerne
           }
           // Un-forked dead resume: same row, state → resumed, then spawn.
           ledger.transition(sessionId, 'resumed');
+          // [X4] action-time recording (§15.1 `resume`): a continuation is a
+          // CHILD — the in-place re-drive of the SAME node is the legal
+          // `continue` SELF-edge (from === to), same tick as the transition.
+          lineage.record({
+            kind: 'resume',
+            fromSessionId: sessionId,
+            toSessionId: sessionId,
+            atEpochMs: Date.now(),
+          });
           const profile = profiles.resolve(row.accountLabel);
           return startAndPump(row, {
             sessionId: row.id,

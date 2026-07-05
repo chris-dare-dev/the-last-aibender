@@ -9,7 +9,8 @@
 > — the reusable multi-agent *Workflow* pattern that has driven every milestone. You will re-use it
 > verbatim to build the remaining milestones. Read it second.
 >
-> **Last updated:** 2026-07-05, after M5 (pipelines) landed in full — see §3 for the commit range.
+> **Last updated:** 2026-07-05 — **Stage 2 (M0–M6) COMPLETE.** Next stage is Stage 3 (adversarial
+> review + rendered-frontend screen capture); its rendered half needs the owner's live logins.
 > **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
 > **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo
 > `chris-dare-dev/the-last-aibender`. **Everything is committed LOCAL-ONLY. Nothing has been pushed.
@@ -19,19 +20,22 @@
 
 ## 0. TL;DR — your first five minutes
 
-1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -50 && git status` — confirm you
-   are at `7cab37a` (or later) with a **clean tree**. If the tree is dirty, someone left work
+1. `cd ~/Personal/SourceCode/the-last-aibender && git log --oneline -55 && git status` — confirm you
+   are at `5864cff` (or later) with a **clean tree**. If the tree is dirty, someone left work
    uncommitted; investigate before proceeding.
-2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **1981 tests pass / 1 skipped**,
-   typecheck clean. Also green: `pnpm run test:infra` (92 bats) + `bash infra/ci/tests/run.sh` (33),
-   `pnpm -F aibender-app lint:tokens` (189 files), `pnpm -F aibender-core soak:m2`,
-   `pnpm -F aibender-app test:islands`. This is your green baseline. (If `pnpm` is missing: `npm i -g pnpm`.)
+2. `pnpm install && pnpm -r typecheck && pnpm -r test` — you should see **2121 tests pass / 1 skipped**,
+   typecheck clean. Also green: `pnpm run test:infra` (93 bats) + `bash infra/ci/tests/run.sh` (45),
+   `pnpm test:integration` (166, §9.3 cross-department), `pnpm -F aibender-app lint:tokens` (196 files),
+   `pnpm -F aibender-core soak:m2` + `soak:m6`, `pnpm -F aibender-app test:islands`. Green baseline.
+   (If `pnpm` is missing: `npm i -g pnpm`.)
 3. Read the two **normative** specs (they are the source of truth, not this doc):
    `docs/research/summaries/01-architecture-blueprint.md` and
    `docs/research/summaries/02-stage2-implementation-plan.md`.
 4. Read §6 (**hard gates**) and §7 (**secret hygiene**) of this file. These are non-negotiable and
    the auto-mode classifier *will* stop you if you cross them.
-5. Your immediate job is **§9.1 — build M6 (hardened v0 ship)**, the last Stage 2 milestone. Go there.
+5. **Stage 2 is DONE.** Your immediate job is **§9.1 — Stage 3 (adversarial review & fix)**. Its
+   code/security/scale/docs review half runs now; its rendered-frontend screen-capture half needs the
+   owner's live logins (a real running app). Go there.
 
 ---
 
@@ -108,8 +112,8 @@ rendered frontend). You are inside **Stage 2**.
 | **M3 — Instruments live** | ✅ committed (`f086c50`→`bb7ef95`) | Freeze: protocol 1.1.0/FROZEN-M3 (`events` payload union closed: `event-summary` + `read-model-snapshot` w/ required per-source freshness; registries shared with schema CHECKs), schema migration 0002 events store (separate collector-owned db, validated insert path refuses identity shapes), hooks-contract §7 acceptance types + golden hook-POST corpus, ICR-0009 kernel message tap (the transcript-tee seam). Impl (all 3 reviews approve, 0 fixes): **BE-5** collector — full §6.1 source matrix (JSONL tailer, statusline tee + gated OAuth scaffold, loopback OTLP receiver, SSE dedupe + induced-disconnect gap-repair, guarded db scrape reconciling to identical evt_ ids, fake-only AWS pollers w/ live clients refusing sans opt-in, LM inline capture, hooks accepting endpoint w/ PermissionRequest→hook-floor relay, JSONL-wins-tokens/OTel-wins-attribution joiner); **BE-6** graph feed + freshness state machine (down-as-state) + all ten §6.3 read models (ccusage block math cited) + classification queue via BE-4; **FE-5** instrument dashboards (NO-SIGNAL doctrine, honest-labeling audit: "ACTUAL" unrenderable under estimate-only); **BE-MAIN** composeBroker wires every port (resolves M2 D3); **SI-4** Bedrock IaC authored + validated, **hard gate HELD** (no plan-with-creds/apply/AWS call). Gate: 1323 tests / 71 bats, identity audit double-proven (in-suite + gate's independent sweep, 0 hits/185 cells), soak still passes composed, both gitleaks tiers clean. Record: `docs/runbooks/m3-dod.md` (D1–D5). |
 | **M4 — Lineage** | ✅ committed (`7478d3f`→`c623ffa`) | Freeze: protocol 1.2.0/FROZEN-M4 — schema migration 0003 lineage tables (harness-ids-primary, 8-edge enum w/ CHECK matrices), the `LineageRecorder` action-time port (§15.1), the bidirectional `workstream` channel (§16, merge verb + error contract), `SessionIdResolver` (§15.2, resolves the M3 §12 pin), hooks §7.1 [X4] automation routing w/ frozen SessionStart injection shape. Impl (all 3 reviews approve, 0 fixes; run was session-cap-killed mid-build and RESUMED with survivor-work directives): **BE-7** ledger/merge-engine (atomic ONE-node+N-merge_parent)/conflict-surfacing briefs (structurally appended after any model pass)/idempotent hook automation/reconciler (inferred orphans in one cycle, native-id dedupe)/pressure-watch/resolver + narrow kernel/ptyHost/composeBroker wiring; **FE-4** graph island (GraphStore→worker layout→Pixi WebGL2, spawn-at-referrer, layers/cluster-dim, reduced-motion; fixed 6 additional real bugs found test-driven); **FE-6** lineage view + merge flow (byte-identical golden frame) + the ONE ceremonial animation; **SI-3/5** X4 hook slots active in templates + colima pins/read-only probe/runbook. Gate: 1693 tests / 92 bats / 33 CI bats, 5k soak Chromium strict (p95 10.10 ms, ~40% headroom) + WebKit primary-form under 60Hz pin (deviation D1, control-experiment-diagnosed), fs-audit byte-identical + structural no-write-path scan, both gitleaks tiers clean, co-signs flipped for all M2/M3 rows (M4 rows pend next review). Record: `docs/runbooks/m4-dod.md`. |
 | **M5 — Pipelines** | ✅ committed (`46b10c1`→`7cab37a`, gate on **Opus 4.8**) | Freeze: protocol 1.3.0/FROZEN-M5 — `dag-schema.md` v1 (step kinds prompt/skill/agent/workflow-script/approval, needs/when/forEach+maxParallel/loop, per-step account/budget/retry/outputSchema; forward-INCOMPAT unknown-kind rule since a DAG doc is load-bearing state), schema migration 0004 (pipeline_definition/pipeline_run/step_attempt = durable memoization journal, kernel db), `pipelines` channel (§18: catalog snapshots + run/step monitor payloads + 6 client verbs; approval gates ride the existing approvals channel via `workflow-gate` source). Impl: **BE-8** one catalog scanner/three consumers (malformed-YAML-surviving, unknown-key-preserving, workflow scripts static-parse-only per arch test; OpenCode API-first w/ file fallback) + versioned DAG engine (plan-time contentHash pinning, per-step account routing [X1], budget→AbortController+**real process-group reaping**, retry, outputSchema) + memoization journal (real store close/reopen resume, no re-exec) + lineage/cost integration (session_node + `workflow` edges, cost keyed `pipeline:<run>:<step>:<iter>`); **FE-6** builder (account routing visually first-class) + run monitor (deep-links the single M2 inbox, resume-from-journal). Note: run died once on the Fable 5 cap mid-freeze (no survivor work), relaunched clean on Opus 4.8; one Fix-phase agent hit the StructuredOutput retry cap but its 2 fixes were redundant with the SI reviewer's and landed anyway (commit succeeded ⇒ fail-closed gitleaks hook passed). Gate: 1981 tests, the 3-step MAX_A→AWS_DEV→LOCAL demo w/ mid-run approval pause/resume + broker-restart journal resume, both gitleaks tiers clean; all pending contract co-signs flipped. Record: `docs/runbooks/m5-dod.md`. |
-| **M6 — Hardened v0 ship** | ⬜ not started | Supervision/resource governor, packaging, 24h soak. |
-| **Stage 3 — Review & fix** | ⬜ not started | Adversarial reviewers (security/opt/docs/scale) + **mandatory rendered-frontend screen-capture review** + a principal-engineer fix team. |
+| **M6 — Hardened v0 ship** | ✅ committed (`b6fe50b`→`5864cff`, Opus 4.8) | Freeze: protocol 1.4.0/FROZEN-M6 — added the `resource-health` read-model kind on the events channel (pressure state, per-session footprints w/ watchdog bands, shed/recycle notices as states; labels+numbers only [X2]); `docs/contracts/integration-suite.md` contract-of-record. Impl (all 3 reviews approve, 0 fixes): **BE-9** supervision governor (`core/src/supervision/`) — phys_footprint watchdog w/ sustained-window debounce, pressure-delta amber/red state machine (never naive free-RAM), the **[X1] sacrifice-order scheduler** (account sessions never the victim + account spawns honored under red — 500-iter property test), idle hibernation excluding account sessions, `~/.claude.json` monitor, recycle→continue-edge via ptyHost (doubles as [X4] continuation), resource-health publisher, composeBroker slice; **FE** resource-health instrument in the observability deck; **INTEG** the §9.3 cross-department integration suite (`test/integration/`, `pnpm test:integration`); **SI** dry-run Tauri v0 sidecar packaging (bundle ON, signing/notarize dry-run, debug build + `--smoke-test` proven), LaunchAgent-v1 validated-not-flipped, operator runbooks (recovery/quota-exhaustion/release). Gate: 2121 tests + 166 integration, `soak:m6` accelerated 2880-tick synthetic soak (accountSessionsShed 0, identityLeaks 0, within ~17 GB envelope; **real 24h soak is T4/pending-owner**), both gitleaks tiers clean, all contract co-signs flipped. Records: `docs/runbooks/m6-dod.md` + `docs/runbooks/stage2-complete.md`. |
+| **Stage 3 — Review & fix** | ⬜ **NEXT** — code-review half unblocked; rendered half needs owner logins | Adversarial reviewers (security/opt/docs/scale + git-history leak scan + [X1]–[X4] stress) — **can run now**. **Mandatory rendered-frontend screen-capture review** — needs a real running app (owner's live logins). Then a principal-engineer fix team addresses every finding. |
 
 **Two empirical wins already banked** (the riskiest Stage-1 assumptions, now proven on this machine):
 - [X1] keychain isolation: the `claude` credential Keychain item **is** scoped per `CLAUDE_CONFIG_DIR`
@@ -122,26 +126,28 @@ rendered frontend). You are inside **Stage 2**.
 
 ## 4. Exact repo state right now
 
-- **HEAD:** `7cab37a docs: M5 DoD record`. Tree **clean**.
-- **Baseline health:** `pnpm -r typecheck` clean; **1981 tests pass / 1 skipped** (protocol 209, shared 36,
-  testkit 95, schema 94, app 680, core 867+1 — the skip is the double-gated live-opencode placeholder);
-  `pnpm run test:infra` 92/92 bats + `infra/ci/tests/run.sh` 33/33; `pnpm -F aibender-app lint:tokens`
-  clean (189 files); `test:islands` all three islands green on Chromium + WebKit; `soak:m2` passes composed.
-  gitleaks tier-1 clean on a full-dir scan (incl. a built `app/src-tauri/target/`, path-allowlisted —
-  SECURITY.md §2 tuning log); tier-2 clean except the known 12 `.git/logs` reflog echoes (see wart below).
+- **HEAD:** `5864cff docs: M6 DoD and Stage 2 completion record`. Tree **clean**.
+- **Baseline health:** `pnpm -r typecheck` clean (7 packages); **2121 tests pass / 1 skipped** (protocol 230,
+  shared 36, testkit 95, schema 94, app 716, core 950+1 — the skip is the double-gated live-opencode
+  placeholder); `pnpm test:integration` 166/12 files (§9.3 cross-department); `pnpm run test:infra` 93 bats
+  + `infra/ci/tests/run.sh` 45; `pnpm -F aibender-app lint:tokens` clean (196 files); `test:islands` all
+  three islands green Chromium + WebKit; `soak:m2` + `soak:m6` PASS. gitleaks tier-1 clean on a full-dir
+  scan (cargo `target/` path-allowlisted — SECURITY.md §2); tier-2 clean except the known 12 `.git/logs`
+  reflog echoes (see wart below). Protocol at **1.4.0/FROZEN-M6**; schema at **migration 0004**.
 - **Layout** (see plan §2 for the full intended tree):
   - `packages/{protocol,schema,shared,testkit}` — shared, orchestrator-stewarded contract packages
     (testkit now carries the 32-fixture golden corpus + the promoted pty/gateway/adapter test doubles,
     ICR-0006/7/8).
-  - `core/src/{kernel,gateway,adapters,collector,readmodels,workstreams,pipelines,main}` — the
-    `aibender-core` broker daemon (BACKEND dept). `kernel/pty/`, `gateway/`, `adapters/` (M2),
-    `collector/`(+`graphfeed/`) + `readmodels/` (M3), `workstreams/` (M4), `pipelines/` (M5: catalog
-    scanner + DAG engine + memoization journal) are **built**; `composeBroker` wires every port incl.
-    lineage + pipelines. `supervision/` is **not yet built** (lands M6).
-  - `app/` — the Tauri v2 frontend (FRONTEND dept). Built: `src-tauri/` (shell + `--smoke-test`),
-    `src/chrome/`, `src/lib/`, `src/islands/{terminal,transcript,graph}/`, `src/features/launch/`
-    (M2), `src/features/observability/` (M3), `src/features/workstreams/` (M4),
-    `src/features/pipelines/` (M5), plus the locked theme. M6 adds packaging, not new feature dirs.
+  - `core/src/{kernel,gateway,adapters,collector,readmodels,workstreams,pipelines,supervision,main}` —
+    the `aibender-core` broker daemon (BACKEND dept). ALL built: `kernel/pty/`, `gateway/`, `adapters/`
+    (M2), `collector/`(+`graphfeed/`) + `readmodels/` (M3), `workstreams/` (M4), `pipelines/` (M5),
+    `supervision/` (M6: watchdog, pressure probe, sacrifice-order scheduler, hibernation, governor);
+    `composeBroker` wires every port incl. lineage + pipelines + supervision.
+  - `app/` — the Tauri v2 frontend (FRONTEND dept). Built: `src-tauri/` (shell + `--smoke-test` +
+    v0 sidecar bundle config, dry-run signing), `src/chrome/`, `src/lib/`,
+    `src/islands/{terminal,transcript,graph}/`, `src/features/{launch,observability,workstreams,pipelines}/`
+    (+ the M6 resource-health instrument in observability), plus the locked theme.
+  - `test/integration/` — the §9.3 cross-department integration suite (`pnpm test:integration`, M6).
   - `infra/{profiles,scripts,launchd,hooks,aws,colima,ci}` — SERVER-SIDE dept. All populated:
     `profiles/`+`scripts/` (SI-2), `launchd/`+`hooks/` (SI-3, X4 slots active in templates), `ci/` +
     full `.github/workflows/` (SI-6), `aws/` (SI-4 IaC authored + validated; **apply pending-owner**),
@@ -271,66 +277,54 @@ it is never the reviewer or authority. See the owner's global policy. Not requir
 
 ## 9. HOW TO PROCEED
 
-### 9.1 IMMEDIATE NEXT ACTION — build M6 (hardened v0 ship), the last Stage 2 milestone
+### 9.1 IMMEDIATE NEXT ACTION — Stage 3 (adversarial review & fix)
 
-**M2, M3, M4 and M5 are DONE** (see §3). The workflow scripts that built them are saved under
-`~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/894bbe44-c473-4c8b-b7e4-633d58bc246b/workflows/scripts/`.
-Recovery lessons banked: (a) a mid-build session-cap death is resumable with `resumeFromRunId` +
-survivor-work directives appended to the dead builders' prompts, freeze prompt kept byte-identical so
-its cache holds (M4); (b) a death **during** the freeze leaves nothing cached — relaunch clean (M5);
-(c) redundant reviewer coverage means a single Fix-agent death rarely loses a fix (M5); (d) on the
-`claude-fable-5` limit, `/model claude-opus-4-8` and relaunch — workflow agents inherit the session
-model (M5 gate ran on Opus). Opus 4.8 occasionally trips the StructuredOutput retry cap on schema'd
-agents; it self-recovered here, but watch for `parallel[N] failed: StructuredOutput retry cap`.
+**All of Stage 2 (M0–M6) is DONE** (see §3 + `docs/runbooks/stage2-complete.md`). The workflow scripts
+that built every milestone are saved under
+`~/.claude/projects/-Users-chris-dare-Personal-SourceCode-the-last-aibender/894bbe44-c473-4c8b-b7e4-633d58bc246b/workflows/scripts/`
+(`stage2-m2-impl`, `stage2-m3`, `stage2-m4`, `stage2-m5`, `stage2-m6`) — reuse them as structural
+references for the Stage-3 workflows.
 
-Author a fresh Workflow named `stage2-m6` (Freeze→Build→Review→Fix→Gate) from the runbook skeleton,
-using the plan §4/BE-9 brief and the plan §8.2 M6 DoD. Headlines:
+**Recovery/ops lessons banked across Stage 2** (all proven in-flight): (a) a mid-**build** session-cap
+death is resumable with `resumeFromRunId` + survivor-work directives appended to the dead builders'
+prompts, freeze prompt kept byte-identical so its cache holds (M4); (b) a death **during the freeze**
+leaves nothing cached — relaunch clean (M5); (c) redundant reviewer coverage means one Fix-agent death
+rarely loses a fix (M5); (d) on the `claude-fable-5` limit, `/model claude-opus-4-8` and relaunch —
+workflow agents inherit the session model (M5+M6 gates ran on Opus 4.8). Opus 4.8 occasionally trips
+`parallel[N] failed: StructuredOutput retry cap` on schema'd agents; it has self-recovered so far, but
+after any workflow **always** run the §8 independent verification and reconcile agent deaths by hand.
 
-- **Freeze (BE-ORCH):** likely light — supervision is mostly core-internal. Freeze any protocol
-  payloads for surfacing resource/supervision state to the FE (pressure level, shed events, recycle
-  notices) if the FE is to show them; otherwise a no-op freeze is fine (say so).
-- **BE-9 supervision/resource governor** (`core/src/supervision/`) — per-session **phys_footprint**
-  watchdog (claude warn 3 GB/recycle 6 GB; opencode warn 1 GB/recycle 1.5 GB; `opencode serve`
-  sustained >500 MB/5 min); pressure-delta health signals (`memory_pressure -Q`, pressure level,
-  pageout rates — never naive free RAM); amber/red responses; **the [X1] sacrifice order encoded in
-  the scheduler** (local model size → KV/context → frontend shell weight → non-Claude session
-  hibernation → scrollback — account sessions NEVER the victim, account spawns still honored after
-  shedding); 30-min idle hibernation (never the three account sessions); `~/.claude.json` size
-  monitoring. The recycle path reuses BE-2's checkpoint→kill→resume (doubles as the [X4] continuation).
-- **Packaging** — signed (dry-run) Tauri v0 sidecar build; LaunchAgent-v1 plist validated Aqua-side
-  but NOT flipped (SI). **Do not sign for real or notarize** — dry-run only; real signing is owner-gated.
-- **Full integration suites** (plan §9.4) green at the gate; operator runbooks complete (login
-  bootstrap, version gate, recovery, quota-exhaustion playbook).
-- **The 24h soak is inherently T4/pending-owner** — the gate proves it via an **accelerated/scaled
-  synthetic soak** (induced-bloat fake-process harness for the watchdog thresholds + one real recycle
-  with lineage continuity + amber/red sacrifice-order assertions within the ~17 GB envelope), and
-  runbooks the real 24h mixed soak (3 account + 2 OpenCode + local JIT) as owner-run.
-- Chase any co-signs still pending after M5 (should be just the M5-freeze rows).
+Stage 3 splits into a part you can run **now** and a part **gated on the owner's live logins**:
 
-### 9.2 The Stage-2 milestones (for reference; all now ✅ except M6)
+**9.1a — Adversarial code review (RUN NOW, no logins needed).** Author a Workflow (e.g.
+`stage3-review`) fanning out reviewer/adversary agents, each writing a findings doc under
+`docs/reviews/`:
+- **Security** — [X2] deepest: scan the ACTUAL git history for leaked identifiers (`gitleaks git`
+  both tiers over all commits — already clean, but re-prove adversarially), plus the credential-table
+  guard, the SecretFetcher never-serialized property, the loopback-only binds, the hooks endpoint.
+- **Optimization / scale** — *is it easy to add a new Claude account or a new local LLM?* (the plan's
+  named scalability test); the resource envelope; hot paths (ring buffers, rAF projection, the graph
+  worker).
+- **Documentation / new-engineer onboarding** — would the repo layout + contracts + runbooks let a
+  fresh engineer land safely? where would they be confused?
+- **[X1]–[X4] stress** — parallel multi-account robustness; secret hygiene; [X3] LM-Studio-still-
+  connects + k3s-never-a-dependency; [X4] branch/merge correctness.
+Then a **principal-engineer fix team** Workflow addresses every finding (same Freeze→Fix→Gate shape,
+gate commits locally).
 
-- **M5 — Pipelines (features 4 & 5).** BE-8 catalog scanner (one scanner, three consumers) + versioned
-  JSON DAG engine with **per-step account routing** (the [X1] differentiator) + durable memoization
-  journal, FE-6 builder UI. Demo: a 3-step pipeline across MAX_A → AWS_DEV (Bedrock) → LOCAL with an
-  approval gate, resumable from the journal after a broker restart.
-- **M6 — Hardened v0 ship.** BE-9 supervision/resource governor (phys_footprint watchdog,
-  pressure-delta signals, the **[X1] sacrifice order** — account sessions never shed), packaging, the
-  full integration suites, a 24h soak within the ~17 GB pessimistic envelope, signed (dry-run) Tauri
-  sidecar build.
+**9.1b — Mandatory rendered-frontend review (NEEDS OWNER + LIVE LOGINS — coordinate).** Agents must
+**screen-capture the actual running frontend on macOS** (via the `computer-use` MCP, or
+`mcp__Claude_Preview__*` for a served web build) and critique the *real rendered image* — they must
+**NOT** fall back to reading source. This requires the app to actually run:
+- Best case: the owner completes the three one-time `claude /login`s (`docs/runbooks/login-bootstrap.md`)
+  so the cockpit shows live data — then the rendered review covers real dashboards/graph/lineage.
+- Fallback without logins: a synthetic-broker-backed dev build renders the chrome/layout/navigation
+  (panels in their NO-SIGNAL state) — enough to critique composition, depth/motion, and first-run
+  navigation, but not live data. Decide with the owner which to do.
 
-### 9.3 Finally: Stage 3 — Review, critique, improve
-
-A separate set of workflows (see the top-level program brief the owner will provide, and plan-level
-intent):
-- **Reviewer/adversary agents** critique security, optimization, documentation, and scalability
-  (specifically: *is it easy to add a new Claude account or a new local LLM?*). They must stress-test
-  [X1]–[X4], **including scanning the actual git history for leaked identifiers** ([X2]).
-- **Mandatory rendered-frontend review:** agents must **screen-capture the actual running frontend on
-  macOS** (use the `computer-use` MCP, or `mcp__Claude_Preview__*` if serving a web build) and critique
-  the *real rendered image* — they must **not** fall back to reading source. This requires the app to
-  actually run, which requires the owner's live logins; coordinate timing.
-- Every reviewer writes a **findings document**; a final **principal-engineer fix team** addresses every
-  finding.
+**Owner-gated items still open** (consolidated in `stage2-complete.md` §3 / each `mN-dod.md`): the [X2]
+history rewrite + first push; the three real logins; SI-4 `terraform apply`; SI-3 live installs; the
+real 24 h soak; real Tauri sign+notarize; LaunchAgent-v1 flip; colima VM ops. None block 9.1a.
 
 ---
 

@@ -50,6 +50,7 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
 | [ICR-0009](icr-0009-kernel-message-tap.md) | Kernel message tap + raw-message retention — the BE-1 transcript-tee seam that unblocks composeBroker's transcript wiring (testkit mirror synced per the ICR-0001 drift rule) | 2026-07-04 |
 | [ICR-0010](icr-0010-collector-fixture-feeds.md) | BE-5 collector fixture feeds promoted into `@aibender/testkit`: fake statusline stdin feed (payload generator + tee writer) + fake OTLP http/json emitter — closes the plan §3 "still to come" list | 2026-07-04 |
 | [ICR-0011](icr-0011-gateway-workstream-slice.md) | M4 workstream-channel seams: gateway `WorkstreamEnginePort` + validated merge routing/`publishWorkstream` (absent-engine degrade) and the FE inbound-router workstream branch — landed by the M4 freeze agent so its own golden corpus replays green on both CI halves (ICR-0009 precedent); FE-ORCH co-sign **pending** | 2026-07-04 |
+| [ICR-0012](icr-0012-gateway-pipeline-slice.md) | M5 pipelines-channel seam: gateway `PipelineEnginePort` + validated verb delegation/`publishPipeline` (absent-engine `pipeline-not-found` degrade, §18.4 error mapping incl. pipeline-invalid→validation-result+generic error) — replaces the M5-freeze stub, landed by the BE-8 build lane (ICR-0011 precedent); **BE-ORCH RATIFIED 2026-07-05**; FE-ORCH co-sign **pending** (no FE change bundled — the inbound router already flows `pipelines` frames forward-tolerantly; flip at the M5 gate) | 2026-07-05 |
 
 Post-M2 stewarding also landed (no new ICR numbers): the ICR-0001 drift-rule
 sync (`canUseTool` on testkit's QuerySpec mirror — recorded in ICR-0001's
@@ -145,6 +146,59 @@ composition/chrome/infra wiring, recorded here per the post-M3 precedent):**
   runner-native). The registry-coupled bats already pin the 13-row
   live-check registry (`REGISTRY_COUNT=13`).
 
+**Post-M5 build stewarding (BE-ORCH, 2026-07-05 — no new ICR numbers;
+client-side implementations of the already-frozen `pipelines` wire surface plus
+non-frozen composition/chrome wiring, recorded here per the post-M4 precedent):**
+
+- **ICR-0012 RATIFIED** (BE-ORCH): the gateway `PipelineEnginePort` +
+  `publishPipeline` seam that the BE-8 build lane landed against the M5-freeze
+  stub is reviewed and ratified — additive (one optional gateway option, one
+  handle method, the port + its shapes on the barrel), absent-engine degrade
+  preserved byte-for-byte, `serverPipelines.spec.ts` (10) +
+  `composedPipelines.spec.ts` (2) green, full `serverGolden.spec.ts` corpus
+  replays green. FE-ORCH co-sign stays pending (no FE change bundled; the
+  inbound router already flows `pipelines` frames forward-tolerantly) — flipped
+  at the M5 gate.
+- **GatewayClient pipeline verb sender landed** (the FE-6 M5 return's ICR):
+  `sendPipelineMessage(message: PipelineClientPayload): boolean` on
+  `app/src/lib/ws/wsClient.ts` — the exact `sendApprovalDecision` /
+  `sendWorkstreamMergeRequest` mirror for the six frozen §18.2 client verbs
+  (rides the `pipelines` channel; ONE method carries all six, discriminated on
+  `kind`; false when not connected — the unsendable posture, never a throw).
+  FE-6's `PipelineVerbSender` port (`app/src/features/pipelines/ports.ts`) is
+  now satisfied structurally by the real client (compile-pinned in
+  `wsClient.spec.ts` without a lib→features import); `register.tsx senderOf()`
+  detects it with no FE-6 change. No wire shape changed — this implements
+  ws-protocol.md §18.2 as frozen.
+- **`CHANNEL.PIPELINES` joined the `replayFromZeroOnFirstConnect` default**
+  (the M3 events-channel / M4 workstream+context-graph precedent): the retained
+  §18 catalog snapshot + run/step-status window hydrate the builder palette +
+  run monitor on the first connect of a broker boot (the golden
+  `pipelines-replay-request-valid` fixture). Client behavior only; §8 already
+  grants one replay-request per replayable channel; below-floor answers stay
+  the documented harmless `watermark-out-of-range`.
+- **FE composition activated for M5**: `registerPipelines(client)` wired into
+  `app/src/main.tsx` beside the M3 `registerObservability` / M4
+  `registerGraphIsland` + `registerWorkstreams` calls — the pipelines binding
+  (rAF projector) + island registration + "open pipelines" palette verb
+  register once at boot; the six-verb sender is detected structurally on the
+  client.
+- **Chrome mount point landed (FE-ORCH ratification recorded here; co-sign
+  rides the M5 gate review):** (a) the one-line additive `IslandSlot` union
+  widening (`'pipelines'`) in `app/src/chrome/islandRegistry.ts` is RATIFIED
+  (the M4 `'workstreams'`-slot precedent — the registry seam is otherwise
+  closed); the FE-6 `register.tsx` `PIPELINES_SLOT` cast is now an exact-match
+  no-op. (b) The `pipelines` slot mounts as the CENTER work-surface `builder`
+  view (DESIGN.md §4.1 "Center — work: active session, graph, builder") — the
+  FE-6 deck is one component holding both the builder canvas and the run-list /
+  run monitor (an internal mode toggle), so it occupies the one center slot;
+  it is session-independent and mounts with a pinned `sessionId: undefined`
+  context so selection changes never tear it down (the graph-view precedent).
+  (c) The work surface gained the BUILDER view toggle (header affordance +
+  `chrome.work.pipelines.toggle` "toggle builder view" palette verb, DESIGN.md
+  §6 kill-switch rule) making the slot reachable; token-lint clean, no new
+  animation, no ADR needed (§4.1 already names "builder" as a center view).
+
 ## Deferred watch items (BE-ORCH)
 
 - ~~**`events` payload union (M3)**~~ **RESOLVED at the M3 freeze
@@ -203,8 +257,22 @@ composition/chrome/infra wiring, recorded here per the post-M3 precedent):**
   record: [m4-dod.md](../../runbooks/m4-dod.md) D1. Resolution: the T3
   in-Tauri soak (spike-B "what remains" #1) measures the strict floor under
   ProMotion/uncapped pacing — flip this item when that run lands.
-- **M4 freeze co-signs (open at the M4 gate):** ws-protocol M4 row (§15/§16)
-  + [ICR-0011](icr-0011-gateway-workstream-slice.md) — FE-ORCH;
-  hooks-contract §7.1 [X4] routing row — SI-ORCH. The M2/M3-era rows were
-  flipped to co-signed at the M4 review (record:
-  [m4-dod.md](../../runbooks/m4-dod.md) §6).
+- ~~**M4 freeze co-signs (open at the M4 gate)**~~ **FLIPPED at the M5 review
+  (2026-07-05):** ws-protocol M4 row (§15/§16) + [ICR-0011](icr-0011-gateway-workstream-slice.md)
+  — FE-ORCH; hooks-contract §7.1 [X4] routing row — SI-ORCH. Now **co-signed
+  (M5 review)** (record: [m5-dod.md](../../runbooks/m5-dod.md) §6; the cited
+  workstream golden-corpus + composedWorkstreams + hooks-bats proofs re-ran
+  green at the M5 gate). The M2/M3-era rows were flipped at the M4 review.
+- ~~**M5 freeze co-signs (open at the M5 gate)**~~ **FLIPPED at the M5 review
+  (2026-07-05):** ws-protocol M5 row (§18) + [dag-schema.md](../dag-schema.md)
+  v1 + sqlite-ddl §10 (schema 0004) + [ICR-0012](icr-0012-gateway-pipeline-slice.md)
+  — FE-ORCH. Now **co-signed (M5 review)** (record:
+  [m5-dod.md](../../runbooks/m5-dod.md) §6). The M5 wire additions are
+  forward-tolerant on the FE inbound path (the launch wire spec pins
+  `GOLDEN_WS_CORPUS_FREEZE === 'FROZEN-M5'`); the FE-6 pipelines deck + the
+  client `sendPipelineMessage` / `PIPELINES` replay-from-zero / chrome
+  `'pipelines'` slot consume them — the FE golden-corpus round-trip (114/114
+  incl. every `pipelines` frame + verb) + `features/pipelines` (82/82) green.
+- **Still-open co-signs (long-standing, next window):** [ICR-0004](icr-0004-resume-prompt.md)
+  resume-prompt (M1-era) + bootstrap-file.md M2 freeze row + icr-0003
+  counterpart — all FE-ORCH.

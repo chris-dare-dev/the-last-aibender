@@ -15,6 +15,7 @@ tier-2 scanner literals, tokens) live under `~/.aibender/` and the Keychain,
 | [m2-dod.md](m2-dod.md) | **record** | M2 definition-of-done gate record: per-item status, 6-PTY soak + echo-latency numbers, approval round-trip evidence, pending-owner ledger. |
 | [m3-dod.md](m3-dod.md) | **record** | M3 definition-of-done gate record: per-item status, collector/read-model/dashboard proof citations, double identity audit, pending-owner ledger. |
 | [m4-dod.md](m4-dod.md) | **record** | M4 definition-of-done gate record: lineage/hook-automation/merge/graph proof citations, 5k-soak fps numbers (incl. the WebKit pinned-pacing control), fs-audit evidence, co-sign record, pending-owner ledger. |
+| [m5-dod.md](m5-dod.md) | **record** | M5 definition-of-done gate record: catalog-scanner + OpenCode-API-first citations, THE DEMO (3-step cross-account pipeline paused/resumed over the real composed broker), broker-restart journal-resume + real-process-group reaping proofs, per-step cost/lineage citations, co-sign record, pending-owner ledger (real catalog scan of real account dirs + real 3-backend run). |
 | [login-bootstrap.md](login-bootstrap.md) | **live** | One interactive `claude /login` per account, ever — per-account config dirs + Keychain isolation (SI-2). |
 | [version-gate.md](version-gate.md) | **live** | Mandatory checks before any SDK bump, incl. the keychain-deletion canary (SI-2). |
 | [kernel-live-spawn.md](kernel-live-spawn.md) | **live** | Enabling the kernel's real claude spawn path (T3, owner-gated) — the [X1] live acceptance run. |

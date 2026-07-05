@@ -23,14 +23,16 @@
  *    docs/contracts/bootstrap-file.md) and starts fresh.
  *
  * REPLAYABLE CHANNELS: the broker→client fan-out set — `events`, `quota`,
- * `approvals`, `transcript.<sid>`, `context-graph`. NOT `control` (responses
- * correlate by request id and die with the connection; its seq stays
- * per-connection) and NOT `pty.<sid>` (bytes replay on the streamOffset axis,
- * frozen at M1 — pty.ts).
+ * `approvals`, `transcript.<sid>`, `context-graph`, and (M4) `workstream`.
+ * NOT `control` (responses correlate by request id and die with the
+ * connection; its seq stays per-connection) and NOT `pty.<sid>` (bytes replay
+ * on the streamOffset axis, frozen at M1 — pty.ts).
  *
  * ============================================================================
  * FROZEN-M2 (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
  * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
+ * Amendments: M4 freeze — `workstream` joins the replayable fan-out set
+ * (amendment-recorded in ws-protocol.md §8/§16). Mechanism unchanged.
  * ============================================================================
  */
 
@@ -44,6 +46,7 @@ export const REPLAYABLE_STREAMS: readonly StreamName[] = Object.freeze([
   'approvals',
   'transcript',
   'context-graph',
+  'workstream',
 ]);
 
 /** True when `channel` participates in JSON reconnect-replay. */

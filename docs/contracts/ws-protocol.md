@@ -1,16 +1,18 @@
 # WS protocol contract — envelope, channels, PTY frames, flow control
 
-> ## 🔒 FROZEN-M3 — 2026-07-04
-> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M3 freeze closes the ONE surface
-> the M2 full freeze deliberately left open: the `events` channel **payload
-> union** is now FROZEN (§13 — event summaries + the §6.3 read-model
-> snapshots, with a frozen forward-tolerant unknown-kind rule). Every section
-> below is **FROZEN** and changes **only** through an interface change
-> request ([docs/contracts/icr/](icr/README.md)): an implementer files
+> ## 🔒 FROZEN-M4 — 2026-07-04
+> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M4 freeze adds the X4 lineage
+> surfaces: the **`workstream` channel** (§16 — lineage snapshots, node/edge
+> events, briefs, the branch-now advisory, and the client merge request) and
+> the **lineage seams** (§15 — the kernel-facing edge recorder and the
+> ledger session-id resolver). Every M1–M3 shape is carried forward
+> unchanged (M3 froze the `events` union, §13). Every section below is
+> **FROZEN** and changes **only** through an interface change request
+> ([docs/contracts/icr/](icr/README.md)): an implementer files
 > `icr-NNNN-<slug>.md`, BE-ORCH lands the change, FE-ORCH co-signs.
 >
 > The machine-checkable half of this contract is `packages/protocol`
-> (`PROTOCOL_VERSION = '1.1.0'`, `PROTOCOL_FREEZE = 'FROZEN-M3'`). **This
+> (`PROTOCOL_VERSION = '1.2.0'`, `PROTOCOL_FREEZE = 'FROZEN-M4'`). **This
 > document is the prose of record when the two disagree — file an ICR, never
 > a silent divergence.**
 
@@ -75,6 +77,7 @@ schedule), plan BE-3 (gateway). Flow-control mechanics were proven by SPIKE-D
 | `pty.<sid>` | `pty` | bidirectional | binary PTY frames (§5) + JSON flow-control messages (§6) |
 | `transcript.<sid>` | `transcript` | broker → client (+ client `replay-request` §8) | `transcript-delta` / `transcript-tool` / `transcript-result` (§9) |
 | `context-graph` | `context-graph` | broker → client (+ client `replay-request` §8) | `context-touch` (§12) |
+| `workstream` | `workstream` | bidirectional | lineage fan-out + tolerated unknown kinds / client `workstream-merge-request` + `replay-request` (§16, **frozen M4**) |
 
 `<sid>` is a **harness** session id (never a native id), charset
 `[A-Za-z0-9_-]`, 1–64 chars (`SESSION_ID_SEGMENT_RE`, `MAX_SESSION_ID_BYTES`).
@@ -250,13 +253,19 @@ oversized frame, non-pending approval decision) are pushed on `control` as:
 `bad-envelope` · `bad-auth` · `unknown-channel` · `unknown-verb` ·
 `verb-reserved` · `bad-request` · `session-not-found` ·
 `session-not-resumable` · `double-resume-blocked` · `approval-not-pending` ·
-`oversized-frame` · `watermark-out-of-range` · `internal`
+`workstream-not-found` · `oversized-frame` · `watermark-out-of-range` ·
+`internal`
 
 `approval-not-pending` (M2, amendment-recorded): a decision referenced an
 approval that is not pending — unknown id, already resolved, or expired. This
 race is **normal** (two windows; expiry vs. click) and is deliberately
 distinct from `bad-request`. `watermark-out-of-range` now covers both the PTY
 byte axis (§6) and the JSON seq axis (§8).
+
+`workstream-not-found` (M4, amendment-recorded): a `workstream-merge-request`
+named a `workstreamId` with no workstream row (§16.4). Runtime state, never
+conflated with malformed traffic — the lineage-entity parallel of
+`session-not-found`.
 
 Adding a code after freeze is an ICR.
 
@@ -268,7 +277,8 @@ the axis):
 - The broker journals a **bounded** window of outbound envelopes per
   replayable channel, scoped to the broker boot. Replayable channels =
   the broker→client fan-out set: `events`, `quota`, `approvals`,
-  `transcript.<sid>`, `context-graph` (`isReplayableChannel`). NOT `control`
+  `transcript.<sid>`, `context-graph`, and — M4, amendment-recorded —
+  `workstream` (`isReplayableChannel`). NOT `control`
   (correlates by id, dies with the connection) and NOT `pty.<sid>` (bytes
   replay on the `streamOffset` axis, §6).
 - On (re)connect a client MAY send one `replay-request` per channel — **on
@@ -405,7 +415,8 @@ the frozen approvals-relay precedent verbatim (hooks-contract.md §7,
 `hookFloorRelayInput`). The producer seam is injectable
 (`resolveSessionId`, core/src/collector/graphfeed/hookTouches.ts): at M4
 the composition root MUST inject the ledger resolver so harness ids take
-over — consumers see no shape change either way.
+over — consumers see no shape change either way. **M4 resolution:** the
+resolver port type froze as `SessionIdResolver` (§15.2).
 
 ## 13. `events` payloads — FROZEN (M3)
 
@@ -480,22 +491,179 @@ malformed **registered** kinds, kindless payloads, and unknown `readModel` /
 ## 14. Golden corpus — the BE↔FE contract device
 
 `GOLDEN_WS_FIXTURES` in `packages/testkit` (ICR-0003, extended at the M2
-freeze and again at this M3 freeze with the `events-payload` stage;
-`GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M3'` must equal the protocol package's
+freeze, the M3 freeze with the `events-payload` stage, and the M4 freeze
+with the `workstream-payload` + `workstream-client-message` stages;
+`GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M4'` must equal the protocol package's
 `PROTOCOL_FREEZE`). Every frozen payload family has valid + every invalid
 class pinned as exact wire bytes — including one valid snapshot per §6.3
-read model; both departments' CI replays the same frames (plan §9.3 BE↔FE
-#1). A fixture change requires both orchestrators' sign-off. The hooks
-acceptance surface has its own sibling corpus (`GOLDEN_HOOK_FIXTURES`,
+read model and one valid frame per §16 workstream kind; both departments'
+CI replays the same frames (plan §9.3 BE↔FE #1). A fixture change requires
+both orchestrators' sign-off. The hooks acceptance surface has its own
+sibling corpus (`GOLDEN_HOOK_FIXTURES`,
 [hooks-contract.md §6](hooks-contract.md)).
 
-## 15. Amendment record
+## 15. Lineage seams — FROZEN (M4)
+
+Not wire surfaces: two port types the M4 freeze pins in `packages/protocol`
+(`workstreams.ts`) because THREE lanes must agree on them (the hooks.ts /
+acceptance-types precedent). Appended after §14 so no M1–M3 section number
+moved.
+
+### 15.1 `LineageRecorder` — the kernel-facing edge-recording interface
+
+Blueprint §5 recording discipline: **edges are recorded deterministically at
+action time** because every launch/resume/fork/recycle/merge flows through
+the harness. The frozen port:
+
+```ts
+interface LineageRecorder { record(action: LineageAction): void }
+```
+
+`LineageAction` (discriminated on `kind`, all ids HARNESS ids):
+
+| Kind | Fields | Lineage meaning |
+|---|---|---|
+| `launch` | `sessionId`, `accountLabel`, `backend`, `cwd`, `workstreamHint?`, `atEpochMs` | new `session_node` (the resume-ledger id IS the node id) |
+| `resume` | `fromSessionId`, `toSessionId`, `atEpochMs` | `continue` edge — a continuation is a CHILD; in-place resume carries from === to |
+| `fork` | `fromSessionId`, `toSessionId`, `atEpochMs` | `fork` edge to the new child |
+| `recycle` | `fromSessionId`, `toSessionId`, `checkpointRef?`, `atEpochMs` | `continue` edge via checkpoint (the M2 `ContinuationEdgeEmitter` stub, generalized — same-node recycles carry from === to) |
+| `merge` | `parentSessionIds` (2..16 distinct), `toSessionId`, `briefId?`, `atEpochMs` | N `merge_parent` edges into ONE new node |
+
+Rules: `record` never throws and is never awaited by the kernel path
+(fire-and-forget for the CALLER; a throwing recorder is a recorder bug);
+kernel-recorded rows are `confidence: 'recorded'`; the reconciler covers
+EXTERNAL sessions only and never rides this port. BE-1/BE-2 call it on every
+action; BE-7 implements it over the schema lineage store (sqlite-ddl.md §8);
+`noopLineageRecorder` is the frozen M1–M3 default. The composition root
+adapts BE-2's `ContinuationEdgeEmitter` stub
+(core/src/kernel/pty/ptyHost.ts) onto this port.
+
+### 15.2 `SessionIdResolver` — the ledger native→harness mapping
+
+The §12 M4 pin, frozen as a type:
+
+```ts
+type SessionIdResolver = (nativeSessionId: string) => string | undefined;
+```
+
+Return the harness id where the ledger knows the native id; return the
+INPUT VERBATIM to relay the native id (external sessions stay visible under
+their native id until the reconciler registers them; charset-validated
+downstream, never rewritten); return `undefined` to DROP (the feed never
+guesses). BE-7 implements it (`session_node.byNativeSessionId` +
+`resume_ledger.native_session_id` — one database, §8.1 of sqlite-ddl.md);
+composeBroker MUST inject it into the graphfeed (`resolveSessionId`) and the
+hooks approvals relay (`sessionIdOfNative`) at M4.
+
+## 16. `workstream` payloads — FROZEN (M4)
+
+The X4 lineage view feed (blueprint §5, §8; plan §4/BE-7, §5/FE-6/FE-4).
+Bidirectional like `approvals`; replayable (§8). Validators:
+`validateWorkstreamServerPayload` (client inbound) /
+`validateWorkstreamClientMessage` (broker inbound). Types + vocabularies:
+`workstreams.ts` (shared with schema migration 0003 CHECKs).
+
+**[X2] identity discipline:** payloads carry harness session ids, file
+paths, and placeholder labels ONLY. Native session ids NEVER ride this
+channel — a node payload that even CARRIES the key is rejected (the §12
+account-key precedent); the native id is a nullable STORE attribute. Brief
+bodies carry paths + session ids + labels only (producer duty, the frozen
+approvals-summary rule).
+
+### 16.1 Broker → client (fan-out, journaled §8)
+
+| Kind | Semantics |
+|---|---|
+| `workstream-list-snapshot` | the workstream rail: `capturedAt`, `workstreams: WorkstreamSummary[]`, `detachedNodeCount` (the detached-HEAD orphan bucket size) |
+| `workstream-detail-snapshot` | one graph: `scope ∈ workstream · detached`; scope `workstream` REQUIRES the `workstream` summary, `detached` FORBIDS it (the §10.1 matrix precedent); `nodes[]` + `edges[]` |
+| `workstream-node` | node UPSERT keyed on `sessionId` (fires on add AND attribute change) |
+| `workstream-edge` | edge APPEND keyed on `edgeId` — edges are immutable once recorded |
+| `workstream-brief` | a brief body: `briefId`, `briefKind ∈ session-end · pre-compact · session-start-injection · merge`, `body` (markdown, non-empty), `sourceSessionIds` (non-empty), `provenance ∈ native-summary · local-draft · refined`, `createdAt`, `workstreamId?` |
+| `branch-advisory` | the context-pressure "branch now" proposal: `sessionId`, `contextUsedPct` (0..100 validated, the honesty-pin rule), `ts`. The ~70% threshold is broker configuration; the EVENT is the contract |
+| `workstream-merge-resolved` | merge landed: `mergeId`, `sessionId` (the NEW node), `briefId` |
+
+`WorkstreamSummary = { workstreamId, title, status ∈ active·paused·merged·
+archived·abandoned, tags?, nodeCount, updatedAt }`. Node records carry
+`{ sessionId, workstreamId? (absent = detached bucket), backend, account
+(pairing-validated), state ∈ running·idle·completed·abandoned·unresumable·
+external, origin ∈ harness·reconciled, confidence ∈ recorded·inferred,
+displayName?, cwd?, gitBranch?, tokensIn?, tokensOut?, costEstimatedUsd?
+(always an ESTIMATE), createdAt, lastActiveAt? }`. Edge records carry
+`{ edgeId, fromSessionId?, toSessionId, edgeType, briefId?, confidence,
+ts }` with the frozen edge vocabulary **exactly**
+`continue · fork · merge_parent · compact · sidechain · handoff · import ·
+workflow`; `fromSessionId` REQUIRED except `import` (FORBIDDEN there);
+`handoff` REQUIRES `briefId` (context travels by brief); a `continue` edge
+may be a self-edge (in-place resume) — a continuation is a CHILD, never a
+sibling.
+
+**Forward-tolerant reader rule (frozen, the §13.3 rule applied verbatim):**
+a broker push whose `kind` is a non-empty string outside the frozen set is
+legal and MUST be ignored by clients — M5 lineage lenses land without
+breaking M4 clients. Registered kinds validate strictly; kindless payloads
+answer `bad-request`. Producers must emit registered kinds only
+(`publishWorkstream` refuses unregistered kinds — tolerance is a READER
+rule).
+
+### 16.2 Client → broker: `workstream-merge-request`
+
+The ONE lineage verb the FE sends (the approvals-decision precedent: a
+session-scoped verb rides its fan-out channel, not `control`):
+
+```jsonc
+{ "kind": "workstream-merge-request",
+  "mergeId": "mrg_01",                  // client-generated, [A-Za-z0-9_-]{1,128}
+  "params": {
+    "parents": ["ses_a", "ses_b"],      // 2..16 DISTINCT harness session ids
+    "accountLabel": "MAX_A",            // where the merge node runs [X2]
+    "backend": "claude_code",           // must satisfy the label pairing
+    "cwd": "/abs/path",
+    "purpose": "…",
+    "briefBody": "…",                    // REQUIRED non-empty markdown — the human-approved,
+                                         // conflict-surfacing merge brief (blueprint §5:
+                                         // merge = synthesis, not concatenation)
+    "workstreamId": "ws_…" } }           // optional assignment
+```
+
+Drafts flow to the FE editor as `workstream-brief` payloads (provenance
+`local-draft`/`refined` — the qwen-produces/Claude-reviews split); the wire
+carries the FINAL text.
+
+### 16.3 Merge flow
+
+Broker validates → BE-7 engine records ONE new node with N `merge_parent`
+edges + the merge brief ATOMICALLY (schema `recordMerge`) → the broker fans
+out `workstream-merge-resolved` (correlated by `mergeId`) plus the node/edge
+upserts to every client.
+
+### 16.4 Merge error contract (frozen)
+
+Failures answer PUSHED errors (§7) with `correlatesTo: mergeId` and
+`channel: "workstream"`:
+
+| Code | Class |
+|---|---|
+| `bad-request` | shape violations (parent count/dupes, pairing, relative cwd, blank purpose/brief) |
+| `session-not-found` | a named parent has no session node — ALSO the degrade answer of a broker with no lineage engine composed (an empty broker has no nodes; the approvals empty-broker posture) |
+| `workstream-not-found` | the named `workstreamId` is unknown (new code, §7) |
+| `internal` | engine failure; message GENERIC [X2] |
+
+### 16.5 Snapshot delivery
+
+Same posture as the §13 read models: the broker pushes list/detail
+snapshots on boot and on change, so a client replaying from seq 0 (or from
+its watermark) always finds a fresh snapshot inside the bounded journal
+window; below-floor history is unrecoverable by design and the next
+snapshot re-baselines the view.
+
+## 17. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
 | 2026-07-04 | Initial M1-CORE freeze | — (the freeze itself) |
 | 2026-07-04 | §4.2: optional `prompt` on resume params (sdk substrate requires it at M1); §4.1: launch `state` = ledger state at response time (M1 composition note). Additive, backward-compatible — old resume frames stay valid. | [ICR-0004](icr/icr-0004-resume-prompt.md) |
-| 2026-07-04 | **M2 FULL FREEZE.** Promoted: transcript (§9), approvals (§10), quota (§11), context-graph (§12) payload unions; JSON reconnect-replay + per-(boot, channel) seq scoping (§2/§8); auth transport codified as connect-time token, handshake-message draft resolved as not needed (§1). Amended frozen surfaces (recorded here, landed by the freeze agent): error code `approval-not-pending` added (§7); `approve` verb retired-as-reserved — decisions ride the approvals channel (§4); §3 directions concretized (broker→client fan-out channels accept the client `replay-request`). Deferred: `events` payload union → M3 (§8). Protocol `1.0.0-m1-core` → `1.0.0`. FE-ORCH co-sign: **pending** (validator-derived, additive except the recorded amendments). | — (M2 freeze) |
-| 2026-07-04 | §6 **attach-semantics behavior pin** (prose only, NO wire change, requested in the BE-3 M2 return): OUTPUT frames for `pty.<sid>` flow to a connection only after its first `pty-replay-request` on that channel — the replay-request doubles as the attach verb (`fromWatermark` 0 = from session birth); never-attached connections receive nothing and pin nothing; clients must replay-request on every (re)connect. Matches the landed BE-3 implementation and the FE-2 client's documented duty; golden fixtures unaffected. FE-ORCH co-sign: **pending** (bundled with the M2 freeze co-sign). | — (BE-ORCH steward, prose pin) |
-| 2026-07-04 | **M3 FREEZE.** Closed the one open surface: the `events` payload union (§13) — `event-summary` (normalized events-store row fan-out, value-light [X2]) + `read-model-snapshot` (the ten §6.3 dashboard leads with a REQUIRED per-source freshness field; degraded sources are states, never errors) + the frozen forward-tolerant unknown-kind rule (§13.3, the M2 opaque policy made permanent). New closed registries: `EVENT_SOURCES`, `SOURCE_FRESHNESS_STATES`, `EVENT_ERROR_KINDS`, `READ_MODEL_IDS` (shared with schema migration 0002 CHECKs). Verified sufficient, NO amendment: quota snapshot (§11) carries the statusline tee data exactly (five_hour/seven_day → 5h/7d, usedPct, resetsAt); context-graph touch (§12) stays paths+session-ids only [X2]. Corpus: `events-payload` stage added; fixture `events-broker-payload-draft-opaque` kept byte-identical and valid, its pinned stage moved channel-policy→events-payload (the deferral resolving as recorded at M2); 19 new events fixtures (valid per read model + every invalid class). Protocol `1.0.0` → `1.1.0`, `FROZEN-M2` → `FROZEN-M3`. No new error codes; no change to any M1/M2 wire shape. FE-ORCH co-sign: **pending** (includes the one-line freeze-literal advance in `app/src/features/launch/wire.spec.ts`). | — (M3 freeze) |
+| 2026-07-04 | **M2 FULL FREEZE.** Promoted: transcript (§9), approvals (§10), quota (§11), context-graph (§12) payload unions; JSON reconnect-replay + per-(boot, channel) seq scoping (§2/§8); auth transport codified as connect-time token, handshake-message draft resolved as not needed (§1). Amended frozen surfaces (recorded here, landed by the freeze agent): error code `approval-not-pending` added (§7); `approve` verb retired-as-reserved — decisions ride the approvals channel (§4); §3 directions concretized (broker→client fan-out channels accept the client `replay-request`). Deferred: `events` payload union → M3 (§8). Protocol `1.0.0-m1-core` → `1.0.0`. FE-ORCH co-sign: **co-signed (M4 review)** — validator-derived, additive except the recorded amendments; FE client golden-corpus round-trips + the M2 payload-union suites verified green. | — (M2 freeze) |
+| 2026-07-04 | §6 **attach-semantics behavior pin** (prose only, NO wire change, requested in the BE-3 M2 return): OUTPUT frames for `pty.<sid>` flow to a connection only after its first `pty-replay-request` on that channel — the replay-request doubles as the attach verb (`fromWatermark` 0 = from session birth); never-attached connections receive nothing and pin nothing; clients must replay-request on every (re)connect. Matches the landed BE-3 implementation and the FE-2 client's documented duty; golden fixtures unaffected. FE-ORCH co-sign: **co-signed (M4 review)** — the FE client implements the duty (first `pty-replay-request` sent immediately on openPty-while-connected + on every (re)connect; asserted in `app/src/lib/ws/wsClient.spec.ts`). | — (BE-ORCH steward, prose pin) |
+| 2026-07-04 | **M3 FREEZE.** Closed the one open surface: the `events` payload union (§13) — `event-summary` (normalized events-store row fan-out, value-light [X2]) + `read-model-snapshot` (the ten §6.3 dashboard leads with a REQUIRED per-source freshness field; degraded sources are states, never errors) + the frozen forward-tolerant unknown-kind rule (§13.3, the M2 opaque policy made permanent). New closed registries: `EVENT_SOURCES`, `SOURCE_FRESHNESS_STATES`, `EVENT_ERROR_KINDS`, `READ_MODEL_IDS` (shared with schema migration 0002 CHECKs). Verified sufficient, NO amendment: quota snapshot (§11) carries the statusline tee data exactly (five_hour/seven_day → 5h/7d, usedPct, resetsAt); context-graph touch (§12) stays paths+session-ids only [X2]. Corpus: `events-payload` stage added; fixture `events-broker-payload-draft-opaque` kept byte-identical and valid, its pinned stage moved channel-policy→events-payload (the deferral resolving as recorded at M2); 19 new events fixtures (valid per read model + every invalid class). Protocol `1.0.0` → `1.1.0`, `FROZEN-M2` → `FROZEN-M3`. No new error codes; no change to any M1/M2 wire shape. FE-ORCH co-sign: **co-signed (M4 review)** — the freeze-literal advance replayed green (the pin now reads FROZEN-M4, reached through FROZEN-M3); events union consumed by the FE-5 dashboards under the forward-tolerant reader rule, golden-corpus suites green on both sides. | — (M3 freeze) |
 | 2026-07-04 | §12 **session-id relay pin** (prose only, NO wire change; requested in the BE-6 M3 return): `sessionId` documented as harness-id-where-known with native-id relay until the BE-7/M4 ledger mapping — the exact hooks-contract §7 approvals-relay sentence, now stated for context-graph too; the composition root MUST inject the ledger resolver at M4 (the `resolveSessionId` seam, core/src/collector/graphfeed/hookTouches.ts). Validator, charset and golden fixtures unchanged. FE-ORCH co-sign: n/a (no wire change). | — (BE-ORCH steward, prose pin) |
+| 2026-07-04 | **M4 FREEZE.** New: the `workstream` channel (§16) — broker→client lineage fan-out (`workstream-list-snapshot` / `workstream-detail-snapshot` with the scope matrix / `workstream-node` upserts / `workstream-edge` appends with the frozen edge vocabulary `continue·fork·merge_parent·compact·sidechain·handoff·import·workflow` and the from/import + handoff-brief matrices / `workstream-brief` / `branch-advisory` / `workstream-merge-resolved`) + the client `workstream-merge-request` (2..16 distinct parents, mandatory conflict-surfacing `briefBody`) with its frozen error contract (§16.4); the same forward-tolerant unknown-kind reader rule as events §13.3; native ids REJECTED on the wire [X2]. Lineage seams frozen as port types (§15): `LineageRecorder` (launch/resume/fork/recycle/merge recorded AT ACTION TIME — the M2 `ContinuationEdgeEmitter` stub generalized; continuation = CHILD, in-place carries from === to) and `SessionIdResolver` (the §12 pin resolved). Amended frozen surfaces (recorded here, landed by this freeze agent): §3 channel registry + `workstream` (bidirectional, the approvals precedent); §8 replayable set + `workstream`; §7 error code `workstream-not-found`. Gateway/FE wiring seams landed via [ICR-0011](icr/icr-0011-gateway-workstream-slice.md) (gateway `WorkstreamEnginePort` + validated routing/publisher + absent-engine degrade; FE inbound-router workstream branch). Corpus: `workstream-payload` + `workstream-client-message` stages, one valid frame per kind + every invalid class; no existing fixture changed. Protocol `1.1.0` → `1.2.0`, `FROZEN-M3` → `FROZEN-M4`. No change to any M1–M3 wire shape. FE-ORCH co-sign: **pending** (includes the one-line freeze-literal advance in `app/src/features/launch/wire.spec.ts` and the FE router branch, both replayed green by the FE suites). | — (M4 freeze) |

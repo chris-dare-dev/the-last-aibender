@@ -31,7 +31,13 @@
  * drift rule as the ICR-0001 queryRunner mirror).
  */
 
-import type { ApprovalDecision, ApprovalRequest, ApprovalResolved } from '@aibender/protocol';
+import type {
+  ApprovalDecision,
+  ApprovalRequest,
+  ApprovalResolved,
+  WorkstreamMergeRequest,
+  WorkstreamMergeResolved,
+} from '@aibender/protocol';
 
 /** Return value of every `on*` subscription: call to unsubscribe. */
 export type Unsubscribe = () => void;
@@ -131,4 +137,34 @@ export interface ApprovalBrokerPort {
  */
 export interface TranscriptSource {
   onMessage(listener: (sessionId: string, message: unknown) => void): Unsubscribe;
+}
+
+// ---------------------------------------------------------------------------
+// Workstream engine port (BE-7 adapter target — M4 freeze, ICR-0011)
+// ---------------------------------------------------------------------------
+
+/**
+ * BE-7's workstream/lineage engine as the gateway sees it: the handler for
+ * the ONE client verb on the `workstream` channel (ws-protocol.md §16).
+ *
+ * Contract:
+ *  - `merge` receives an ALREADY-VALIDATED request (the gateway ran the
+ *    frozen validator) and resolves with the `workstream-merge-resolved`
+ *    fan-out payload once the merge node + its N `merge_parent` edges are
+ *    recorded (the engine publishes the node/edge upserts itself through the
+ *    broker's `publishWorkstream`).
+ *  - Typed rejections use {@link KernelVerbError} (./kernel.js) with the
+ *    frozen merge error codes: `session-not-found` (unknown parent),
+ *    `workstream-not-found` (unknown workstreamId), `bad-request` (engine-
+ *    side shape refusals), anything else maps to `internal` with a GENERIC
+ *    message. The gateway answers PUSHED errors with
+ *    `correlatesTo: mergeId` + `channel: 'workstream'`.
+ *  - ABSENT PORT (the every-port-is-optional rule above): the gateway still
+ *    VALIDATES merge requests, then answers the runtime error
+ *    `session-not-found` — a broker with no lineage engine composed has no
+ *    session nodes, so every parent is unknown (truthful degrade; mirrors
+ *    the approvals `approval-not-pending` empty-broker posture).
+ */
+export interface WorkstreamEnginePort {
+  merge(request: WorkstreamMergeRequest): Promise<WorkstreamMergeResolved>;
 }

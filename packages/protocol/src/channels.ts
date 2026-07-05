@@ -1,10 +1,13 @@
 /**
  * Channel registry (plan §3): control · events · quota · approvals ·
- * pty.<sid> · transcript.<sid> · context-graph.
+ * pty.<sid> · transcript.<sid> · context-graph · workstream.
  *
  * ============================================================================
  * FROZEN-M1-CORE (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
  * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
+ * Amendments: M4 freeze — the `workstream` channel (stream `workstream`)
+ * registered for the X4 lineage view (workstreams.ts; ws-protocol.md §16,
+ * amendment-recorded). No M1–M3 channel or rule changed.
  * ============================================================================
  */
 
@@ -15,6 +18,8 @@ export const CHANNEL = Object.freeze({
   QUOTA: 'quota',
   APPROVALS: 'approvals',
   CONTROL: 'control',
+  /** M4: the X4 lineage fan-out + merge-request channel (workstreams.ts). */
+  WORKSTREAM: 'workstream',
 } as const);
 
 export type StaticChannelName = (typeof CHANNEL)[keyof typeof CHANNEL];
@@ -41,6 +46,7 @@ export const STREAMS = Object.freeze([
   'pty',
   'transcript',
   'context-graph',
+  'workstream',
 ] as const);
 
 export type StreamName = (typeof STREAMS)[number];

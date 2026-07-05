@@ -79,7 +79,7 @@ describe('FE-5 wire — golden corpus (positive)', () => {
   it('pins the same protocol freeze as the corpus', () => {
     // Literal advanced by the BE-ORCH M3 freeze steward (events union closed;
     // FE-ORCH co-sign pending, bundled with the M3 freeze co-sign).
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M3');
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M4');
   });
 
   for (const name of VALID_LAUNCH_FIXTURES) {

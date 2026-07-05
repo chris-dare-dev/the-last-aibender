@@ -3,10 +3,38 @@
  * aibender-core gateway (BE-3) and every frontend client (FE-2).
  *
  * ============================================================================
- * FROZEN-M3 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs (SI-ORCH co-signs
- * the hooks acceptance slice). The M3 freeze closes the ONE surface the M2
- * full freeze left open and adds the M3 read-model/hooks-acceptance types.
- * Amendments ONLY via ICR (docs/contracts/icr/).
+ * FROZEN-M4 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs (SI-ORCH co-signs
+ * the hooks slices). The M4 freeze adds the X4 lineage surfaces; every
+ * M1–M3 shape is carried forward unchanged. Amendments ONLY via ICR
+ * (docs/contracts/icr/).
+ *
+ * Promoted to FROZEN at M4 (workstreams.ts + amendments recorded in the
+ * owning modules and docs):
+ *   - the `workstream` channel (channels.ts amendment; replayable, replay.ts
+ *     amendment): broker→client lineage fan-out (list/detail snapshots,
+ *     node upserts, edge appends, brief bodies, the "branch now" advisory,
+ *     merge resolutions) + the client `workstream-merge-request` — merge =
+ *     ONE new node with N merge_parent edges seeded by a conflict-surfacing
+ *     brief; unknown broker-pushed kinds stay legal-and-ignored by the same
+ *     forward-tolerant reader rule the events channel froze at M3
+ *   - lineage vocabularies shared with @aibender/schema migration 0003
+ *     CHECKs: WORKSTREAM_STATUSES, SESSION_NODE_STATES, SESSION_EDGE_TYPES
+ *     (exactly continue|fork|merge_parent|compact|sidechain|handoff|import|
+ *     workflow), LINEAGE_CONFIDENCES (recorded|inferred),
+ *     SESSION_NODE_ORIGINS, BRIEF_KINDS, BRIEF_PROVENANCES
+ *   - error code `workstream-not-found` (errors.ts amendment)
+ *   - the kernel-facing {@link LineageRecorder} port (launch/resume/fork/
+ *     recycle/merge recorded AT ACTION TIME — generalizes the M2
+ *     ContinuationEdgeEmitter stub; BE-7 implements, composition injects)
+ *   - the {@link SessionIdResolver} seam (ws-protocol.md §12 M4 pin: the
+ *     composition root injects the ledger resolver into the graphfeed)
+ *   - hooks [X4] automation routing (hooks.ts amendment): SessionEnd →
+ *     auto-brief, PreCompact → snapshot + compact edge, SessionStart →
+ *     brief-injection response (HookSessionStartOutput + ackForSessionStart;
+ *     WorkstreamHookRouting is the handler port BE-7 registers with BE-5)
+ *
+ * FROZEN-M3 (2026-07-04) — the M3 freeze closed the ONE surface the M2
+ * full freeze left open and added the M3 read-model/hooks-acceptance types.
  *
  * Promoted to FROZEN at M3:
  *   - the `events` channel payload union (events.ts + readModels.ts):
@@ -45,27 +73,27 @@
  *   - the M2 decisions: `approve` retired-as-reserved (decisions ride the
  *     approvals channel); connect-time auth token; `approval-not-pending`
  *
- * NOTHING remains draft after this freeze (draft.ts was removed — its last
- * occupant, the events union, is now frozen). New payload kinds on the
- * events channel may still land in later milestones WITHOUT a version break
- * (the forward-tolerant reader rule); every other change is an ICR.
+ * NOTHING remains draft after this freeze. New payload kinds on the events
+ * and workstream channels may still land in later milestones WITHOUT a
+ * version break (the forward-tolerant reader rule); every other change is
+ * an ICR.
  *
  * Prose of record: docs/contracts/ws-protocol.md (WS surfaces) and
- * docs/contracts/hooks-contract.md (hooks acceptance). If code and prose
- * disagree, file an ICR — never a silent divergence.
+ * docs/contracts/hooks-contract.md (hooks acceptance + routing). If code and
+ * prose disagree, file an ICR — never a silent divergence.
  * ============================================================================
  */
 
 /**
- * Protocol version. `1.1.0` = the M3 freeze (additive: events union +
- * read-model snapshots + hooks acceptance; `1.0.0` was the M2 full freeze,
- * `1.0.0-m1-core` the M1-CORE freeze). Consumers may assert against
- * {@link PROTOCOL_FREEZE}.
+ * Protocol version. `1.2.0` = the M4 freeze (additive: the workstream
+ * channel + lineage seams + hooks routing; `1.1.0` was the M3 freeze,
+ * `1.0.0` the M2 full freeze, `1.0.0-m1-core` the M1-CORE freeze).
+ * Consumers may assert against {@link PROTOCOL_FREEZE}.
  */
-export const PROTOCOL_VERSION = '1.1.0' as const;
+export const PROTOCOL_VERSION = '1.2.0' as const;
 
 /** Freeze marker for runtime assertions and golden fixtures. */
-export const PROTOCOL_FREEZE = 'FROZEN-M3' as const;
+export const PROTOCOL_FREEZE = 'FROZEN-M4' as const;
 
 // FROZEN surfaces (M1-CORE, carried forward) ----------------------------------
 export {
@@ -110,6 +138,7 @@ export {
   type EventsServerPayload,
   type FrozenM1Payload,
   type FrozenPayload,
+  type WorkstreamChannelPayload,
 } from './envelope.js';
 
 export {
@@ -215,6 +244,8 @@ export {
   validatePtyClientMessage,
   validateQuotaSnapshot,
   validateTranscriptPayload,
+  validateWorkstreamClientMessage,
+  validateWorkstreamServerPayload,
 } from './validate.js';
 
 // FROZEN surfaces promoted at M3 ------------------------------------------------
@@ -281,3 +312,66 @@ export {
   type HookPostOutcome,
   type HookPostRejection,
 } from './hooks.js';
+
+// FROZEN surfaces promoted at M4 ------------------------------------------------
+export {
+  X4_AUTOMATION_HOOK_EVENTS,
+  ackForSessionStart,
+  x4AutomationRouteFor,
+  type HookSessionStartOutput,
+  type WorkstreamHookRouting,
+  type X4AutomationHookEvent,
+} from './hooks.js';
+
+export {
+  BRIEF_KINDS,
+  BRIEF_PROVENANCES,
+  LINEAGE_CONFIDENCES,
+  MERGE_ID_RE,
+  MERGE_MAX_PARENTS,
+  MERGE_MIN_PARENTS,
+  SESSION_EDGE_TYPES,
+  SESSION_NODE_ORIGINS,
+  SESSION_NODE_STATES,
+  WORKSTREAM_SERVER_PAYLOAD_KINDS,
+  WORKSTREAM_STATUSES,
+  isBriefKind,
+  isBriefProvenance,
+  isLineageConfidence,
+  isLineageIdSegment,
+  isSessionEdgeType,
+  isSessionNodeOrigin,
+  isSessionNodeState,
+  isWorkstreamStatus,
+  noopLineageRecorder,
+  type BranchAdvisory,
+  type BriefKind,
+  type BriefProvenance,
+  type LineageAction,
+  type LineageConfidence,
+  type LineageForkAction,
+  type LineageLaunchAction,
+  type LineageMergeAction,
+  type LineageRecorder,
+  type LineageRecycleAction,
+  type LineageResumeAction,
+  type OpaqueWorkstreamPayload,
+  type SessionEdgeType,
+  type SessionIdResolver,
+  type SessionNodeOrigin,
+  type SessionNodeState,
+  type WorkstreamBriefPayload,
+  type WorkstreamClientPayload,
+  type WorkstreamDetailSnapshot,
+  type WorkstreamEdgeEvent,
+  type WorkstreamEdgeRecord,
+  type WorkstreamListSnapshot,
+  type WorkstreamMergeParams,
+  type WorkstreamMergeRequest,
+  type WorkstreamMergeResolved,
+  type WorkstreamNodeEvent,
+  type WorkstreamNodeRecord,
+  type WorkstreamServerPayload,
+  type WorkstreamStatus,
+  type WorkstreamSummary,
+} from './workstreams.js';

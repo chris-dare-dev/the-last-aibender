@@ -23,12 +23,14 @@ import {
   PROTOCOL_FREEZE,
   hookFloorRelayInput,
   validateHookPost,
+  x4AutomationRouteFor,
   type HookEventGroup,
   type HookFloorRelayInput,
+  type X4AutomationHookEvent,
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_HOOK_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M3';
+export const GOLDEN_HOOK_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M4';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -41,6 +43,12 @@ export type GoldenHookExpectation =
       readonly gatingCapable: boolean;
       /** The hook-floor relay slice, when the post can raise an approval. */
       readonly relay?: HookFloorRelayInput;
+      /**
+       * The [X4] automation handler slot this post routes to (M4 freeze,
+       * hooks-contract.md §7.1) — SessionStart / SessionEnd / PreCompact;
+       * absent = events-store-only.
+       */
+      readonly x4Route?: X4AutomationHookEvent;
     }
   | {
       readonly accepted: false;
@@ -140,7 +148,50 @@ export const GOLDEN_HOOK_FIXTURES: readonly GoldenHookFixture[] = Object.freeze(
       session_id: 'synth-native-4',
       source: 'startup',
     }),
-    expect: { accepted: true, group: 'session-lifecycle', gatingCapable: false },
+    expect: {
+      accepted: true,
+      group: 'session-lifecycle',
+      gatingCapable: false,
+      x4Route: 'SessionStart',
+    },
+    notes:
+      'M4 routing pin: SessionStart reaches the brief-injection handler (the response MAY carry ' +
+      'HookSessionStartOutput — ackForSessionStart); the startup/resume/clear/compact policy is ' +
+      "handler-side, decided from the body's source field",
+  },
+  {
+    name: 'hook-sessionstart-resume-injection',
+    accountSegment: 'MAX_A',
+    bodyJson: JSON.stringify({
+      hook_event_name: 'SessionStart',
+      session_id: 'synth-native-1',
+      source: 'resume',
+    }),
+    expect: {
+      accepted: true,
+      group: 'session-lifecycle',
+      gatingCapable: false,
+      x4Route: 'SessionStart',
+    },
+    notes: 'the blueprint §5 injection case: SessionStart(resume) → inject the latest brief',
+  },
+  {
+    name: 'hook-sessionend-auto-brief',
+    accountSegment: 'MAX_A',
+    bodyJson: JSON.stringify({
+      hook_event_name: 'SessionEnd',
+      session_id: 'synth-native-1',
+      reason: 'exit',
+    }),
+    expect: {
+      accepted: true,
+      group: 'session-lifecycle',
+      gatingCapable: false,
+      x4Route: 'SessionEnd',
+    },
+    notes:
+      'M4 routing pin: SessionEnd reaches the auto-brief handler POST-ACK (204 first, handler ' +
+      'after — a slow handler can never stall a session)',
   },
   {
     name: 'hook-filechanged-context',
@@ -160,7 +211,14 @@ export const GOLDEN_HOOK_FIXTURES: readonly GoldenHookFixture[] = Object.freeze(
       session_id: 'synth-native-1',
       trigger: 'auto',
     }),
-    expect: { accepted: true, group: 'compaction', gatingCapable: false },
+    expect: {
+      accepted: true,
+      group: 'compaction',
+      gatingCapable: false,
+      x4Route: 'PreCompact',
+    },
+    notes:
+      'M4 routing pin: PreCompact reaches the snapshot + compact-edge handler POST-ACK',
   },
   {
     name: 'hook-unknown-event-unmapped',
@@ -233,14 +291,17 @@ export interface GoldenHookReplayResult {
   readonly group?: HookEventGroup | 'unmapped';
   readonly gatingCapable?: boolean;
   readonly relay?: HookFloorRelayInput;
+  /** The [X4] automation slot the accepted post routes to (M4 freeze). */
+  readonly x4Route?: X4AutomationHookEvent;
 }
 
 /**
  * Route one fixture the way BE-5's collector routes a POST: parse the body
  * (unparseable → 400), then validateHookPost(pathLabel, body), then — for
- * accepted posts — extract the hook-floor relay slice. Departments may
- * replay the raw bytes through their real HTTP handler instead; the bytes
- * and verdicts are the contract, this helper is the convenience.
+ * accepted posts — extract the hook-floor relay slice and the [X4]
+ * automation route (M4, hooks-contract.md §7.1). Departments may replay the
+ * raw bytes through their real HTTP handler instead; the bytes and verdicts
+ * are the contract, this helper is the convenience.
  */
 export function replayGoldenHookFixture(fixture: GoldenHookFixture): GoldenHookReplayResult {
   let body: unknown;
@@ -252,10 +313,12 @@ export function replayGoldenHookFixture(fixture: GoldenHookFixture): GoldenHookR
   const outcome = validateHookPost(fixture.accountSegment, body);
   if (!outcome.ok) return { accepted: false, httpStatus: outcome.httpStatus };
   const relay = hookFloorRelayInput(outcome.accepted);
+  const x4Route = x4AutomationRouteFor(outcome.accepted);
   return {
     accepted: true,
     group: outcome.accepted.group,
     gatingCapable: outcome.accepted.gatingCapable,
     ...(relay !== undefined ? { relay } : {}),
+    ...(x4Route !== undefined ? { x4Route } : {}),
   };
 }

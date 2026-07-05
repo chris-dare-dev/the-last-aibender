@@ -9,12 +9,12 @@ import {
 } from './hooksGolden.js';
 import { assertSynthesizedSafeText } from './jsonl.js';
 
-describe('golden hook-POST fixture corpus (hooks-contract.md §6; M3 freeze)', () => {
+describe('golden hook-POST fixture corpus (hooks-contract.md §6; M3 freeze + M4 routing)', () => {
   // -- positive ---------------------------------------------------------------
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M3');
+    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M4');
   });
 
   it('every fixture replays to its pinned verdict', () => {
@@ -25,10 +25,25 @@ describe('golden hook-POST fixture corpus (hooks-contract.md §6; M3 freeze)', (
         expect(outcome.group, fixture.name).toBe(fixture.expect.group);
         expect(outcome.gatingCapable, fixture.name).toBe(fixture.expect.gatingCapable);
         expect(outcome.relay, fixture.name).toEqual(fixture.expect.relay);
+        // M4: the [X4] automation routing pin (SessionStart/SessionEnd/PreCompact).
+        expect(outcome.x4Route, fixture.name).toBe(fixture.expect.x4Route);
       } else {
         expect(outcome.httpStatus, fixture.name).toBe(fixture.expect.httpStatus);
       }
     }
+  });
+
+  it('pins every [X4] automation slot at least once (M4 routing contract)', () => {
+    const routes = new Set(
+      GOLDEN_HOOK_FIXTURES.filter((f) => f.expect.accepted).map(
+        (f) => (f.expect as { x4Route?: string }).x4Route,
+      ),
+    );
+    for (const slot of ['SessionStart', 'SessionEnd', 'PreCompact']) {
+      expect(routes.has(slot), `no fixture routes to ${slot}`).toBe(true);
+    }
+    // …and non-automation accepts stay events-store-only (no route).
+    expect(routes.has(undefined)).toBe(true);
   });
 
   it('pins the exact bytes of the gating fixture (serialization guard)', () => {

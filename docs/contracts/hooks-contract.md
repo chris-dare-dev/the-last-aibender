@@ -195,9 +195,67 @@ The §4 T3 verification item (CLI-side interpretation of `200` gating bodies
 on the real host before the floor turns enforcing) is UNCHANGED by this
 freeze — the REQUEST and ack shapes are frozen either way.
 
+### 7.1 [X4] automation routing — FROZEN (M4, `packages/protocol`)
+
+The §3/§5 [X4] automation rows resolve at M4 into a frozen ROUTING contract
+between BE-5's accepting endpoint and BE-7's workstream handlers
+(`hooks.ts` amendment; consumed with the lineage surfaces of
+ws-protocol.md §15/§16):
+
+- **Routing set** — `X4_AUTOMATION_HOOK_EVENTS = SessionStart · SessionEnd ·
+  PreCompact`; `x4AutomationRouteFor(accepted)` names the handler slot for
+  one ACCEPTED post (undefined = events-store-only, the M3 behavior).
+  Routing happens AFTER `validateHookPost`; the body passes through
+  VERBATIM (§2) — handlers see everything the CLI sent.
+- **Handler port** — `WorkstreamHookRouting`, implemented by BE-7 and
+  registered with the collector (all slots optional; an unregistered slot
+  keeps the M3 events-store-only behavior):
+  - `onSessionEnd(post)` → the auto continuation brief. **POST-ACK
+    fire-and-forget**: the collector answers 204 FIRST and invokes the
+    handler after — a slow or throwing handler can never stall or fail a
+    session (the §2 <50 ms posture is unchanged; throws are logged and
+    swallowed collector-side).
+  - `onPreCompact(post)` → full-fidelity snapshot + `compact` edge.
+    POST-ACK fire-and-forget, same rules.
+  - `onSessionStart(post)` → the ONE handler whose output rides the HTTP
+    response: the collector races it against a short deadline
+    (configuration, the §4 floor-timeout pattern) and answers
+    `200 + HookSessionStartOutput` when a value arrives in time, else 204.
+    Returning undefined = no injection. The startup/resume/clear/compact
+    policy is handler-side, decided from the body's `source` field.
+- **SessionStart response shape (frozen)** — the CLI's own hook-output
+  schema:
+
+```jsonc
+{ "hookSpecificOutput": {
+    "hookEventName": "SessionStart",
+    "additionalContext": "…" } }   // non-empty markdown injected into the
+                                   // session — the workstream's latest brief.
+                                   // Paths + session ids + labels only [X2].
+```
+
+- **Ack discipline** — `ackForSessionStart(outcome, injection?)` mirrors
+  the frozen `ackForHookOutcome` rule: an injection body is only ever
+  attached to an ACCEPTED post whose event IS `SessionStart` (a buggy
+  handler can never inject into a tool event); an empty
+  `additionalContext` degrades to 204; rejections mirror their httpStatus.
+  `HookAck`'s 200 body widened to `HookGatingOutput |
+  HookSessionStartOutput` — additive, every M3 ack byte-identical.
+- **T3 verification item (SI-3, milestone gate)** — like the §4 gating
+  flag: the CLI-side interpretation of the SessionStart `200` body
+  (`additionalContext` injection) must be verified against the pinned CLI
+  on the real host before brief injection turns on. The RESPONSE shape is
+  frozen either way; 204 remains the default until the proof lands.
+
+Golden corpus: the hook fixtures now pin the route per accepted post
+(`x4Route` on `GOLDEN_HOOK_FIXTURES`, `GOLDEN_HOOK_CORPUS_FREEZE =
+'FROZEN-M4'`) — SessionStart (startup + resume), SessionEnd, PreCompact,
+and non-automation accepts staying route-less.
+
 ## 8. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
-| 2026-07-04 | Initial FROZEN-M2 freeze: versioned `/hooks/v1/<LABEL>` envelope; native-vocabulary body with `hook_event_name`/`session_id` required; accept-unknown-events rule; label-from-template-only attribution [X2]; gating-response shape with the T3 verification flag. SI-ORCH co-sign: **pending**. | — (M2 freeze) |
-| 2026-07-04 | **M3 acceptance-side freeze (§7):** typed POST validation outcome + ack shape + PermissionRequest→hook-floor relay contract landed in `packages/protocol` (`hooks.ts`); §3 vocabulary machine-checkable (`HOOK_EVENT_VOCABULARY`, 29 names/8 groups); golden hook-POST corpus landed in `packages/testkit` (§6, `GOLDEN_HOOK_FIXTURES`). No change to any §1–§5 shape — this freeze makes the M2 prose machine-checkable and pins the collector/gateway agreement surface. §4 T3 gating-verification flag unchanged. SI-ORCH co-sign: **pending**. | — (M3 freeze) |
+| 2026-07-04 | Initial FROZEN-M2 freeze: versioned `/hooks/v1/<LABEL>` envelope; native-vocabulary body with `hook_event_name`/`session_id` required; accept-unknown-events rule; label-from-template-only attribution [X2]; gating-response shape with the T3 verification flag. SI-ORCH co-sign: **co-signed (M4 review)** — SI-3 templates POST exactly this envelope: `/hooks/v1/<LABEL>` with the label as the ONLY per-account delta, the full 29-event vocabulary, http-only (no shell-outs [X2]), short timeouts, idempotent merge-never-overwrite installer — all pinned by the hooks bats suite (27/27 green, re-run at this review). | — (M2 freeze) |
+| 2026-07-04 | **M3 acceptance-side freeze (§7):** typed POST validation outcome + ack shape + PermissionRequest→hook-floor relay contract landed in `packages/protocol` (`hooks.ts`); §3 vocabulary machine-checkable (`HOOK_EVENT_VOCABULARY`, 29 names/8 groups); golden hook-POST corpus landed in `packages/testkit` (§6, `GOLDEN_HOOK_FIXTURES`). No change to any §1–§5 shape — this freeze makes the M2 prose machine-checkable and pins the collector/gateway agreement surface. §4 T3 gating-verification flag unchanged. SI-ORCH co-sign: **co-signed (M4 review)** — the golden hook-POST corpus replays green against the real collector handler (every §2 acceptance class incl. 404 label case-sensitivity and each 400 class); the SI-3 template URL shape matches the frozen endpoint constants (`HOOK_PATH_PREFIX`, default port 4319) byte-for-byte, verified by the SI suites at this review. | — (M3 freeze) |
+| 2026-07-04 | **M4 [X4] routing freeze (§7.1):** the SessionStart/SessionEnd/PreCompact automation routing contract landed in `packages/protocol` (`hooks.ts` amendment): `X4_AUTOMATION_HOOK_EVENTS` + `x4AutomationRouteFor`; the `WorkstreamHookRouting` handler port BE-7 registers with BE-5's endpoint (SessionEnd/PreCompact post-ack fire-and-forget; SessionStart deadline-raced); the frozen SessionStart injection response `HookSessionStartOutput` (`hookSpecificOutput.additionalContext`, CLI hook-output schema) + `ackForSessionStart` (injection only on accepted SessionStart posts; empty context → 204); `HookAck` 200 body widened additively. Hook corpus advanced to `FROZEN-M4` with per-fixture `x4Route` pins + SessionEnd/SessionStart(resume) fixtures. NEW T3 verification item: CLI-side `additionalContext` interpretation before injection turns on (204 stays the default). No change to any §1–§6 REQUEST shape. SI-ORCH co-sign: **pending**. | — (M4 freeze) |

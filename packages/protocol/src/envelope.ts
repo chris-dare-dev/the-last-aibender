@@ -24,6 +24,7 @@ import type { JsonReplayRequest } from './replay.js';
 import type { ValidationResult } from './result.js';
 import { invalid, valid } from './result.js';
 import type { TranscriptPayload } from './transcript.js';
+import type { WorkstreamClientPayload, WorkstreamServerPayload } from './workstreams.js';
 
 export interface Envelope<TPayload = unknown> {
   /** Logical stream family — MUST equal `streamForChannel(channel)`. */
@@ -52,11 +53,19 @@ export type FrozenM1Payload = ControlRequest | ControlResponse | ErrorPayload | 
 export type EventsServerPayload = EventSummary | ReadModelSnapshot;
 
 /**
- * The full frozen cross-channel JSON payload union as of the M3 freeze —
- * every channel's payload union is now frozen. The `events` union
- * (EventsServerPayload: event-summary + read-model-snapshot) was the last
- * open surface, deferred by M2 and closed here; unknown events kinds remain
- * legal-and-ignored by the frozen forward-tolerant reader rule (events.ts).
+ * `workstream` channel payloads (FROZEN-M4): the broker→client lineage
+ * fan-out union + the client→broker merge request (workstreams.ts). Unknown
+ * broker-pushed kinds stay legal-and-ignored by the same forward-tolerant
+ * reader rule the events channel froze at M3.
+ */
+export type WorkstreamChannelPayload = WorkstreamServerPayload | WorkstreamClientPayload;
+
+/**
+ * The full frozen cross-channel JSON payload union as of the M4 freeze. The
+ * M3 freeze closed the last M2-deferred surface (the `events` union); M4
+ * adds the `workstream` channel union (X4 lineage) without touching any
+ * earlier shape. Unknown kinds on `events` and `workstream` remain
+ * legal-and-ignored by the frozen forward-tolerant reader rule.
  */
 export type FrozenPayload =
   | FrozenM1Payload
@@ -65,7 +74,8 @@ export type FrozenPayload =
   | QuotaSnapshot
   | ContextGraphTouch
   | JsonReplayRequest
-  | EventsServerPayload;
+  | EventsServerPayload
+  | WorkstreamChannelPayload;
 
 /**
  * Structural + consistency validation of a decoded JSON envelope. Enforces

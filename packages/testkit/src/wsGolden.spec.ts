@@ -14,12 +14,12 @@ import {
 const TEXT = GOLDEN_WS_FIXTURES.filter((f) => f.kind === 'text');
 const BINARY = GOLDEN_WS_FIXTURES.filter((f): f is GoldenWsBinaryFixture => f.kind === 'binary');
 
-describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M3 freeze)', () => {
+describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4 freeze)', () => {
   // -- positive ---------------------------------------------------------------
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M3');
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M4');
   });
 
   it('every fixture replays to its pinned verdict at its pinned stage', () => {
@@ -119,7 +119,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M3
     expect(GOLDEN_WS_FIXTURES.some((f) => f.direction === 'broker-to-client')).toBe(true);
     expect(TEXT.length).toBeGreaterThan(0);
     expect(BINARY.length).toBeGreaterThan(0);
-    // Every stage of the routing order is represented (M1 + M2 + M3 stages).
+    // Every stage of the routing order is represented (M1–M4 stages).
     const stages = new Set(GOLDEN_WS_FIXTURES.map((f) => f.stage));
     expect([...stages].sort()).toEqual(
       [
@@ -140,11 +140,14 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M3
         'transcript-payload',
         // M3 freeze stage
         'events-payload',
+        // M4 freeze stages
+        'workstream-payload',
+        'workstream-client-message',
       ].sort(),
     );
   });
 
-  it('M2/M3 surfaces have both valid and invalid coverage (valid + every invalid class)', () => {
+  it('M2/M3/M4 surfaces have both valid and invalid coverage (valid + every invalid class)', () => {
     for (const stage of [
       'transcript-payload',
       'approvals-client-message',
@@ -153,6 +156,8 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M3
       'context-graph-payload',
       'replay-request',
       'events-payload',
+      'workstream-payload',
+      'workstream-client-message',
     ] as const) {
       const ofStage = GOLDEN_WS_FIXTURES.filter((f) => f.stage === stage);
       expect(ofStage.some((f) => f.expect.valid), `${stage} valid`).toBe(true);
@@ -198,5 +203,34 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M3
     expect(legacy?.kind === 'text' && legacy.frame).toBe(
       '{"stream":"events","channel":"events","seq":0,"payload":{"kind":"synthesized-draft-event"}}',
     );
+  });
+
+  // -- M4 freeze additions ------------------------------------------------------
+
+  it('pins a valid frame for EVERY registered workstream broker→client kind', () => {
+    const frames = TEXT.filter((f) => f.stage === 'workstream-payload' && f.expect.valid);
+    const seen = new Set<string>();
+    for (const fixture of frames) {
+      const payload = (JSON.parse(fixture.frame) as { payload?: Record<string, unknown> }).payload;
+      if (typeof payload?.['kind'] === 'string') seen.add(payload['kind']);
+    }
+    for (const kind of [
+      'workstream-list-snapshot',
+      'workstream-detail-snapshot',
+      'workstream-node',
+      'workstream-edge',
+      'workstream-brief',
+      'branch-advisory',
+      'workstream-merge-resolved',
+    ]) {
+      expect(seen.has(kind), `no valid fixture for workstream kind ${kind}`).toBe(true);
+    }
+  });
+
+  it('pins the workstream forward-tolerant rule as golden bytes', () => {
+    const tolerated = GOLDEN_WS_FIXTURES.find(
+      (f) => f.name === 'workstream-unknown-kind-tolerated',
+    );
+    expect(tolerated?.expect).toEqual({ valid: true });
   });
 });

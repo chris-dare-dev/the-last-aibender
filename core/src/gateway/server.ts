@@ -37,7 +37,10 @@
  *  - no approvals    → decisions answer `approval-not-pending` (nothing can
  *                      be pending), no requests ever fan out;
  *  - no transcripts  → transcript channels journal nothing (replay from 0 is
- *                      a legal no-op).
+ *                      a legal no-op);
+ *  - no workstreams  → merge requests validate, then answer the runtime
+ *                      error `session-not-found` (M4, ICR-0011 — no lineage
+ *                      engine means no session nodes).
  */
 
 import { createServer, type IncomingMessage, type Server } from 'node:http';
@@ -63,6 +66,8 @@ import {
   validatePtyClientMessage,
   validateQuotaSnapshot,
   validateTranscriptPayload,
+  validateWorkstreamClientMessage,
+  validateWorkstreamServerPayload,
   type ChannelName,
   type ContextGraphTouch,
   type ControlRequest,
@@ -73,6 +78,7 @@ import {
   type ErrorPayload,
   type PtyClientMessage,
   type QuotaSnapshot,
+  type WorkstreamServerPayload,
 } from '@aibender/protocol';
 import { createLineScrubber, createLogger, type Logger } from '@aibender/shared';
 import { WebSocketServer, type RawData, type WebSocket } from 'ws';
@@ -91,6 +97,7 @@ import type {
   GatewayPtySession,
   TranscriptSource,
   Unsubscribe,
+  WorkstreamEnginePort,
 } from './ports.js';
 import {
   PtySessionStream,
@@ -124,6 +131,12 @@ export interface GatewayOptions extends BootstrapPathOptions {
   readonly approvals?: ApprovalBrokerPort;
   /** Kernel SDK message tap feeding transcript.<sid> (absent → silent). */
   readonly transcripts?: TranscriptSource;
+  /**
+   * BE-7 workstream engine port (M4, ICR-0011). Absent → merge requests
+   * still VALIDATE, then answer the runtime error `session-not-found` (no
+   * lineage engine composed = no session nodes; see ports.ts).
+   */
+  readonly workstreams?: WorkstreamEnginePort;
   /** PTY flow-control tuning (mechanism frozen, values BE-3 config, §6). */
   readonly flowControl?: Partial<PtyFlowControlOptions>;
   /** JSON reconnect-replay journal bound (per channel, §8). */
@@ -158,6 +171,13 @@ export interface GatewayHandle {
   publishContextTouch(touch: ContextGraphTouch): void;
   /** `events` payload union is DRAFT until M3 — pushed as an opaque envelope. */
   publishEvent(payload: Readonly<Record<string, unknown>>): void;
+  /**
+   * M4: the `workstream` lineage fan-out (BE-7's source). Validated against
+   * the frozen union — invalid OR unregistered-kind payloads THROW
+   * (RangeError); the forward-tolerant rule is for READERS, a broker-side
+   * producer must emit registered kinds only.
+   */
+  publishWorkstream(payload: WorkstreamServerPayload): void;
   /** Stop accepting, close clients (1001), remove the owned bootstrap file. */
   close(): Promise<void>;
 }
@@ -626,9 +646,75 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
       handleApprovalsPayload(conn, payload);
       return;
     }
+    if (channel === CHANNEL.WORKSTREAM) {
+      handleWorkstreamPayload(conn, payload);
+      return;
+    }
     pushError(conn, 'bad-request', `channel ${channel} accepts no client payloads`, {
       channel,
     });
+  };
+
+  // ---- workstream slice (ws-protocol.md §16, M4 freeze — ICR-0011) -------------
+
+  /**
+   * The ONE client verb on the workstream channel: the merge request.
+   * Validate against the frozen shape, then delegate to the BE-7 engine
+   * port; failures answer PUSHED errors carrying `correlatesTo: mergeId`
+   * (the frozen merge error contract). With NO engine composed the request
+   * still validates, then answers the runtime error `session-not-found` —
+   * an empty broker has no session nodes, so every parent is unknown
+   * (the approvals empty-broker degrade posture).
+   */
+  const handleWorkstreamPayload = (conn: Connection, rawPayload: unknown): void => {
+    const parsed = validateWorkstreamClientMessage(rawPayload);
+    if (!parsed.ok) {
+      pushError(conn, parsed.code, parsed.message, { channel: CHANNEL.WORKSTREAM });
+      return;
+    }
+    const request = parsed.value;
+    const engine = options.workstreams;
+    if (engine === undefined) {
+      pushError(
+        conn,
+        'session-not-found',
+        'no lineage engine is composed — merge parents are unknown here',
+        { channel: CHANNEL.WORKSTREAM, correlatesTo: request.mergeId },
+      );
+      return;
+    }
+    void engine.merge(request).then(
+      (resolved) => {
+        // Defensive freeze-validation of engine-built payloads: an invalid
+        // resolution is a BE-7 bug — drop it loudly, never put it on the wire.
+        const checked = validateWorkstreamServerPayload(resolved);
+        if (!checked.ok || checked.value.kind !== 'workstream-merge-resolved') {
+          log.error('workstream engine produced an invalid merge resolution — dropped', {
+            detail: checked.ok ? 'unregistered kind' : scrub(checked.message),
+          });
+          return;
+        }
+        broadcast(CHANNEL.WORKSTREAM, checked.value);
+      },
+      (error: unknown) => {
+        if (isKernelVerbError(error)) {
+          pushError(conn, error.code, error.message, {
+            channel: CHANNEL.WORKSTREAM,
+            correlatesTo: request.mergeId,
+            retryable: error.retryable,
+          });
+          return;
+        }
+        // Unexpected engine failure: log broker-side, answer GENERIC [X2].
+        log.error('workstream engine threw a non-KernelVerbError', {
+          detail: error instanceof Error ? scrub(error.message) : String(typeof error),
+        });
+        pushError(conn, 'internal', 'internal broker error while handling workstream-merge-request', {
+          channel: CHANNEL.WORKSTREAM,
+          correlatesTo: request.mergeId,
+        });
+      },
+    );
   };
 
   const routeBinaryFrame = (conn: Connection, bytes: Uint8Array): void => {
@@ -805,6 +891,20 @@ export async function startGateway(options: GatewayOptions): Promise<GatewayHand
         throw new RangeError('events payloads must be JSON objects (union is DRAFT until M3)');
       }
       broadcast(CHANNEL.EVENTS, payload);
+    },
+    publishWorkstream: (payload) => {
+      const checked = validateWorkstreamServerPayload(payload);
+      if (!checked.ok) {
+        throw new RangeError(`refusing to publish an invalid workstream payload: ${checked.message}`);
+      }
+      if ('opaque' in checked.value) {
+        // Forward tolerance is a READER rule — our own producer must emit
+        // registered kinds only (a typo'd kind here is a BE-7 bug).
+        throw new RangeError(
+          `refusing to publish unregistered workstream kind ${JSON.stringify(checked.value.kind)}`,
+        );
+      }
+      broadcast(CHANNEL.WORKSTREAM, checked.value);
     },
     close,
   };

@@ -22,6 +22,15 @@
  * FROZEN-M3 (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
  * BE-ORCH lands, SI-ORCH co-signs (SI-3 templates POST this shape).
  * Prose of record: docs/contracts/hooks-contract.md.
+ * Amendments: M4 freeze — the [X4] automation routing slice
+ * (hooks-contract.md §7.1, amendment-recorded): {@link X4_AUTOMATION_HOOK_EVENTS},
+ * {@link x4AutomationRouteFor}, the {@link WorkstreamHookRouting} handler
+ * port BE-7 registers with BE-5's accepting endpoint, the SessionStart
+ * injection response shape ({@link HookSessionStartOutput}, CLI hook-output
+ * schema `hookSpecificOutput.additionalContext`), and its ack builder
+ * ({@link ackForSessionStart}). {@link HookAck}'s 200 body widened to
+ * `HookGatingOutput | HookSessionStartOutput` — additive; every M3 ack stays
+ * byte-identical.
  * ============================================================================
  */
 
@@ -220,11 +229,30 @@ export interface HookGatingOutput {
   readonly permissionDecisionReason?: string;
 }
 
+/**
+ * The `200` SessionStart body, in the CLI's own hook-output schema (M4
+ * freeze; hooks-contract.md §7.1): `additionalContext` is injected into the
+ * starting session's context — the [X4] brief-injection vehicle. The body
+ * carries file paths + harness/native session ids + placeholder labels ONLY
+ * [X2] (producer duty, the approvals-summary precedent).
+ */
+export interface HookSessionStartOutput {
+  readonly hookSpecificOutput: {
+    readonly hookEventName: 'SessionStart';
+    /** Non-empty markdown injected into the session (the workstream's latest brief). */
+    readonly additionalContext: string;
+  };
+}
+
 export type HookAck =
   /** Accepted, no opinion — the DEFAULT; native permission flow proceeds. */
   | { readonly status: 204 }
-  /** Accepted, the policy floor has an opinion (gating-capable events only). */
-  | { readonly status: 200; readonly body: HookGatingOutput }
+  /**
+   * Accepted with a body: a gating output (gating-capable events only) or —
+   * M4 — a SessionStart injection ({@link HookSessionStartOutput},
+   * SessionStart posts only; {@link ackForSessionStart}).
+   */
+  | { readonly status: 200; readonly body: HookGatingOutput | HookSessionStartOutput }
   /** Unknown label / malformed body (mirrors {@link HookPostRejection}). */
   | { readonly status: 404 }
   | { readonly status: 400 };
@@ -277,4 +305,89 @@ export function hookFloorRelayInput(accepted: AcceptedHookPost): HookFloorRelayI
     toolName,
     ...(isNonEmptyString(toolUseId) ? { toolUseId } : {}),
   };
+}
+
+// ---------------------------------------------------------------------------
+// [X4] automation routing (M4 freeze — hooks-contract.md §7.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * The three hook events BE-5's accepting endpoint routes to the [X4]
+ * workstream automation handlers (blueprint §5 handoff automation;
+ * hooks-contract.md §3 [X4] rows):
+ *   SessionEnd   → auto continuation brief
+ *   PreCompact   → full-fidelity snapshot + `compact` edge
+ *   SessionStart → brief injection (the response MAY carry
+ *                  {@link HookSessionStartOutput})
+ */
+export const X4_AUTOMATION_HOOK_EVENTS = Object.freeze([
+  'SessionStart',
+  'SessionEnd',
+  'PreCompact',
+] as const);
+
+export type X4AutomationHookEvent = (typeof X4_AUTOMATION_HOOK_EVENTS)[number];
+
+/**
+ * The routing decision for one ACCEPTED post: which [X4] handler slot it
+ * reaches, or undefined (not an automation event — events-store-only). Total
+ * and deterministic; the collector calls this AFTER validateHookPost.
+ */
+export function x4AutomationRouteFor(
+  accepted: AcceptedHookPost,
+): X4AutomationHookEvent | undefined {
+  return (X4_AUTOMATION_HOOK_EVENTS as readonly string[]).includes(accepted.hookEventName)
+    ? (accepted.hookEventName as X4AutomationHookEvent)
+    : undefined;
+}
+
+/**
+ * The handler port BE-7 registers with BE-5's accepting endpoint (frozen at
+ * M4). Routing contract (hooks-contract.md §7.1):
+ *
+ *   - `onSessionEnd` / `onPreCompact` are POST-ACK fire-and-forget: the
+ *     collector answers 204 first and invokes the handler after — a slow or
+ *     throwing handler can never stall or fail a session (the <50 ms ack
+ *     posture is unchanged). Throws are logged and swallowed collector-side.
+ *   - `onSessionStart` is the ONE handler whose output rides the response:
+ *     the collector races it against the hook-timeout window (configuration,
+ *     like the §4 floor timeout) and answers
+ *     `200 + HookSessionStartOutput` when a value arrives in time, else 204.
+ *     Returning undefined = no injection (204). The handler decides
+ *     startup/resume/clear/compact policy from the body's `source` field —
+ *     the body passes through VERBATIM (§2).
+ *   - Handlers receive every accepted [X4]-event post for every account —
+ *     including EXTERNAL sessions (the account-wide template rule, §3).
+ *
+ * All handlers are optional: an unregistered slot means the event is
+ * events-store-only (the M3 behavior, which stays the default).
+ */
+export interface WorkstreamHookRouting {
+  onSessionEnd?(post: AcceptedHookPost): void;
+  onPreCompact?(post: AcceptedHookPost): void;
+  onSessionStart?(
+    post: AcceptedHookPost,
+  ): HookSessionStartOutput | undefined | Promise<HookSessionStartOutput | undefined>;
+}
+
+/**
+ * The one legal ack for a SessionStart routing outcome — the
+ * {@link ackForHookOutcome} discipline applied to injections: an injection
+ * body is only ever attached to an ACCEPTED post whose event IS
+ * `SessionStart` (a buggy handler can never inject into a tool event), and
+ * an empty `additionalContext` degrades to 204 (never an empty injection).
+ */
+export function ackForSessionStart(
+  outcome: HookPostOutcome,
+  injection?: HookSessionStartOutput,
+): HookAck {
+  if (!outcome.ok) return { status: outcome.httpStatus };
+  if (
+    injection !== undefined &&
+    outcome.accepted.hookEventName === 'SessionStart' &&
+    injection.hookSpecificOutput.additionalContext.length > 0
+  ) {
+    return { status: 200, body: injection };
+  }
+  return { status: 204 };
 }

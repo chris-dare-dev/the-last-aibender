@@ -21,6 +21,7 @@ import {
   validateEventsPayload,
   validateQuotaSnapshot,
   validateTranscriptPayload,
+  validateWorkstreamServerPayload,
   type ApprovalsServerPayload,
   type ChannelName,
   type ContextGraphTouch,
@@ -29,10 +30,12 @@ import {
   type ErrorPayload,
   type EventSummary,
   type OpaqueEventsPayload,
+  type OpaqueWorkstreamPayload,
   type PtyFrame,
   type QuotaSnapshot,
   type ReadModelSnapshot,
   type TranscriptPayload,
+  type WorkstreamServerPayload,
 } from '@aibender/protocol';
 
 /** The validation stage that produced a verdict (mirrors golden stages). */
@@ -46,6 +49,7 @@ export type InboundStage =
   | 'quota-payload'
   | 'context-graph-payload'
   | 'events-payload'
+  | 'workstream-payload'
   | 'channel-policy'
   | 'pty-frame-codec';
 
@@ -88,6 +92,18 @@ export type InboundMessage =
       readonly seq: number;
       readonly payload: EventSummary | ReadModelSnapshot | OpaqueEventsPayload;
     }
+  | {
+      /**
+       * workstream union FROZEN at M4 (ws-protocol.md §16): the X4 lineage
+       * fan-out (snapshots, node upserts, edge appends, briefs, branch
+       * advisories, merge resolutions); unknown kinds decode opaque and
+       * MUST be ignored (the same frozen forward-tolerant reader rule).
+       */
+      readonly kind: 'workstream';
+      readonly channel: ChannelName;
+      readonly seq: number;
+      readonly payload: WorkstreamServerPayload | OpaqueWorkstreamPayload;
+    }
   | { readonly kind: 'pty-frame'; readonly frame: PtyFrame };
 
 export type InboundVerdict =
@@ -102,6 +118,7 @@ export function replayableChannelOf(message: InboundMessage): ChannelName | unde
     case 'quota':
     case 'context-graph':
     case 'events':
+    case 'workstream':
       return isReplayableChannel(message.channel) ? message.channel : undefined;
     default:
       return undefined;
@@ -116,6 +133,7 @@ export function seqOf(message: InboundMessage): number | undefined {
     case 'quota':
     case 'context-graph':
     case 'events':
+    case 'workstream':
       return message.seq;
     default:
       return undefined;
@@ -211,6 +229,15 @@ export function routeBrokerFrame(data: string | Uint8Array): InboundVerdict {
     return events.ok
       ? { ok: true, message: { kind: 'events', channel, seq, payload: events.value } }
       : { ok: false, code: events.code, stage: 'events-payload' };
+  }
+
+  if (channel === 'workstream') {
+    // FROZEN at M4 (ws-protocol.md §16): the X4 lineage union; unknown kinds
+    // decode opaque (the same forward-tolerant reader rule as events).
+    const workstream = validateWorkstreamServerPayload(payload);
+    return workstream.ok
+      ? { ok: true, message: { kind: 'workstream', channel, seq, payload: workstream.value } }
+      : { ok: false, code: workstream.code, stage: 'workstream-payload' };
   }
 
   return { ok: false, code: 'unknown-channel', stage: 'channel-policy' };

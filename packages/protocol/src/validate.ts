@@ -28,6 +28,8 @@
  * validators + the JSON replay-request validator.
  * M3 additions: the `events` payload validator (event-summary +
  * read-model-snapshot, with the frozen forward-tolerant unknown-kind rule).
+ * M4 additions: the `workstream` payload validators (server union with the
+ * same frozen forward-tolerant unknown-kind rule; client merge-request).
  * ============================================================================
  */
 
@@ -93,6 +95,33 @@ import {
   isSessionState,
   isSubstrate,
 } from './vocab.js';
+import type {
+  BranchAdvisory,
+  OpaqueWorkstreamPayload,
+  WorkstreamBriefPayload,
+  WorkstreamClientPayload,
+  WorkstreamDetailSnapshot,
+  WorkstreamEdgeRecord,
+  WorkstreamListSnapshot,
+  WorkstreamMergeParams,
+  WorkstreamMergeResolved,
+  WorkstreamNodeRecord,
+  WorkstreamServerPayload,
+  WorkstreamSummary,
+} from './workstreams.js';
+import {
+  MERGE_ID_RE,
+  MERGE_MAX_PARENTS,
+  MERGE_MIN_PARENTS,
+  isBriefKind,
+  isBriefProvenance,
+  isLineageConfidence,
+  isLineageIdSegment,
+  isSessionEdgeType,
+  isSessionNodeOrigin,
+  isSessionNodeState,
+  isWorkstreamStatus,
+} from './workstreams.js';
 
 // ---------------------------------------------------------------------------
 // Field helpers
@@ -1403,4 +1432,469 @@ export function validateEventsPayload(
   if (kind === 'read-model-snapshot') return validateReadModelSnapshot(value);
   // Forward-tolerant: unknown kinds are legal-and-ignored (sanitized to kind).
   return valid({ kind, opaque: true });
+}
+
+// ---------------------------------------------------------------------------
+// Workstream payloads (the X4 lineage channel) — FROZEN-M4
+// ---------------------------------------------------------------------------
+
+function validateWorkstreamSummary(value: unknown): ValidationResult<WorkstreamSummary> {
+  if (!isRecord(value)) return invalid('bad-request', 'workstream summary must be an object');
+  const workstreamId = value['workstreamId'];
+  if (!isLineageIdSegment(workstreamId)) {
+    return invalid('bad-request', 'workstream summary workstreamId malformed');
+  }
+  const title = value['title'];
+  if (!isNonEmptyString(title)) {
+    return invalid('bad-request', 'workstream summary title must be a non-empty string');
+  }
+  const status = value['status'];
+  if (!isWorkstreamStatus(status)) {
+    return invalid('bad-request', `unknown workstream status ${JSON.stringify(status)}`);
+  }
+  const tags = value['tags'];
+  let parsedTags: readonly string[] | undefined;
+  if (tags !== undefined) {
+    if (!Array.isArray(tags) || tags.some((tag) => !isNonEmptyString(tag))) {
+      return invalid('bad-request', 'workstream summary tags, when present, must be non-empty strings');
+    }
+    parsedTags = tags as string[];
+  }
+  const nodeCount = value['nodeCount'];
+  if (!isNonNegativeSafeInteger(nodeCount)) {
+    return invalid('bad-request', 'workstream summary nodeCount must be a non-negative safe integer');
+  }
+  const updatedAt = value['updatedAt'];
+  if (!isEpochMs(updatedAt)) {
+    return invalid('bad-request', 'workstream summary updatedAt must be epoch ms');
+  }
+  return valid({
+    workstreamId,
+    title,
+    status,
+    ...(parsedTags !== undefined ? { tags: parsedTags } : {}),
+    nodeCount,
+    updatedAt,
+  });
+}
+
+function validateWorkstreamNodeRecord(value: unknown): ValidationResult<WorkstreamNodeRecord> {
+  if (!isRecord(value)) return invalid('bad-request', 'workstream node must be an object');
+  // [X2]: nodes carry HARNESS ids only — a native-id key is rejected outright
+  // (the context-touch account-key precedent, §12).
+  if ('nativeSessionId' in value || 'native_session_id' in value) {
+    return invalid('bad-request', 'workstream node must not carry native session ids (store attribute only [X2])');
+  }
+  const sessionId = value['sessionId'];
+  if (!isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', 'workstream node sessionId malformed');
+  }
+  const workstreamId = value['workstreamId'];
+  if (workstreamId !== undefined && !isLineageIdSegment(workstreamId)) {
+    return invalid('bad-request', 'workstream node workstreamId malformed');
+  }
+  const account = value['account'];
+  if (!isAccountLabel(account)) {
+    return invalid('bad-request', `workstream node account unknown ${JSON.stringify(account)}`);
+  }
+  const backend = value['backend'];
+  if (!isBackend(backend) || LABEL_BACKENDS[account] !== backend) {
+    return invalid('bad-request', 'workstream node violates the label/backend pairing');
+  }
+  const state = value['state'];
+  if (!isSessionNodeState(state)) {
+    return invalid('bad-request', `unknown workstream node state ${JSON.stringify(state)}`);
+  }
+  const origin = value['origin'];
+  if (!isSessionNodeOrigin(origin)) {
+    return invalid('bad-request', `unknown workstream node origin ${JSON.stringify(origin)}`);
+  }
+  const confidence = value['confidence'];
+  if (!isLineageConfidence(confidence)) {
+    return invalid('bad-request', `unknown workstream node confidence ${JSON.stringify(confidence)}`);
+  }
+  const displayName = value['displayName'];
+  if (displayName !== undefined && !isNonEmptyString(displayName)) {
+    return invalid('bad-request', 'workstream node displayName, when present, must be a non-empty string');
+  }
+  const cwd = value['cwd'];
+  if (cwd !== undefined && (!isNonEmptyString(cwd) || !cwd.startsWith('/'))) {
+    return invalid('bad-request', 'workstream node cwd, when present, must be an absolute path');
+  }
+  const gitBranch = value['gitBranch'];
+  if (gitBranch !== undefined && !isNonEmptyString(gitBranch)) {
+    return invalid('bad-request', 'workstream node gitBranch, when present, must be a non-empty string');
+  }
+  const tokensIn = value['tokensIn'];
+  if (tokensIn !== undefined && !isNonNegativeSafeInteger(tokensIn)) {
+    return invalid('bad-request', 'workstream node tokensIn must be a non-negative safe integer');
+  }
+  const tokensOut = value['tokensOut'];
+  if (tokensOut !== undefined && !isNonNegativeSafeInteger(tokensOut)) {
+    return invalid('bad-request', 'workstream node tokensOut must be a non-negative safe integer');
+  }
+  const costEstimatedUsd = value['costEstimatedUsd'];
+  if (costEstimatedUsd !== undefined && !isNonNegativeFinite(costEstimatedUsd)) {
+    return invalid('bad-request', 'workstream node costEstimatedUsd must be a non-negative finite number');
+  }
+  const createdAt = value['createdAt'];
+  if (!isEpochMs(createdAt)) {
+    return invalid('bad-request', 'workstream node createdAt must be epoch ms');
+  }
+  const lastActiveAt = value['lastActiveAt'];
+  if (lastActiveAt !== undefined && !isEpochMs(lastActiveAt)) {
+    return invalid('bad-request', 'workstream node lastActiveAt must be epoch ms');
+  }
+  return valid({
+    sessionId,
+    ...(workstreamId !== undefined ? { workstreamId } : {}),
+    backend,
+    account,
+    state,
+    origin,
+    confidence,
+    ...(displayName !== undefined ? { displayName } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
+    ...(gitBranch !== undefined ? { gitBranch } : {}),
+    ...(tokensIn !== undefined ? { tokensIn } : {}),
+    ...(tokensOut !== undefined ? { tokensOut } : {}),
+    ...(costEstimatedUsd !== undefined ? { costEstimatedUsd } : {}),
+    createdAt,
+    ...(lastActiveAt !== undefined ? { lastActiveAt } : {}),
+  });
+}
+
+function validateWorkstreamEdgeRecord(value: unknown): ValidationResult<WorkstreamEdgeRecord> {
+  if (!isRecord(value)) return invalid('bad-request', 'workstream edge must be an object');
+  const edgeId = value['edgeId'];
+  if (!isLineageIdSegment(edgeId)) {
+    return invalid('bad-request', 'workstream edge edgeId malformed');
+  }
+  const edgeType = value['edgeType'];
+  if (!isSessionEdgeType(edgeType)) {
+    return invalid('bad-request', `unknown workstream edge type ${JSON.stringify(edgeType)}`);
+  }
+  const fromSessionId = value['fromSessionId'];
+  if (fromSessionId !== undefined && !isSessionIdSegment(fromSessionId)) {
+    return invalid('bad-request', 'workstream edge fromSessionId malformed');
+  }
+  // The frozen from/import matrix: REQUIRED for every type except `import`,
+  // FORBIDDEN for `import` (imports have no in-graph parent).
+  if (edgeType === 'import' && fromSessionId !== undefined) {
+    return invalid('bad-request', 'workstream edge type import must not carry fromSessionId');
+  }
+  if (edgeType !== 'import' && fromSessionId === undefined) {
+    return invalid('bad-request', `workstream edge type ${edgeType} requires fromSessionId`);
+  }
+  const toSessionId = value['toSessionId'];
+  if (!isSessionIdSegment(toSessionId)) {
+    return invalid('bad-request', 'workstream edge toSessionId malformed');
+  }
+  const briefId = value['briefId'];
+  if (briefId !== undefined && !isLineageIdSegment(briefId)) {
+    return invalid('bad-request', 'workstream edge briefId malformed');
+  }
+  // Handoff briefs are MANDATORY (blueprint §5: context travels by brief).
+  if (edgeType === 'handoff' && briefId === undefined) {
+    return invalid('bad-request', 'workstream edge type handoff requires briefId');
+  }
+  const confidence = value['confidence'];
+  if (!isLineageConfidence(confidence)) {
+    return invalid('bad-request', `unknown workstream edge confidence ${JSON.stringify(confidence)}`);
+  }
+  const ts = value['ts'];
+  if (!isEpochMs(ts)) return invalid('bad-request', 'workstream edge ts must be epoch ms');
+  return valid({
+    edgeId,
+    ...(fromSessionId !== undefined ? { fromSessionId } : {}),
+    toSessionId,
+    edgeType,
+    ...(briefId !== undefined ? { briefId } : {}),
+    confidence,
+    ts,
+  });
+}
+
+function validateWorkstreamListSnapshot(
+  value: Record<string, unknown>,
+): ValidationResult<WorkstreamListSnapshot> {
+  const capturedAt = value['capturedAt'];
+  if (!isEpochMs(capturedAt)) {
+    return invalid('bad-request', 'workstream-list-snapshot capturedAt must be epoch ms');
+  }
+  const workstreams = value['workstreams'];
+  if (!Array.isArray(workstreams)) {
+    return invalid('bad-request', 'workstream-list-snapshot workstreams must be an array');
+  }
+  const out: WorkstreamSummary[] = [];
+  for (const entry of workstreams as unknown[]) {
+    const parsed = validateWorkstreamSummary(entry);
+    if (!parsed.ok) return parsed;
+    out.push(parsed.value);
+  }
+  const detachedNodeCount = value['detachedNodeCount'];
+  if (!isNonNegativeSafeInteger(detachedNodeCount)) {
+    return invalid('bad-request', 'workstream-list-snapshot detachedNodeCount must be a non-negative safe integer');
+  }
+  return valid({
+    kind: 'workstream-list-snapshot',
+    capturedAt,
+    workstreams: out,
+    detachedNodeCount,
+  });
+}
+
+function validateWorkstreamDetailSnapshot(
+  value: Record<string, unknown>,
+): ValidationResult<WorkstreamDetailSnapshot> {
+  const capturedAt = value['capturedAt'];
+  if (!isEpochMs(capturedAt)) {
+    return invalid('bad-request', 'workstream-detail-snapshot capturedAt must be epoch ms');
+  }
+  const scope = value['scope'];
+  if (scope !== 'workstream' && scope !== 'detached') {
+    return invalid('bad-request', `workstream-detail-snapshot scope must be workstream|detached, got ${JSON.stringify(scope)}`);
+  }
+  // Scope matrix (the approvals §10.1 REQUIRED/FORBIDDEN precedent).
+  let workstream: WorkstreamSummary | undefined;
+  if (scope === 'workstream') {
+    const parsed = validateWorkstreamSummary(value['workstream']);
+    if (!parsed.ok) {
+      return invalid('bad-request', 'workstream-detail-snapshot scope workstream requires a valid workstream summary');
+    }
+    workstream = parsed.value;
+  } else if (value['workstream'] !== undefined) {
+    return invalid('bad-request', 'workstream-detail-snapshot scope detached must not carry a workstream summary');
+  }
+  const nodes = value['nodes'];
+  if (!Array.isArray(nodes)) {
+    return invalid('bad-request', 'workstream-detail-snapshot nodes must be an array');
+  }
+  const parsedNodes: WorkstreamNodeRecord[] = [];
+  for (const entry of nodes as unknown[]) {
+    const parsed = validateWorkstreamNodeRecord(entry);
+    if (!parsed.ok) return parsed;
+    parsedNodes.push(parsed.value);
+  }
+  const edges = value['edges'];
+  if (!Array.isArray(edges)) {
+    return invalid('bad-request', 'workstream-detail-snapshot edges must be an array');
+  }
+  const parsedEdges: WorkstreamEdgeRecord[] = [];
+  for (const entry of edges as unknown[]) {
+    const parsed = validateWorkstreamEdgeRecord(entry);
+    if (!parsed.ok) return parsed;
+    parsedEdges.push(parsed.value);
+  }
+  return valid({
+    kind: 'workstream-detail-snapshot',
+    capturedAt,
+    scope,
+    ...(workstream !== undefined ? { workstream } : {}),
+    nodes: parsedNodes,
+    edges: parsedEdges,
+  });
+}
+
+function validateWorkstreamBrief(
+  value: Record<string, unknown>,
+): ValidationResult<WorkstreamBriefPayload> {
+  const briefId = value['briefId'];
+  if (!isLineageIdSegment(briefId)) {
+    return invalid('bad-request', 'workstream-brief briefId malformed');
+  }
+  const briefKind = value['briefKind'];
+  if (!isBriefKind(briefKind)) {
+    return invalid('bad-request', `unknown brief kind ${JSON.stringify(briefKind)}`);
+  }
+  const body = value['body'];
+  if (!isNonEmptyString(body)) {
+    return invalid('bad-request', 'workstream-brief body must be a non-empty string');
+  }
+  const sourceSessionIds = value['sourceSessionIds'];
+  if (
+    !Array.isArray(sourceSessionIds) ||
+    sourceSessionIds.length === 0 ||
+    sourceSessionIds.some((id) => !isSessionIdSegment(id))
+  ) {
+    return invalid('bad-request', 'workstream-brief sourceSessionIds must be a non-empty array of session ids');
+  }
+  const provenance = value['provenance'];
+  if (!isBriefProvenance(provenance)) {
+    return invalid('bad-request', `unknown brief provenance ${JSON.stringify(provenance)}`);
+  }
+  const createdAt = value['createdAt'];
+  if (!isEpochMs(createdAt)) {
+    return invalid('bad-request', 'workstream-brief createdAt must be epoch ms');
+  }
+  const workstreamId = value['workstreamId'];
+  if (workstreamId !== undefined && !isLineageIdSegment(workstreamId)) {
+    return invalid('bad-request', 'workstream-brief workstreamId malformed');
+  }
+  return valid({
+    kind: 'workstream-brief',
+    briefId,
+    briefKind,
+    body,
+    sourceSessionIds: sourceSessionIds as string[],
+    provenance,
+    createdAt,
+    ...(workstreamId !== undefined ? { workstreamId } : {}),
+  });
+}
+
+function validateBranchAdvisory(value: Record<string, unknown>): ValidationResult<BranchAdvisory> {
+  const sessionId = value['sessionId'];
+  if (!isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', 'branch-advisory sessionId malformed');
+  }
+  const contextUsedPct = value['contextUsedPct'];
+  if (!isPct(contextUsedPct)) {
+    return invalid('bad-request', 'branch-advisory contextUsedPct must be a finite number in 0..100');
+  }
+  const ts = value['ts'];
+  if (!isEpochMs(ts)) return invalid('bad-request', 'branch-advisory ts must be epoch ms');
+  return valid({ kind: 'branch-advisory', sessionId, contextUsedPct, ts });
+}
+
+function validateWorkstreamMergeResolved(
+  value: Record<string, unknown>,
+): ValidationResult<WorkstreamMergeResolved> {
+  const mergeId = value['mergeId'];
+  if (typeof mergeId !== 'string' || !MERGE_ID_RE.test(mergeId)) {
+    return invalid('bad-request', `workstream-merge-resolved mergeId must match ${MERGE_ID_RE.source}`);
+  }
+  const sessionId = value['sessionId'];
+  if (!isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', 'workstream-merge-resolved sessionId malformed');
+  }
+  const briefId = value['briefId'];
+  if (!isLineageIdSegment(briefId)) {
+    return invalid('bad-request', 'workstream-merge-resolved briefId malformed');
+  }
+  return valid({ kind: 'workstream-merge-resolved', mergeId, sessionId, briefId });
+}
+
+/**
+ * Validate an inbound payload on the `workstream` channel (client side).
+ *
+ * The FROZEN forward-tolerant reader rule (M4, the events §13.3 rule applied
+ * verbatim): a payload whose `kind` is a non-empty string OUTSIDE the frozen
+ * set decodes as an {@link OpaqueWorkstreamPayload} and MUST be ignored —
+ * M5 adds lineage lenses without breaking M4 clients. Registered kinds
+ * validate strictly; kindless payloads are malformed.
+ */
+export function validateWorkstreamServerPayload(
+  value: unknown,
+): ValidationResult<WorkstreamServerPayload | OpaqueWorkstreamPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'workstream payload must be an object');
+  const kind = value['kind'];
+  if (!isNonEmptyString(kind)) {
+    return invalid('bad-request', 'workstream payload kind must be a non-empty string');
+  }
+  switch (kind) {
+    case 'workstream-list-snapshot':
+      return validateWorkstreamListSnapshot(value);
+    case 'workstream-detail-snapshot':
+      return validateWorkstreamDetailSnapshot(value);
+    case 'workstream-node': {
+      const parsed = validateWorkstreamNodeRecord(value);
+      return parsed.ok ? valid({ kind: 'workstream-node', ...parsed.value }) : parsed;
+    }
+    case 'workstream-edge': {
+      const parsed = validateWorkstreamEdgeRecord(value);
+      return parsed.ok ? valid({ kind: 'workstream-edge', ...parsed.value }) : parsed;
+    }
+    case 'workstream-brief':
+      return validateWorkstreamBrief(value);
+    case 'branch-advisory':
+      return validateBranchAdvisory(value);
+    case 'workstream-merge-resolved':
+      return validateWorkstreamMergeResolved(value);
+    default:
+      // Forward-tolerant: unknown kinds are legal-and-ignored (sanitized to kind).
+      return valid({ kind, opaque: true });
+  }
+}
+
+function validateWorkstreamMergeParams(value: unknown): ValidationResult<WorkstreamMergeParams> {
+  if (!isRecord(value)) return invalid('bad-request', 'merge params must be an object');
+  const parents = value['parents'];
+  if (!Array.isArray(parents)) {
+    return invalid('bad-request', 'merge parents must be an array of harness session ids');
+  }
+  if (parents.length < MERGE_MIN_PARENTS || parents.length > MERGE_MAX_PARENTS) {
+    return invalid(
+      'bad-request',
+      `merge requires ${MERGE_MIN_PARENTS}..${MERGE_MAX_PARENTS} parents, got ${parents.length}`,
+    );
+  }
+  for (const parent of parents as unknown[]) {
+    if (!isSessionIdSegment(parent)) {
+      return invalid('bad-request', 'merge parent session id malformed');
+    }
+  }
+  if (new Set(parents as string[]).size !== parents.length) {
+    return invalid('bad-request', 'merge parents must be distinct (a node merges with another node, not itself)');
+  }
+  const accountLabel = value['accountLabel'];
+  if (!isAccountLabel(accountLabel)) {
+    return invalid('bad-request', `unknown account label ${JSON.stringify(accountLabel)}`);
+  }
+  const backend = value['backend'];
+  if (!isBackend(backend) || LABEL_BACKENDS[accountLabel] !== backend) {
+    return invalid('bad-request', 'merge params violate the label/backend pairing');
+  }
+  const cwd = value['cwd'];
+  if (!isNonEmptyString(cwd) || !cwd.startsWith('/')) {
+    return invalid('bad-request', 'merge cwd must be an absolute path (byte-stable string)');
+  }
+  const purpose = value['purpose'];
+  if (!isNonEmptyString(purpose)) {
+    return invalid('bad-request', 'merge purpose must be a non-empty string');
+  }
+  const briefBody = value['briefBody'];
+  if (!isNonEmptyString(briefBody)) {
+    return invalid('bad-request', 'merge briefBody must be a non-empty string (merge briefs are mandatory, blueprint §5)');
+  }
+  const workstreamId = value['workstreamId'];
+  if (workstreamId !== undefined && !isLineageIdSegment(workstreamId)) {
+    return invalid('bad-request', 'merge workstreamId malformed');
+  }
+  return valid({
+    parents: parents as string[],
+    accountLabel,
+    backend,
+    cwd,
+    purpose,
+    briefBody,
+    ...(workstreamId !== undefined ? { workstreamId } : {}),
+  });
+}
+
+/**
+ * Validate an inbound `workstream` payload on the BROKER side. The only
+ * registered client payload (besides the generic `replay-request`, which the
+ * gateway routes FIRST) is the merge request; anything else answers
+ * `bad-request` (the approvals-client precedent — clients send exactly one
+ * verb-shaped payload on a fan-out channel).
+ */
+export function validateWorkstreamClientMessage(
+  value: unknown,
+): ValidationResult<WorkstreamClientPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'workstream message must be an object');
+  const kind = value['kind'];
+  if (kind !== 'workstream-merge-request') {
+    return invalid(
+      'bad-request',
+      `unknown workstream client kind ${JSON.stringify(kind)} (clients send workstream-merge-request)`,
+    );
+  }
+  const mergeId = value['mergeId'];
+  if (typeof mergeId !== 'string' || !MERGE_ID_RE.test(mergeId)) {
+    return invalid('bad-request', `workstream-merge-request mergeId must match ${MERGE_ID_RE.source}`);
+  }
+  const params = validateWorkstreamMergeParams(value['params']);
+  if (!params.ok) return params;
+  return valid({ kind: 'workstream-merge-request', mergeId, params: params.value });
 }

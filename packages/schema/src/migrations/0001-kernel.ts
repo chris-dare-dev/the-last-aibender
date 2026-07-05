@@ -24,6 +24,8 @@
 
 import type { Migration } from '../index.js';
 
+import { MIGRATION_0003_LINEAGE } from './0003-lineage.js';
+
 export const MIGRATION_0001_KERNEL: Migration = {
   id: 1,
   name: 'kernel-tables-init',
@@ -100,7 +102,13 @@ CREATE INDEX resume_ledger_native_idx ON resume_ledger (native_session_id)
 };
 
 /**
- * The full ordered migration list for the kernel database. M3/M4/M5 append
- * here (events, X4, pipelines) via ICR — never reorder, never edit 0001.
+ * The full ordered migration list for the kernel database. Appended per
+ * milestone (never reorder, never edit a frozen migration): 0001 = M1 kernel
+ * tables; 0003 = the M4 [X4] lineage tables (0002 is the events store on the
+ * SEPARATE collector database — EVENTS_STORE_MIGRATIONS; ids stay repo-wide
+ * unique). M5 pipeline tables append here via ICR.
  */
-export const KERNEL_MIGRATIONS: readonly Migration[] = Object.freeze([MIGRATION_0001_KERNEL]);
+export const KERNEL_MIGRATIONS: readonly Migration[] = Object.freeze([
+  MIGRATION_0001_KERNEL,
+  MIGRATION_0003_LINEAGE,
+]);

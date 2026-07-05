@@ -16,7 +16,7 @@
  *     history-drift rejection; migrate.ts)
  *   - migration 0001: resume_ledger + account_profiles + schema_meta
  *   - kernel accessors + the resume-ledger state machine (kernel.ts)
- * Frozen at M3 (this freeze):
+ * Frozen at M3:
  *   - migration 0002: events + quota_snapshots + session_outcomes + prices
  *     (blueprint §6.2), applied to the SEPARATE collector-owned database
  *     (`~/.aibender/db/events.db`) via the EVENTS_STORE_MIGRATIONS sibling
@@ -24,8 +24,17 @@
  *   - events accessors: validated insert path with (backend, raw_ref) dedupe,
  *     identity-shape screen [X2], Cost Explorer cost_actual_usd backfill,
  *     quota/outcome dedupe, override-wins price pinning (events.ts)
- * Lands later (each via ICR at its milestone): M4 X4 tables (kernel db),
- * M5 pipeline tables.
+ * Frozen at M4 (this freeze):
+ *   - migration 0003: workstream / session_node / session_edge / brief
+ *     (blueprint §5) — appended to KERNEL_MIGRATIONS: the lineage ledger
+ *     lives in the KERNEL database (decision recorded in sqlite-ddl.md §8.1;
+ *     edges are recorded at action time by the kernel path, and the
+ *     SessionIdResolver seam joins resume_ledger + session_node)
+ *   - lineage accessors (lineage.ts): harness-ids-primary, write-once native
+ *     id backfill, the edge from/import + handoff-brief matrices, the ATOMIC
+ *     recordMerge write path (one new node + N merge_parent edges), the
+ *     detached-HEAD bucket queries, identity screen on naming columns [X2]
+ * Lands later (via ICR): M5 pipeline tables.
  *
  * Field-tag convention (consumed by @aibender/shared redaction filters):
  * columns carrying sensitive material are declared in KERNEL_FIELD_TAGS with
@@ -117,6 +126,8 @@ export { KERNEL_MIGRATIONS, MIGRATION_0001_KERNEL } from './migrations/0001-kern
 
 export { EVENTS_STORE_MIGRATIONS, MIGRATION_0002_EVENTS } from './migrations/0002-events.js';
 
+export { MIGRATION_0003_LINEAGE } from './migrations/0003-lineage.js';
+
 export {
   ACTIVE_SESSION_STATES,
   IllegalTransitionError,
@@ -136,6 +147,29 @@ export {
   type ResumeLedgerStore,
   type SchemaMetaStore,
 } from './kernel.js';
+
+export {
+  LINEAGE_FIELD_TAGS,
+  LineageNodeNotFoundError,
+  LineageStoreError,
+  createLineageStore,
+  type BriefRow,
+  type BriefsStore,
+  type LineageStore,
+  type LineageStoreOptions,
+  type NewBriefRow,
+  type NewSessionEdgeRow,
+  type NewSessionNodeRow,
+  type NewWorkstreamRow,
+  type RecordMergeInput,
+  type RecordMergeResult,
+  type SessionEdgeRow,
+  type SessionEdgesStore,
+  type SessionNodeRow,
+  type SessionNodesStore,
+  type WorkstreamRow,
+  type WorkstreamsStore,
+} from './lineage.js';
 
 export {
   EVENTS_FIELD_TAGS,
@@ -187,6 +221,7 @@ import {
   type ResumeLedgerStore,
   type SchemaMetaStore,
 } from './kernel.js';
+import { createLineageStore, type LineageStore } from './lineage.js';
 import { createMigrationRunner } from './migrate.js';
 import { KERNEL_MIGRATIONS } from './migrations/0001-kernel.js';
 import { EVENTS_STORE_MIGRATIONS } from './migrations/0002-events.js';
@@ -199,6 +234,8 @@ export interface KernelStore {
   readonly resumeLedger: ResumeLedgerStore;
   readonly accountProfiles: AccountProfilesStore;
   readonly schemaMeta: SchemaMetaStore;
+  /** M4: the [X4] lineage ledger (migration 0003 — same database, see lineage.ts). */
+  readonly lineage: LineageStore;
   close(): void;
 }
 
@@ -223,6 +260,7 @@ export async function openKernelStore(options: OpenKernelStoreOptions): Promise<
     resumeLedger: createResumeLedgerStore(driver, storeOptions),
     accountProfiles: createAccountProfilesStore(driver, storeOptions),
     schemaMeta: createSchemaMetaStore(driver),
+    lineage: createLineageStore(driver),
     close: () => driver.close(),
   };
 }

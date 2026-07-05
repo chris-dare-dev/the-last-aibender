@@ -51,11 +51,13 @@ import {
   validatePtyClientMessage,
   validateQuotaSnapshot,
   validateTranscriptPayload,
+  validateWorkstreamClientMessage,
+  validateWorkstreamServerPayload,
   type ErrorCode,
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M3';
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M4';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -86,7 +88,10 @@ export type GoldenWsStage =
   | 'context-graph-payload'
   | 'replay-request'
   // M3 freeze stage -----------------------------------------------------------
-  | 'events-payload';
+  | 'events-payload'
+  // M4 freeze stages ----------------------------------------------------------
+  | 'workstream-payload'
+  | 'workstream-client-message';
 
 export type GoldenWsExpectation =
   | { readonly valid: true }
@@ -159,12 +164,64 @@ function transcriptFrame(sessionId: string, seq: number, payload: unknown): stri
 }
 
 function staticFrame(
-  channel: 'events' | 'quota' | 'approvals' | 'context-graph',
+  channel: 'events' | 'quota' | 'approvals' | 'context-graph' | 'workstream',
   seq: number,
   payload: unknown,
 ): string {
   return JSON.stringify({ stream: channel, channel, seq, payload });
 }
+
+// Shared M4 workstream fixture records (synthesized, [X2]).
+const GOLDEN_WS_NODE = {
+  kind: 'workstream-node',
+  sessionId: 'ses_fake_1',
+  workstreamId: 'ws_golden',
+  backend: 'claude_code',
+  account: 'MAX_A',
+  state: 'running',
+  origin: 'harness',
+  confidence: 'recorded',
+  displayName: 'golden node',
+  cwd: '/synthetic/workspace',
+  tokensIn: 1200,
+  tokensOut: 340,
+  costEstimatedUsd: 0.02,
+  createdAt: 90100000,
+  lastActiveAt: 90200000,
+} as const;
+
+const GOLDEN_WS_EDGE = {
+  kind: 'workstream-edge',
+  edgeId: 'edg_fake_1',
+  fromSessionId: 'ses_fake_1',
+  toSessionId: 'ses_fake_2',
+  edgeType: 'continue',
+  confidence: 'recorded',
+  ts: 90300000,
+} as const;
+
+const GOLDEN_WS_SUMMARY = {
+  workstreamId: 'ws_golden',
+  title: 'golden workstream',
+  status: 'active',
+  tags: ['golden'],
+  nodeCount: 2,
+  updatedAt: 90300000,
+} as const;
+
+const GOLDEN_WS_MERGE_REQUEST = {
+  kind: 'workstream-merge-request',
+  mergeId: 'mrg_01',
+  params: {
+    parents: ['ses_fake_1', 'ses_fake_2'],
+    accountLabel: 'MAX_A',
+    backend: 'claude_code',
+    cwd: '/synthetic/workspace',
+    purpose: 'golden merge',
+    briefBody: 'merge brief: shared goal; conflicts surfaced explicitly.',
+    workstreamId: 'ws_golden',
+  },
+} as const;
 
 const FULL_STATUS = {
   sessionId: 'ses_fake_1',
@@ -1729,6 +1786,385 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     notes: 'the expiry-vs-click race is NORMAL — never conflated with malformed traffic',
   },
 
+  // ==== M4 freeze: workstream channel — broker → client =========================
+  {
+    name: 'workstream-list-snapshot-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 0, {
+      kind: 'workstream-list-snapshot',
+      capturedAt: 90000000,
+      workstreams: [GOLDEN_WS_SUMMARY],
+      detachedNodeCount: 1,
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'the workstream rail: summaries + the detached-HEAD orphan count',
+  },
+  {
+    name: 'workstream-detail-snapshot-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 1, {
+      kind: 'workstream-detail-snapshot',
+      capturedAt: 90000000,
+      scope: 'workstream',
+      workstream: GOLDEN_WS_SUMMARY,
+      nodes: [GOLDEN_WS_NODE],
+      edges: [GOLDEN_WS_EDGE],
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'workstream-detail-detached-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 2, {
+      kind: 'workstream-detail-snapshot',
+      capturedAt: 90000000,
+      scope: 'detached',
+      nodes: [
+        {
+          kind: 'workstream-node',
+          sessionId: 'ses_fake_ext',
+          backend: 'opencode',
+          account: 'AWS_DEV',
+          state: 'external',
+          origin: 'reconciled',
+          confidence: 'inferred',
+          createdAt: 90100000,
+        },
+      ],
+      edges: [],
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes:
+      'the detached-HEAD bucket: reconciled inferred-confidence orphans, NO workstream summary ' +
+      '(scope matrix)',
+  },
+  {
+    name: 'workstream-node-upsert-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 3, GOLDEN_WS_NODE),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'node events are UPSERTS keyed on sessionId (add AND attribute change)',
+  },
+  {
+    name: 'workstream-edge-continue-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 4, GOLDEN_WS_EDGE),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'edge events are APPENDS keyed on edgeId — edges are immutable once recorded',
+  },
+  {
+    name: 'workstream-edge-import-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 5, {
+      kind: 'workstream-edge',
+      edgeId: 'edg_fake_2',
+      toSessionId: 'ses_fake_1',
+      edgeType: 'import',
+      confidence: 'inferred',
+      ts: 90300000,
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'import edges have NO in-graph parent — fromSessionId is FORBIDDEN here',
+  },
+  {
+    name: 'workstream-brief-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 6, {
+      kind: 'workstream-brief',
+      briefId: 'br_fake_1',
+      briefKind: 'session-end',
+      body: 'continuation brief: /synthetic/workspace, sessions ses_fake_1',
+      sourceSessionIds: ['ses_fake_1'],
+      provenance: 'native-summary',
+      createdAt: 90400000,
+      workstreamId: 'ws_golden',
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'brief bodies carry paths + session ids + labels only [X2] (producer duty)',
+  },
+  {
+    name: 'workstream-branch-advisory-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 7, {
+      kind: 'branch-advisory',
+      sessionId: 'ses_fake_1',
+      contextUsedPct: 71.5,
+      ts: 90500000,
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'the context-pressure "branch now" proposal (~70%, blueprint §5)',
+  },
+  {
+    name: 'workstream-merge-resolved-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 8, {
+      kind: 'workstream-merge-resolved',
+      mergeId: 'mrg_01',
+      sessionId: 'ses_fake_3',
+      briefId: 'br_fake_2',
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes: 'merge success fans out to every client, correlated by mergeId',
+  },
+  {
+    name: 'workstream-unknown-kind-tolerated',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 9, { kind: 'm5-pipeline-lens', lens: { runs: 1 } }),
+    stage: 'workstream-payload',
+    expect: { valid: true },
+    notes:
+      'the frozen forward-tolerant reader rule, applied to workstream exactly as events §13.3: ' +
+      'M5 kinds land without breaking M4 clients — decode opaque, ignore',
+  },
+  {
+    name: 'workstream-payload-missing-kind',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 10, { workstreams: [] }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'tolerance requires a non-empty string kind — kindless payloads are malformed',
+  },
+  {
+    name: 'workstream-node-native-id-rejected',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 11, { ...GOLDEN_WS_NODE, nativeSessionId: 'fake-native-0' }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes:
+      '[X2] design pin: native ids NEVER ride the workstream channel — a payload that even ' +
+      'CARRIES the key is rejected (the context-touch account-key precedent)',
+  },
+  {
+    name: 'workstream-node-pairing-violation',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 12, { ...GOLDEN_WS_NODE, account: 'AWS_DEV' }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'workstream-node-unknown-state',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 13, { ...GOLDEN_WS_NODE, state: 'spawning' }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'node states are the LINEAGE enum — resume-ledger process states are a different axis',
+  },
+  {
+    name: 'workstream-edge-unknown-type',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 14, { ...GOLDEN_WS_EDGE, edgeType: 'rebase' }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'the edge vocabulary is CLOSED: continue|fork|merge_parent|compact|sidechain|handoff|import|workflow',
+  },
+  {
+    name: 'workstream-edge-missing-from',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 15, {
+      kind: 'workstream-edge',
+      edgeId: 'edg_fake_3',
+      toSessionId: 'ses_fake_2',
+      edgeType: 'continue',
+      confidence: 'recorded',
+      ts: 90300000,
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'fromSessionId is REQUIRED for every edge type except import',
+  },
+  {
+    name: 'workstream-edge-import-with-from',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 16, { ...GOLDEN_WS_EDGE, edgeType: 'import' }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'workstream-edge-handoff-without-brief',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 17, { ...GOLDEN_WS_EDGE, edgeType: 'handoff' }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'handoff briefs are MANDATORY — context travels by brief (blueprint §5)',
+  },
+  {
+    name: 'workstream-detail-scope-matrix-violation',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 18, {
+      kind: 'workstream-detail-snapshot',
+      capturedAt: 90000000,
+      scope: 'detached',
+      workstream: GOLDEN_WS_SUMMARY,
+      nodes: [],
+      edges: [],
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'scope detached FORBIDS the workstream summary (the approvals §10.1 matrix precedent)',
+  },
+  {
+    name: 'workstream-brief-empty-sources',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 19, {
+      kind: 'workstream-brief',
+      briefId: 'br_fake_1',
+      briefKind: 'merge',
+      body: 'merge brief body',
+      sourceSessionIds: [],
+      provenance: 'refined',
+      createdAt: 90400000,
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'workstream-branch-advisory-pct-out-of-range',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('workstream', 20, {
+      kind: 'branch-advisory',
+      sessionId: 'ses_fake_1',
+      contextUsedPct: 120,
+      ts: 90500000,
+    }),
+    stage: 'workstream-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'honesty pin: contextUsedPct is 0..100, validated like quota usedPct',
+  },
+
+  // ==== M4 freeze: workstream channel — client → broker =========================
+  {
+    name: 'workstream-merge-request-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 0, GOLDEN_WS_MERGE_REQUEST),
+    stage: 'workstream-client-message',
+    expect: { valid: true },
+    notes:
+      'THE merge verb: one new node with N merge_parent edges seeded by a conflict-surfacing ' +
+      'brief. A broker with no lineage engine composed answers the RUNTIME error ' +
+      'session-not-found (parents unknown there) — the corpus pins the VALIDATION verdict.',
+  },
+  {
+    name: 'workstream-replay-request-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 1, {
+      kind: 'replay-request',
+      channel: 'workstream',
+      fromSeq: 0,
+    }),
+    stage: 'replay-request',
+    expect: { valid: true },
+    notes: 'workstream joined the replayable fan-out set at M4',
+  },
+  {
+    name: 'workstream-merge-single-parent',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 2, {
+      ...GOLDEN_WS_MERGE_REQUEST,
+      params: { ...GOLDEN_WS_MERGE_REQUEST.params, parents: ['ses_fake_1'] },
+    }),
+    stage: 'workstream-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'merge requires 2..16 parents',
+  },
+  {
+    name: 'workstream-merge-duplicate-parents',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 3, {
+      ...GOLDEN_WS_MERGE_REQUEST,
+      params: { ...GOLDEN_WS_MERGE_REQUEST.params, parents: ['ses_fake_1', 'ses_fake_1'] },
+    }),
+    stage: 'workstream-client-message',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'workstream-merge-pairing-violation',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 4, {
+      ...GOLDEN_WS_MERGE_REQUEST,
+      params: { ...GOLDEN_WS_MERGE_REQUEST.params, backend: 'opencode' },
+    }),
+    stage: 'workstream-client-message',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'workstream-merge-blank-brief',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 5, {
+      ...GOLDEN_WS_MERGE_REQUEST,
+      params: { ...GOLDEN_WS_MERGE_REQUEST.params, briefBody: '' },
+    }),
+    stage: 'workstream-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'merge briefs are MANDATORY (blueprint §5: merge = synthesis, not concatenation)',
+  },
+  {
+    name: 'workstream-client-unknown-kind',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('workstream', 6, GOLDEN_WS_NODE),
+    stage: 'workstream-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes:
+      'clients send exactly workstream-merge-request (+ the generic replay-request) — the ' +
+      'approvals-channel precedent; server payload kinds from a client are rejected',
+  },
+
+  // ==== M4 freeze: pushed error for the new code =================================
+  {
+    name: 'pushed-error-workstream-not-found',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: controlFrame(5, {
+      kind: 'error',
+      code: 'workstream-not-found',
+      message: 'merge request named an unknown workstream',
+      retryable: false,
+      correlatesTo: 'mrg_01',
+      channel: 'workstream',
+    }),
+    stage: 'error-payload',
+    expect: { valid: true },
+    notes:
+      'the merge verb error contract: failures answer PUSHED errors with correlatesTo=mergeId; ' +
+      'unknown workstreamId is runtime state, never conflated with malformed traffic',
+  },
+
   // ---- binary PTY frames ---------------------------------------------------------
   {
     name: 'pty-frame-output-valid',
@@ -1833,15 +2269,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * Route one fixture through the frozen protocol validators exactly the way
  * the gateway's routeTextFrame/routeBinaryFrame (and the FE client's inbound
  * path) do: json-parse → envelope → channel/direction-specific validator.
- * Routing order on non-control JSON channels (M2, closed at M3):
+ * Routing order on non-control JSON channels (M2, closed at M3, extended by
+ * the M4 workstream channel):
  *   1. `pty.<sid>` → pty flow-control validator (M1, unchanged);
  *   2. client → broker `replay-request` on a replayable channel → replay
- *      validator;
- *   3. client → broker on `approvals` → decision validator; any other
- *      client payload on a broker→client channel → channel policy reject;
- *   4. broker → client → the channel's payload validator — including
- *      `events` since M3 (event-summary + read-model snapshots; unknown
- *      kinds valid-and-ignored by the frozen forward-tolerant reader rule).
+ *      validator (incl. `workstream` since M4);
+ *   3. client → broker on `approvals` → decision validator; on `workstream`
+ *      → merge-request validator (M4); any other client payload on a
+ *      broker→client channel → channel policy reject;
+ *   4. broker → client → the channel's payload validator — `events` since
+ *      M3 and `workstream` since M4 (unknown kinds valid-and-ignored by the
+ *      frozen forward-tolerant reader rule on both).
  */
 export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayResult {
   if (fixture.kind === 'binary') {
@@ -1904,6 +2342,13 @@ export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayR
         ? { valid: true, stage: 'approvals-client-message' }
         : { valid: false, code: decision.code, stage: 'approvals-client-message' };
     }
+    // M4: workstream is the second one (merge requests).
+    if (channel === 'workstream') {
+      const merge = validateWorkstreamClientMessage(payload);
+      return merge.ok
+        ? { valid: true, stage: 'workstream-client-message' }
+        : { valid: false, code: merge.code, stage: 'workstream-client-message' };
+    }
     // Everything else stays broker→client only.
     return { valid: false, code: 'bad-request', stage: 'channel-policy' };
   }
@@ -1932,6 +2377,14 @@ export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayR
     return transcript.ok
       ? { valid: true, stage: 'transcript-payload' }
       : { valid: false, code: transcript.code, stage: 'transcript-payload' };
+  }
+
+  // workstream (M4): the lineage union, forward-tolerant on unknown kinds.
+  if (channel === 'workstream') {
+    const workstream = validateWorkstreamServerPayload(payload);
+    return workstream.ok
+      ? { valid: true, stage: 'workstream-payload' }
+      : { valid: false, code: workstream.code, stage: 'workstream-payload' };
   }
 
   // events (M3): the frozen payload union, forward-tolerant on unknown kinds.

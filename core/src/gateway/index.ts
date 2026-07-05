@@ -54,6 +54,7 @@ export type {
   GatewayPtySession,
   TranscriptSource,
   Unsubscribe,
+  WorkstreamEnginePort,
 } from './ports.js';
 
 export {

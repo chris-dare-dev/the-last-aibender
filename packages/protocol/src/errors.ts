@@ -14,6 +14,8 @@
  * record: docs/contracts/ws-protocol.md.
  * Amendments: M2 freeze — `approval-not-pending` added (approvals slice);
  * `watermark-out-of-range` doc widened to cover JSON channel replay.
+ * M4 freeze — `workstream-not-found` added (the merge-request verb's
+ * unknown-workstream failure; ws-protocol.md §16, amendment-recorded).
  * ============================================================================
  */
 
@@ -49,6 +51,12 @@ export const ERROR_CODES = Object.freeze([
    * resolved, expired). A NORMAL race, not malformed traffic (M2 freeze).
    */
   'approval-not-pending',
+  /**
+   * A workstream-merge-request named a workstreamId with no workstream row
+   * (M4 freeze). Runtime state, not malformed traffic — parallels
+   * `session-not-found` on the lineage-entity axis.
+   */
+  'workstream-not-found',
   /** Binary PTY frame exceeds PTY_FRAME_MAX_PAYLOAD_BYTES or is malformed. */
   'oversized-frame',
   /**

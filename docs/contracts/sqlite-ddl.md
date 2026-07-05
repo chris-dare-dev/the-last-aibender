@@ -1,16 +1,17 @@
 # SQLite DDL contract — harness ledgers
 
-> ## 🔒 FROZEN-M1 (kernel slice) · FROZEN-M3 (events slice) — 2026-07-04
+> ## 🔒 FROZEN-M1 (kernel slice) · FROZEN-M3 (events slice) · FROZEN-M4 (lineage slice) — 2026-07-04
 > **Owner: BE-ORCH.** After this banner, frozen sections change **only**
 > through an interface change request ([docs/contracts/icr/](icr/README.md)).
 > This contract is **amended per milestone** (plan §3): M3 appended the
-> events store (§7, this freeze), M4 appends the X4 workstream tables, M5
-> the pipeline tables — each amendment lands as a NEW migration (never an
-> edit to a frozen one) plus a new section here with its own freeze banner.
+> events store (§7), M4 appended the X4 lineage tables (§8, this freeze),
+> M5 appends the pipeline tables — each amendment lands as a NEW migration
+> (never an edit to a frozen one) plus a new section here with its own
+> freeze banner.
 >
-> The machine-checkable half is `packages/schema` (migrations 0001/0002 +
-> accessors). **This document is the prose of record when the two disagree —
-> file an ICR, never a silent divergence.**
+> The machine-checkable half is `packages/schema` (migrations 0001/0002/0003
+> + accessors). **This document is the prose of record when the two disagree
+> — file an ICR, never a silent divergence.**
 
 Blueprint anchors: §4.1 (resume ledger), §6.2 (one SQLite/WAL store), plan §3
 (freeze schedule). State-machine mechanics were proven by SPIKE-D (vii): real
@@ -219,8 +220,8 @@ No DDL or transition-table change — this documents which component proves the
 
 | Milestone | Tables (blueprint anchor) | Status |
 |---|---|---|
-| M3 | `events`, `quota_snapshots`, `session_outcomes`, `prices` (§6.2) | **LANDED — §7 (this freeze), migration 0002 on the events-store sibling list** |
-| M4 | `workstream`, `session_node`, `session_edge`, `brief` (§5) | reserved |
+| M3 | `events`, `quota_snapshots`, `session_outcomes`, `prices` (§6.2) | **LANDED — §7, migration 0002 on the events-store sibling list** |
+| M4 | `workstream`, `session_node`, `session_edge`, `brief` (§5) | **LANDED — §8 (this freeze), migration 0003 on KERNEL_MIGRATIONS** |
 | M5 | workflow `runs`, `steps`, memoization journal (§7 of the blueprint) | reserved |
 
 Each lands as migration 000N appended to `KERNEL_MIGRATIONS` (or a sibling
@@ -411,7 +412,197 @@ an operator override); an `override` upsert always wins.
 screen — epoch values inside JSON legitimately contain long digit runs —
 and redacted downstream instead). No events-store column is `secret`.
 
-## 8. Amendment record
+## 8. Migration 0003 `lineage-tables-init` — the [X4] workstream lineage ledger — FROZEN (M4)
+
+Blueprint §5 exactly (findings x4-workstreams Option B): `workstream` +
+`session_node` + `session_edge` + `brief`. Machine-checkable half:
+`packages/schema/src/migrations/0003-lineage.ts` + accessors in
+`packages/schema/src/lineage.ts`. Wire counterpart:
+[ws-protocol.md §16](ws-protocol.md) (the `workstream` channel); seam
+counterpart: ws-protocol.md §15 (`LineageRecorder` / `SessionIdResolver`).
+
+### 8.1 KERNEL DATABASE (the db-placement decision, made at this freeze)
+
+Migration 0003 **appends to `KERNEL_MIGRATIONS`** — the lineage ledger lives
+in the KERNEL database (`~/.aibender/db/kernel.db`), NOT in the collector's
+events database. Why:
+
+1. **Same commit boundary as the actions being recorded.** Edges are
+   recorded AT ACTION TIME by the same kernel code path that writes
+   resume-ledger rows (ws-protocol.md §15.1); one database means one WAL
+   transaction scope and real FOREIGN KEYs between `session_edge`,
+   `session_node`, and `brief`.
+2. **Write rate is the resume-ledger rate, not ingest rate.** The §7.1
+   contention argument that forced the events store into its own file
+   (collector high-volume ingest vs. latency-critical row-before-spawn)
+   does not apply: lineage writes happen per session ACTION and per
+   reconciler cycle.
+3. **The resolver seam is a single-database join.** `SessionIdResolver`
+   (ws-protocol.md §15.2) resolves native → harness ids over
+   `resume_ledger.native_session_id` + `session_node.native_session_id` —
+   both indexed, one query plan, no cross-file ATTACH.
+
+Migration ids stay repo-wide unique: 0001 = kernel (M1), 0002 = events
+(M3, sibling list), 0003 = lineage (M4, kernel list). The kernel db's
+`schema_meta` gains `('lineage_ddl_version','1')` and
+`('lineage_frozen_milestone','M4')`; the M1 seeds (incl.
+`frozen_milestone = 'M1'`) are deliberately untouched — each slice gets its
+own keys (the events-db precedent).
+
+**Timestamps (M4 decision):** lineage times are ACTION/EVENT times rendered
+on the FE timeline, so they are **epoch-ms INTEGERs** (`*_ms`, the migration
+0002 wire-aligned precedent). The §3 "ISO-8601 throughout" pin remains
+scoped to the M1 kernel tables.
+
+### 8.2 `workstream`
+
+```sql
+CREATE TABLE workstream (
+  id             TEXT PRIMARY KEY CHECK (length(id) > 0),        -- harness id, newId('ws')
+  title          TEXT NOT NULL CHECK (length(trim(title)) > 0),  -- identifier-free [X2]
+  description    TEXT,
+  status         TEXT NOT NULL DEFAULT 'active'
+                 CHECK (status IN ('active','paused','merged','archived','abandoned')),
+  tags           TEXT,                                           -- JSON array of tag strings
+  created_at_ms  INTEGER NOT NULL CHECK (created_at_ms >= 0),
+  updated_at_ms  INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+) STRICT;
+```
+
+### 8.3 `session_node`
+
+**Harness ids PRIMARY** (blueprint §5 "harness id, never the native id"):
+`session_node.id` IS the harness session id — the resume-ledger id for
+kernel-launched sessions (one id per session across ledger, wire channels,
+and lineage), reconciler-minted (same charset) for external sessions.
+Deliberately NOT a foreign key into `resume_ledger`: reconciled nodes have
+no ledger row. The native id is a nullable ATTRIBUTE with write-once
+backfill (the resume-ledger rule; lmstudio sessions are harness-native and
+never get one).
+
+```sql
+CREATE TABLE session_node (
+  id                 TEXT PRIMARY KEY CHECK (length(id) > 0),
+  workstream_id      TEXT REFERENCES workstream(id),             -- NULL = detached-HEAD bucket
+  backend            TEXT NOT NULL CHECK (backend IN ('claude_code','opencode','lmstudio')),
+  account            TEXT NOT NULL
+                     CHECK (account IN ('MAX_A','MAX_B','ENT','AWS_DEV','LOCAL')),
+  native_session_id  TEXT,          -- ATTRIBUTE, nullable; write-once backfill
+  native_scope       TEXT,          -- encoded-cwd / opencode project id — MUTABLE (/cd moves it)
+  transcript_ref     TEXT,
+  cwd                TEXT CHECK (cwd IS NULL OR cwd LIKE '/%'),
+  git_branch         TEXT,
+  worktree           TEXT,
+  display_name       TEXT,
+  first_prompt_hash  TEXT,
+  state              TEXT NOT NULL
+                     CHECK (state IN ('running','idle','completed','abandoned','unresumable','external')),
+  origin             TEXT NOT NULL CHECK (origin IN ('harness','reconciled')),
+  confidence         TEXT NOT NULL CHECK (confidence IN ('recorded','inferred')),
+  tokens_in          INTEGER CHECK (tokens_in IS NULL OR tokens_in >= 0),
+  tokens_out         INTEGER CHECK (tokens_out IS NULL OR tokens_out >= 0),
+  cost_estimated_usd REAL CHECK (cost_estimated_usd IS NULL OR cost_estimated_usd >= 0),
+  created_at_ms      INTEGER NOT NULL CHECK (created_at_ms >= 0),
+  last_active_at_ms  INTEGER CHECK (last_active_at_ms IS NULL OR last_active_at_ms >= 0),
+  CHECK ((account IN ('MAX_A','MAX_B','ENT') AND backend = 'claude_code')
+      OR (account = 'AWS_DEV' AND backend = 'opencode')
+      OR (account = 'LOCAL'   AND backend = 'lmstudio'))
+) STRICT;
+CREATE INDEX session_node_workstream_idx ON session_node (workstream_id)
+  WHERE workstream_id IS NOT NULL;
+CREATE INDEX session_node_native_idx     ON session_node (native_session_id)
+  WHERE native_session_id IS NOT NULL;
+CREATE INDEX session_node_state_idx      ON session_node (state);
+```
+
+Node **confidence** is `recorded | inferred` (the frozen enum): harness
+nodes are `recorded` by construction; reconciler-registered external
+sessions land as `inferred`-confidence orphans in the detached-HEAD bucket
+(`workstream_id IS NULL`, `origin = 'reconciled'`) — the M4 DoD row.
+`origin` names WHO created the row; `confidence` names HOW SURE the lineage
+is (a reconciled node backed by a native first-class lineage column, e.g.
+opencode `parent_id`, may still be `recorded`). Node `state` is the LINEAGE
+enum, a different axis from the resume-ledger process states (§4).
+
+### 8.4 `brief`
+
+Kinds are named by the AUTOMATION MOMENT (hooks-contract.md §7.1):
+`session-end` (auto continuation brief) · `pre-compact` (full-fidelity
+snapshot) · `session-start-injection` (the injected body) · `merge` (the
+conflict-surfacing merge brief). The blueprint's naming maps onto these
+(continuation→session-end, compaction_capture→pre-compact, handoff briefs
+are session-end briefs carried by a `handoff` edge, merge→merge).
+Provenance is the qwen-produces/Claude-reviews split: `native-summary`
+(reuse the transcript's own compaction summary) · `local-draft` ·
+`refined`.
+
+```sql
+CREATE TABLE brief (
+  id             TEXT PRIMARY KEY CHECK (length(id) > 0),        -- harness id, newId('br')
+  kind           TEXT NOT NULL
+                 CHECK (kind IN ('session-end','pre-compact','session-start-injection','merge')),
+  body_md        TEXT NOT NULL CHECK (length(body_md) > 0),      -- paths+ids+labels only [X2]
+  source_nodes   TEXT NOT NULL CHECK (length(source_nodes) > 0), -- JSON array of session_node ids
+  provenance     TEXT NOT NULL
+                 CHECK (provenance IN ('native-summary','local-draft','refined')),
+  token_count    INTEGER CHECK (token_count IS NULL OR token_count >= 0),
+  created_at_ms  INTEGER NOT NULL CHECK (created_at_ms >= 0)
+) STRICT;
+```
+
+### 8.5 `session_edge`
+
+The edge vocabulary is **exactly** the blueprint §5 set — CHECK-enforced so
+even a bypassing writer cannot land an illegal edge:
+
+```sql
+CREATE TABLE session_edge (
+  id             TEXT PRIMARY KEY CHECK (length(id) > 0),        -- harness id, newId('edg')
+  from_node      TEXT REFERENCES session_node(id),
+  to_node        TEXT NOT NULL REFERENCES session_node(id),
+  edge_type      TEXT NOT NULL
+                 CHECK (edge_type IN ('continue','fork','merge_parent','compact',
+                                      'sidechain','handoff','import','workflow')),
+  brief_id       TEXT REFERENCES brief(id),
+  confidence     TEXT NOT NULL DEFAULT 'recorded'
+                 CHECK (confidence IN ('recorded','inferred')),
+  metadata       TEXT,                                           -- JSON (compactMetadata, checkpoint ref, …)
+  created_at_ms  INTEGER NOT NULL CHECK (created_at_ms >= 0),
+  CHECK (edge_type = 'import' OR from_node IS NOT NULL),   -- from NULL ONLY for imports …
+  CHECK (edge_type != 'import' OR from_node IS NULL),      -- … and imports never carry one
+  CHECK (edge_type != 'handoff' OR brief_id IS NOT NULL)   -- handoff briefs are MANDATORY
+) STRICT;
+CREATE INDEX session_edge_from_idx ON session_edge (from_node) WHERE from_node IS NOT NULL;
+CREATE INDEX session_edge_to_idx   ON session_edge (to_node);
+CREATE INDEX session_edge_type_idx ON session_edge (edge_type);
+```
+
+Rules (accessor-enforced on top of the CHECKs, tested — lineage.ts):
+
+- **A continuation is a CHILD via `continue`, never a sibling**; an
+  in-place resume/recycle is a `continue` SELF-edge (from = to, the M2
+  `ContinuationEdgeEmitter` convention). Every NON-continue type refuses
+  self-edges.
+- **Merge = ONE new node with N `merge_parent` edges (2..16 distinct
+  parents), written atomically** (`recordMerge`: node + edges + the
+  mandatory kind=`merge` brief in one transaction — a crash never leaves a
+  merge node without its parents).
+- Endpoints and briefs must exist (typed error before the FK fires);
+  unknown vocabularies are refused at the accessor AND the CHECK.
+- Kernel-recorded edges default `confidence = 'recorded'` (action time,
+  ws-protocol.md §15.1); reconciler inferences pass `inferred`.
+
+### 8.6 Redaction field tags (lineage slice)
+
+`LINEAGE_FIELD_TAGS`: `cwd`, `native_scope`, `transcript_ref`, `worktree`,
+`body_md`, `metadata` → `identifier` (machine-local paths / path-bearing
+markdown+JSON; exempt from the insert-time identity screen — brief bodies
+legitimately carry absolute paths — and redacted downstream instead).
+Free-text NAMING columns (`title`, `description`, `tags`, `display_name`,
+`git_branch`) pass the §7.2 insert-time identity screen. No lineage column
+is `secret` [X2].
+
+## 9. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
@@ -419,3 +610,4 @@ and redacted downstream instead). No events-store column is `secret`.
 | 2026-07-04 | §4: documented the kernel pid-liveness guard proving the "child death" precondition of `running → resumed` (pid+nonce probe when recorded; SDK stdio-pipe-lifetime reasoning when pid is NULL). No DDL or transition change. | [ICR-0005](icr/icr-0005-pid-liveness-guard.md) |
 | 2026-07-04 | **M3 events-store freeze (§7).** Migration 0002 `events-store-init`: `events` fact table (dedupe UNIQUE (backend, raw_ref); label-enum + label↔backend pairing CHECKs [X2]; four token classes + 5m/1h TTL split + reasoning; `cost_estimated_usd` vs `cost_actual_usd` backfill target; latency/TTFT; tool/skill/agent/mcp attribution; `error_kind` enum; `file_refs`/`raw_ref`) + `quota_snapshots` + `session_outcomes` + `prices` (override-wins pinning). Decisions recorded: SEPARATE collector-owned database `~/.aibender/db/events.db` via the `EVENTS_STORE_MIGRATIONS` sibling list (§7.1, blueprint §6.2 "owned by the collector"; repo-wide-unique migration ids); epoch-ms integers for event-time columns (§7.2, wire-aligned); insert-time identity-shape screen on semantic columns with path/JSON columns `identifier`-tagged instead (§7.2/§7.6). Migration 0001 and KERNEL_MIGRATIONS untouched. | — (M3 freeze; plan §3 schema row) |
 | 2026-07-04 | §7.4 **usage-data mapping clarification** (prose only, NO DDL change; the interpretation question raised in the BE-5 M3 return): facets → `session_outcomes` (the assessment row); session-meta → `events` with `event_type 'session_meta'` (token totals, no outcome — never mirrored into `session_outcomes`, whose `outcome` is NOT NULL by design). Blesses the landed normalizer (core/src/collector/jsonl/usageData.ts). | — (BE-ORCH steward, prose pin) |
+| 2026-07-04 | **M4 lineage freeze (§8).** Migration 0003 `lineage-tables-init`: `workstream` (status enum, JSON tags) + `session_node` (HARNESS id PRIMARY — the resume-ledger id for kernel launches, reconciler-minted for external; native id a nullable write-once ATTRIBUTE; label-enum + pairing CHECKs [X2]; lineage state/origin/confidence enums; mutable `native_scope` for `/cd`; token/cost snapshots) + `brief` (kind session-end·pre-compact·session-start-injection·merge; provenance native-summary·local-draft·refined; body `identifier`-tagged) + `session_edge` (edge_type EXACTLY continue·fork·merge_parent·compact·sidechain·handoff·import·workflow; from/import + handoff-brief CHECK matrices; continue self-edges legal). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§8.1 — action-time recording shares the kernel's commit boundary; lineage writes are resume-ledger-rate; the SessionIdResolver join is single-db; repo-wide-unique migration ids 0001/0002/0003); epoch-ms integers for lineage times (§8.1); accessor-enforced edge legality + ATOMIC `recordMerge` (§8.5); naming-column identity screen + `LINEAGE_FIELD_TAGS` (§8.6). `schema_meta` gains lineage keys, M1 seeds untouched. Migrations 0001/0002 untouched; `openKernelStore` now also hands back the `lineage` accessors. | — (M4 freeze; plan §3 schema row) |

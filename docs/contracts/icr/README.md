@@ -49,6 +49,7 @@ any doc in `docs/contracts/`) changes after its freeze milestone (plan §1.1).
 | [ICR-0008](icr-0008-adapter-fakes.md) | BE-4 adapter fakes (mock OpenCode SSE server, fake LM Studio, fake opencode.db builder) promoted into `@aibender/testkit` | 2026-07-04 |
 | [ICR-0009](icr-0009-kernel-message-tap.md) | Kernel message tap + raw-message retention — the BE-1 transcript-tee seam that unblocks composeBroker's transcript wiring (testkit mirror synced per the ICR-0001 drift rule) | 2026-07-04 |
 | [ICR-0010](icr-0010-collector-fixture-feeds.md) | BE-5 collector fixture feeds promoted into `@aibender/testkit`: fake statusline stdin feed (payload generator + tee writer) + fake OTLP http/json emitter — closes the plan §3 "still to come" list | 2026-07-04 |
+| [ICR-0011](icr-0011-gateway-workstream-slice.md) | M4 workstream-channel seams: gateway `WorkstreamEnginePort` + validated merge routing/`publishWorkstream` (absent-engine degrade) and the FE inbound-router workstream branch — landed by the M4 freeze agent so its own golden corpus replays green on both CI halves (ICR-0009 precedent); FE-ORCH co-sign **pending** | 2026-07-04 |
 
 Post-M2 stewarding also landed (no new ICR numbers): the ICR-0001 drift-rule
 sync (`canUseTool` on testkit's QuerySpec mirror — recorded in ICR-0001's
@@ -97,6 +98,53 @@ surfaces or prose pins recorded in the owning docs):**
   inline, trivially migratable); revisit when a second consumer (FE golden
   store fixtures) materializes.
 
+**Post-M4 build stewarding (BE-ORCH, 2026-07-04 — no new ICR numbers;
+client-side implementations of already-frozen wire surfaces plus non-frozen
+composition/chrome/infra wiring, recorded here per the post-M3 precedent):**
+
+- **GatewayClient merge sender landed** (the FE-6 M4 return's ICR):
+  `sendWorkstreamMergeRequest(request): boolean` on
+  `app/src/lib/ws/wsClient.ts` — the exact `sendApprovalDecision` mirror for
+  the frozen §16.2 client verb (rides the `workstream` channel; false when
+  not connected — the unsendable posture, never a throw). FE-6's
+  `WorkstreamMergeSender` port is now satisfied structurally by the real
+  client (compile-pinned in `wsClient.spec.ts` without a lib→features
+  import); `registerWorkstreams` detects it with no FE-6 change. No wire
+  shape changed — this implements ws-protocol.md §16.2 as frozen.
+- **`CHANNEL.WORKSTREAM` + `CHANNEL.CONTEXT_GRAPH` joined the
+  `replayFromZeroOnFirstConnect` default** (the M3 events-channel precedent):
+  the retained §16.5 list/detail snapshots hydrate the lineage view on the
+  first connect of a broker boot, and the retained context-graph touch
+  window warm-starts the graph island's activity read model after an app
+  restart (bounded + honest — below-floor answers stay the documented
+  harmless `watermark-out-of-range`, §8). Client behavior only; §8 already
+  grants the client one replay-request per replayable channel.
+- **FE composition activated for M4**: `registerGraphIsland(client)` (FE-4)
+  and `registerWorkstreams(client)` (FE-6) wired into `app/src/main.tsx`
+  beside the M3 `registerObservability` call — the graph island binds the
+  context-graph channel per mount and rebuilds its scene on broker restart;
+  the workstream binding + palette verbs register once at boot.
+- **Chrome mount points landed (FE-ORCH ratification recorded here; co-sign
+  rides the M4 gate review):** (a) the one-line additive `IslandSlot` union
+  widening (`'workstreams'`) in `app/src/chrome/islandRegistry.ts` is
+  RATIFIED (FE-6's change, the FE-5/observability M3 precedent — the
+  registry seam is otherwise closed); (b) `WorkstreamsDock` mounts the
+  `workstreams` slot in the LEFT zone below the fleet panel (DESIGN.md §4.1
+  "left — fleet: workstream tree, session list"; the ObservabilityDock
+  pattern verbatim, NO SIGNAL while empty); (c) the work surface gained the
+  GRAPH view toggle (header affordance + `chrome.work.graph.toggle` palette
+  verb, DESIGN.md §6 kill-switch rule) making the FE-4 `graph` slot
+  reachable — the graph view is session-independent and mounts with a
+  pinned `sessionId: undefined` context so selection changes never tear the
+  scene down; token-lint clean, no new animation, no ADR needed (center
+  zone is "active session (terminal/transcript), graph, builder" — §4.1).
+- **SI-5 colima suite wired into the composite**: root `test:infra` gained
+  `infra/colima/tests/run.sh` (headless — PATH stubs + a suite-owned
+  loopback fake; never the real VM) and ci.yml's infra-tests job runs it as
+  test:infra 5/5 (steps renumbered 1/5..5/5; python3 + curl are
+  runner-native). The registry-coupled bats already pin the 13-row
+  live-check registry (`REGISTRY_COUNT=13`).
+
 ## Deferred watch items (BE-ORCH)
 
 - ~~**`events` payload union (M3)**~~ **RESOLVED at the M3 freeze
@@ -144,3 +192,19 @@ surfaces or prose pins recorded in the owning docs):**
   selection/fallback via `onTelemetry` (spike-a clause 7) — route these to
   the collector as env telemetry (identifier-free [X2]); currently only
   captured by tests.
+- **FE-4 soak floor: WebKit pinned-pacing reading (M4 gate, 2026-07-04):**
+  Playwright 1.61 headless WebKit pins rAF at a 60 Hz virtual vsync, making
+  the spike-B p95 ≤ 16.7 ms encoding unpassable for ANY scene (the gate's
+  cold 4-node control measured p95 18.0 ms, identical to the 5k hot run).
+  The pw runner (`app/src/islands/graph/pw/run-pw.ts`) now detects a 60
+  Hz-pinned engine and asserts the verdict's PRIMARY "60 fps sustained /
+  30 fps hard floor" form (fps ≥ 58, <1% >33.3 ms, p95 within vsync
+  jitter); the strict encoding still governs every >60 Hz engine. Full
+  record: [m4-dod.md](../../runbooks/m4-dod.md) D1. Resolution: the T3
+  in-Tauri soak (spike-B "what remains" #1) measures the strict floor under
+  ProMotion/uncapped pacing — flip this item when that run lands.
+- **M4 freeze co-signs (open at the M4 gate):** ws-protocol M4 row (§15/§16)
+  + [ICR-0011](icr-0011-gateway-workstream-slice.md) — FE-ORCH;
+  hooks-contract §7.1 [X4] routing row — SI-ORCH. The M2/M3-era rows were
+  flipped to co-signed at the M4 review (record:
+  [m4-dod.md](../../runbooks/m4-dod.md) §6).

@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { ERROR_CODES, PROTOCOL_FREEZE, decodePtyFrame, encodePtyFrame } from '@aibender/protocol';
+import {
+  ERROR_CODES,
+  PROTOCOL_FREEZE,
+  READ_MODEL_IDS,
+  decodePtyFrame,
+  encodePtyFrame,
+} from '@aibender/protocol';
 
 import { assertSynthesizedSafeText } from './jsonl.js';
 import {
@@ -19,7 +25,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M5');
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M6');
   });
 
   it('every fixture replays to its pinned verdict at its pinned stage', () => {
@@ -172,7 +178,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
 
   // -- M3 freeze additions ------------------------------------------------------
 
-  it('pins a valid read-model snapshot for EVERY §6.3 dashboard lead', () => {
+  it('pins a valid read-model snapshot for EVERY registered read model (M6: +resource-health)', () => {
     const frames = TEXT.filter((f) => f.stage === 'events-payload' && f.expect.valid);
     const seen = new Set<string>();
     for (const fixture of frames) {
@@ -181,20 +187,11 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
         seen.add(payload['readModel']);
       }
     }
-    expect([...seen].sort()).toEqual(
-      [
-        'quota-gauges',
-        'burn-rate',
-        'bedrock-cost',
-        'api-equivalent-usd',
-        'cache-hit-rate',
-        'latency',
-        'health',
-        'skill-leaderboard',
-        'session-outcomes',
-        'local-offload',
-      ].sort(),
-    );
+    // Every registered read model (the ten §6.3 leads + the M6 resource-health
+    // instrument) has at least one valid golden frame — self-updating against
+    // the protocol registry so a future read model cannot land uncovered.
+    expect([...seen].sort()).toEqual([...READ_MODEL_IDS].sort());
+    expect(seen.has('resource-health')).toBe(true);
   });
 
   it('pins the forward-tolerant reader rule as golden bytes (unknown kind = valid)', () => {

@@ -14,13 +14,13 @@ import {
   validateEnvelope,
 } from './index.js';
 
-describe('@aibender/protocol (M4 freeze)', () => {
+describe('@aibender/protocol (M6 freeze)', () => {
   // M0 asserted 'prefreeze'; M1 asserted '1.0.0-m1-core'; M2 asserted
-  // '1.0.0'; M3 asserted '1.1.0'; M4 asserted '1.2.0'. Updated at each freeze
-  // landing — this change IS the M5 freeze.
-  it('imports and self-identifies as FROZEN-M5', () => {
-    expect(PROTOCOL_VERSION).toBe('1.3.0');
-    expect(PROTOCOL_FREEZE).toBe('FROZEN-M5');
+  // '1.0.0'; M3 asserted '1.1.0'; M4 asserted '1.2.0'; M5 asserted '1.3.0'.
+  // Updated at each freeze landing — this change IS the M6 (final) freeze.
+  it('imports and self-identifies as FROZEN-M6', () => {
+    expect(PROTOCOL_VERSION).toBe('1.4.0');
+    expect(PROTOCOL_FREEZE).toBe('FROZEN-M6');
   });
 
   // -- positive ------------------------------------------------------------

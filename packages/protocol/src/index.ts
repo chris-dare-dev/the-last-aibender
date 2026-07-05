@@ -3,6 +3,18 @@
  * aibender-core gateway (BE-3) and every frontend client (FE-2).
  *
  * ============================================================================
+ * FROZEN-M6 (2026-07-05) — owner BE-ORCH, FE-ORCH co-signs. The FINAL Stage-2
+ * freeze. LIGHT by design (supervision is mostly core-internal): the ONE
+ * boundary-crossing addition is the `resource-health` read model (the
+ * supervision/governor instrument, blueprint §11) — an eleventh
+ * `read-model-snapshot` kind on the EXISTING `events` channel carrying pressure
+ * STATE + per-session footprints + shed/recycle notices, labels + numbers only
+ * [X2]. Because `READ_MODEL_IDS` is a CLOSED registry (unknown `readModel`s are
+ * REFUSED, unlike unknown `kind`s which are tolerated), this is a genuine
+ * additive wire bump: `1.3.0` → `1.4.0`, `FROZEN-M5` → `FROZEN-M6`. NO M1–M5
+ * wire shape changed. See docs/contracts/integration-suite.md for the §9.3/§9.4
+ * integration-suite contract-of-record note landed alongside this freeze.
+ *
  * FROZEN-M5 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs. The M5 freeze adds
  * the features-4/5 surfaces (catalog scanner + pipeline engine); every M1–M4
  * shape is carried forward unchanged. Amendments ONLY via ICR
@@ -114,15 +126,17 @@
  */
 
 /**
- * Protocol version. `1.3.0` = the M5 freeze (additive: the pipelines channel +
- * the versioned JSON DAG schema module; `1.2.0` was the M4 freeze, `1.1.0` the
- * M3 freeze, `1.0.0` the M2 full freeze, `1.0.0-m1-core` the M1-CORE freeze).
- * Consumers may assert against {@link PROTOCOL_FREEZE}.
+ * Protocol version. `1.4.0` = the M6 freeze (additive: the eleventh read model
+ * `resource-health` — the supervision/governor instrument, blueprint §11 — on
+ * the existing events channel; `1.3.0` was the M5 freeze (pipelines channel +
+ * DAG schema module), `1.2.0` the M4 freeze, `1.1.0` the M3 freeze, `1.0.0` the
+ * M2 full freeze, `1.0.0-m1-core` the M1-CORE freeze). Consumers may assert
+ * against {@link PROTOCOL_FREEZE}.
  */
-export const PROTOCOL_VERSION = '1.3.0' as const;
+export const PROTOCOL_VERSION = '1.4.0' as const;
 
 /** Freeze marker for runtime assertions and golden fixtures. */
-export const PROTOCOL_FREEZE = 'FROZEN-M5' as const;
+export const PROTOCOL_FREEZE = 'FROZEN-M6' as const;
 
 // FROZEN surfaces (M1-CORE, carried forward) ----------------------------------
 export {
@@ -295,8 +309,14 @@ export {
 } from './events.js';
 
 export {
+  PRESSURE_STATES,
   READ_MODEL_IDS,
+  SHED_ACTIONS,
+  WATCHDOG_BANDS,
+  isPressureState,
   isReadModelId,
+  isShedAction,
+  isWatchdogBand,
   type ApiEquivalentUsdEntry,
   type ApiEquivalentUsdSnapshot,
   type BedrockCostSnapshot,
@@ -309,15 +329,20 @@ export {
   type LatencyEntry,
   type LatencySnapshot,
   type LocalOffloadSnapshot,
+  type PressureState,
   type QuotaGauge,
   type QuotaGaugesSnapshot,
   type ReadModelId,
   type ReadModelSnapshot,
   type ReadModelSnapshotBase,
+  type ResourceHealthSnapshot,
+  type SessionFootprint,
   type SessionOutcomeEntry,
   type SessionOutcomesSnapshot,
-  type SkillLeaderboardEntry,
+  type ShedAction,
+  type ShedNotice,
   type SkillLeaderboardSnapshot,
+  type SkillLeaderboardEntry,
 } from './readModels.js';
 
 export {

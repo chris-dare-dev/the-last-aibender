@@ -218,6 +218,20 @@ describe('validateEventsPayload — read-model snapshots', () => {
       readModel: 'local-offload',
       data: { offloadRatioPct: 22.2, localTokens: 200, totalTokens: 900, windowDays: 7 },
     }),
+    // M6: the eleventh read model — carried through the same union dispatch.
+    'resource-health': snapshot({
+      readModel: 'resource-health',
+      data: {
+        pressureLevel: 2,
+        pressureState: 'amber',
+        freeRamPct: 22.5,
+        swapUsedBytes: 21_474_836_480,
+        residentSessionCount: 1,
+        localModelResidentBytes: 6_500_000_000,
+        sessions: [{ account: 'MAX_A', backend: 'claude_code', slot: 0, footprintMb: 2100, band: 'warn' }],
+        notices: [{ action: 'shed-local-model', at: 90_099_500 }],
+      },
+    }),
   };
 
   for (const id of READ_MODEL_IDS) {
@@ -487,6 +501,8 @@ describe('M3 vocabulary pins', () => {
       'estimate-only',
     ]);
     expect(EVENT_ERROR_KINDS).toEqual(['error', 'retry', 'throttle', 'timeout']);
+    // The ten §6.3 leads are carried forward unchanged; the M6 freeze appends
+    // the eleventh, `resource-health` (the supervision instrument, §11).
     expect(READ_MODEL_IDS).toEqual([
       'quota-gauges',
       'burn-rate',
@@ -498,6 +514,7 @@ describe('M3 vocabulary pins', () => {
       'skill-leaderboard',
       'session-outcomes',
       'local-offload',
+      'resource-health',
     ]);
   });
 });

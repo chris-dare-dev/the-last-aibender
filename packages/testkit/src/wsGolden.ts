@@ -14,7 +14,10 @@
  * `events` payload union (event-summary + every §6.3 read-model snapshot,
  * valid + every invalid class) and pins the frozen FORWARD-TOLERANT READER
  * rule (unknown events kinds are legal-and-ignored). Client payloads on
- * `events` other than `replay-request` still answer `bad-request`.
+ * `events` other than `replay-request` still answer `bad-request`. The M6
+ * extension adds the eleventh read model, `resource-health` (the
+ * supervision/governor instrument, blueprint §11) — valid frames plus every
+ * invalid class — all on the same `events-payload` stage.
  *
  * Every fixture pins:
  *   - the exact frame bytes (text: the UTF-8 string sent as one WS text
@@ -59,7 +62,7 @@ import {
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M5';
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M6';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -1803,6 +1806,250 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     stage: 'events-payload',
     expect: { valid: false, code: 'bad-request' },
     notes: 'tolerance requires a non-empty string kind — kindless payloads are malformed',
+  },
+
+  // ==== M6 freeze: resource-health read model (supervision instrument, §11) ======
+  {
+    name: 'events-readmodel-resource-health-min-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 22, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh', lastIngestAt: 90099000 }],
+      data: {
+        pressureLevel: 0,
+        pressureState: 'normal',
+        freeRamPct: 62.5,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        sessions: [],
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes: 'M6: the eleventh read model — empty sessions/notices is the healthy baseline',
+  },
+  {
+    name: 'events-readmodel-resource-health-full-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 23, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100500,
+      sources: [{ source: 'lmstudio', state: 'lmstudio-down' }],
+      data: {
+        pressureLevel: 4,
+        pressureState: 'red',
+        freeRamPct: 9.5,
+        swapUsedBytes: 27917287424,
+        residentSessionCount: 3,
+        localModelResidentBytes: 0,
+        sessions: [
+          { account: 'MAX_A', backend: 'claude_code', slot: 0, footprintMb: 2100, band: 'ok' },
+          { account: 'MAX_A', backend: 'claude_code', slot: 1, footprintMb: 3200, band: 'warn' },
+          { account: 'AWS_DEV', backend: 'opencode', slot: 0, footprintMb: 1600, band: 'recycle', hibernated: false },
+          { account: 'LOCAL', backend: 'lmstudio', slot: 0, footprintMb: 6400, band: 'ok', hibernated: true },
+        ],
+        notices: [
+          { action: 'shed-local-model', at: 90100400 },
+          { action: 'hibernate-non-account', at: 90100450, account: 'AWS_DEV', backend: 'opencode' },
+          { action: 'recycle-session', at: 90100480, account: 'MAX_A', backend: 'claude_code' },
+        ],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: true },
+    notes:
+      'red pressure with the sacrifice order playing out: local model shed, non-account ' +
+      'hibernated, account session recycled (recycle IS the account continuation path); ' +
+      'lmstudio-down is a first-class freshness state, never an error',
+  },
+  {
+    name: 'events-readmodel-resource-health-pressure-level-overflow',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 24, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 5,
+        pressureState: 'red',
+        freeRamPct: 10,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        sessions: [],
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'macOS pressure level is 0..4 (blueprint §11: amber@2, red@4)',
+  },
+  {
+    name: 'events-readmodel-resource-health-unknown-pressure-state',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 25, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 2,
+        pressureState: 'orange',
+        freeRamPct: 22,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        sessions: [],
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'PRESSURE_STATES is a closed registry: normal|amber|red',
+  },
+  {
+    name: 'events-readmodel-resource-health-unknown-band',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 26, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 0,
+        pressureState: 'normal',
+        freeRamPct: 60,
+        swapUsedBytes: 0,
+        residentSessionCount: 1,
+        sessions: [{ account: 'MAX_A', backend: 'claude_code', slot: 0, footprintMb: 2000, band: 'panic' }],
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'WATCHDOG_BANDS is a closed registry: ok|warn|recycle',
+  },
+  {
+    name: 'events-readmodel-resource-health-session-label-backend-mismatch',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 27, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 0,
+        pressureState: 'normal',
+        freeRamPct: 60,
+        swapUsedBytes: 0,
+        residentSessionCount: 1,
+        sessions: [{ account: 'MAX_A', backend: 'opencode', slot: 0, footprintMb: 2000, band: 'ok' }],
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'the frozen label↔backend pairing applies to per-session footprints too',
+  },
+  {
+    name: 'events-readmodel-resource-health-unknown-shed-action',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 28, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 3,
+        pressureState: 'amber',
+        freeRamPct: 20,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        sessions: [],
+        notices: [{ action: 'kill-everything', at: 90100000 }],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'SHED_ACTIONS is the closed [X1] sacrifice-order registry + recycle',
+  },
+  {
+    name: 'events-readmodel-resource-health-notice-missing-at',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 29, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 2,
+        pressureState: 'amber',
+        freeRamPct: 24,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        sessions: [],
+        notices: [{ action: 'shed-local-model' }],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'a notice is a STATE with a timestamp — at (epoch ms) is required',
+  },
+  {
+    name: 'events-readmodel-resource-health-free-ram-overflow',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 30, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 0,
+        pressureState: 'normal',
+        freeRamPct: 120,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        sessions: [],
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'freeRamPct is a percentage, 0..100',
+  },
+  {
+    name: 'events-readmodel-resource-health-missing-sessions',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('events', 31, {
+      kind: 'read-model-snapshot',
+      readModel: 'resource-health',
+      capturedAt: 90100000,
+      sources: [{ source: 'lmstudio', state: 'fresh' }],
+      data: {
+        pressureLevel: 0,
+        pressureState: 'normal',
+        freeRamPct: 60,
+        swapUsedBytes: 0,
+        residentSessionCount: 0,
+        notices: [],
+      },
+    }),
+    stage: 'events-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'sessions is required (may be empty) — an absent array is malformed, not baseline',
   },
 
   // ==== M2 freeze: pushed errors for the new code ================================

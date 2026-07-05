@@ -73,10 +73,12 @@ import type {
   LatencyEntry,
   QuotaGauge,
   ReadModelSnapshot,
+  SessionFootprint,
   SessionOutcomeEntry,
+  ShedNotice,
   SkillLeaderboardEntry,
 } from './readModels.js';
-import { isReadModelId } from './readModels.js';
+import { isPressureState, isReadModelId, isShedAction, isWatchdogBand } from './readModels.js';
 import type { JsonReplayRequest } from './replay.js';
 import { isReplayableChannel } from './replay.js';
 import type { ValidationResult } from './result.js';
@@ -1370,6 +1372,136 @@ function validateLocalOffload(value: unknown): ValidationResult<SnapshotData<'lo
   return valid({ offloadRatioPct, localTokens, totalTokens, windowDays });
 }
 
+function validateSessionFootprints(
+  value: unknown,
+): ValidationResult<readonly SessionFootprint[]> {
+  if (!Array.isArray(value)) {
+    return invalid('bad-request', 'resource-health sessions must be an array');
+  }
+  const out: SessionFootprint[] = [];
+  for (const entry of value as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'resource-health session must be an object');
+    const account = entry['account'];
+    if (!isAccountLabel(account)) {
+      return invalid('bad-request', `resource-health session account unknown ${JSON.stringify(account)}`);
+    }
+    const backend = entry['backend'];
+    if (!isBackend(backend)) {
+      return invalid('bad-request', `resource-health session backend unknown ${JSON.stringify(backend)}`);
+    }
+    if (LABEL_BACKENDS[account] !== backend) {
+      return invalid(
+        'bad-request',
+        `resource-health session label/backend pairing violation: ${account} requires ${LABEL_BACKENDS[account]}`,
+      );
+    }
+    const slot = entry['slot'];
+    if (!isNonNegativeSafeInteger(slot)) {
+      return invalid('bad-request', 'resource-health session slot must be a non-negative safe integer');
+    }
+    const footprintMb = entry['footprintMb'];
+    if (!isNonNegativeFinite(footprintMb)) {
+      return invalid('bad-request', 'resource-health session footprintMb must be a non-negative finite number');
+    }
+    const band = entry['band'];
+    if (!isWatchdogBand(band)) {
+      return invalid('bad-request', `resource-health session band unknown ${JSON.stringify(band)}`);
+    }
+    const hibernated = entry['hibernated'];
+    if (hibernated !== undefined && typeof hibernated !== 'boolean') {
+      return invalid('bad-request', 'resource-health session hibernated, when present, must be a boolean');
+    }
+    out.push({
+      account,
+      backend,
+      slot,
+      footprintMb,
+      band,
+      ...(hibernated !== undefined ? { hibernated } : {}),
+    });
+  }
+  return valid(out);
+}
+
+function validateShedNotices(value: unknown): ValidationResult<readonly ShedNotice[]> {
+  if (!Array.isArray(value)) {
+    return invalid('bad-request', 'resource-health notices must be an array');
+  }
+  const out: ShedNotice[] = [];
+  for (const entry of value as unknown[]) {
+    if (!isRecord(entry)) return invalid('bad-request', 'resource-health notice must be an object');
+    const action = entry['action'];
+    if (!isShedAction(action)) {
+      return invalid('bad-request', `resource-health notice action unknown ${JSON.stringify(action)}`);
+    }
+    const at = entry['at'];
+    if (!isEpochMs(at)) return invalid('bad-request', 'resource-health notice at must be epoch ms');
+    const account = entry['account'];
+    if (account !== undefined && !isAccountLabel(account)) {
+      return invalid('bad-request', `resource-health notice account unknown ${JSON.stringify(account)}`);
+    }
+    const backend = entry['backend'];
+    if (backend !== undefined && !isBackend(backend)) {
+      return invalid('bad-request', `resource-health notice backend unknown ${JSON.stringify(backend)}`);
+    }
+    if (account !== undefined && backend !== undefined && LABEL_BACKENDS[account] !== backend) {
+      return invalid(
+        'bad-request',
+        `resource-health notice label/backend pairing violation: ${account} requires ${LABEL_BACKENDS[account]}`,
+      );
+    }
+    out.push({
+      action,
+      at,
+      ...(account !== undefined ? { account } : {}),
+      ...(backend !== undefined ? { backend } : {}),
+    });
+  }
+  return valid(out);
+}
+
+function validateResourceHealth(value: unknown): ValidationResult<SnapshotData<'resource-health'>> {
+  if (!isRecord(value)) return invalid('bad-request', 'resource-health data must be an object');
+  const pressureLevel = value['pressureLevel'];
+  if (!isNonNegativeSafeInteger(pressureLevel) || pressureLevel > 4) {
+    return invalid('bad-request', 'resource-health pressureLevel must be an integer in 0..4');
+  }
+  const pressureState = value['pressureState'];
+  if (!isPressureState(pressureState)) {
+    return invalid('bad-request', `resource-health pressureState unknown ${JSON.stringify(pressureState)}`);
+  }
+  const freeRamPct = value['freeRamPct'];
+  if (!isPct(freeRamPct)) {
+    return invalid('bad-request', 'resource-health freeRamPct must be in 0..100');
+  }
+  const swapUsedBytes = value['swapUsedBytes'];
+  if (!isNonNegativeSafeInteger(swapUsedBytes)) {
+    return invalid('bad-request', 'resource-health swapUsedBytes must be a non-negative safe integer');
+  }
+  const residentSessionCount = value['residentSessionCount'];
+  if (!isNonNegativeSafeInteger(residentSessionCount)) {
+    return invalid('bad-request', 'resource-health residentSessionCount must be a non-negative safe integer');
+  }
+  const localModelResidentBytes = value['localModelResidentBytes'];
+  if (localModelResidentBytes !== undefined && !isNonNegativeSafeInteger(localModelResidentBytes)) {
+    return invalid('bad-request', 'resource-health localModelResidentBytes must be a non-negative safe integer');
+  }
+  const sessions = validateSessionFootprints(value['sessions']);
+  if (!sessions.ok) return sessions;
+  const notices = validateShedNotices(value['notices']);
+  if (!notices.ok) return notices;
+  return valid({
+    pressureLevel,
+    pressureState,
+    freeRamPct,
+    swapUsedBytes,
+    residentSessionCount,
+    ...(localModelResidentBytes !== undefined ? { localModelResidentBytes } : {}),
+    sessions: sessions.value,
+    notices: notices.value,
+  });
+}
+
 function validateReadModelSnapshot(
   value: Record<string, unknown>,
 ): ValidationResult<ReadModelSnapshot> {
@@ -1429,6 +1561,10 @@ function validateReadModelSnapshot(
     }
     case 'local-offload': {
       const parsed = validateLocalOffload(data);
+      return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
+    }
+    case 'resource-health': {
+      const parsed = validateResourceHealth(data);
       return parsed.ok ? valid({ ...base, readModel, data: parsed.value }) : parsed;
     }
   }

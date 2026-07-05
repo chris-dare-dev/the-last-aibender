@@ -17,8 +17,12 @@
  *     local-model classification job ran) — the freshness entry says why.
  *
  * ============================================================================
- * FROZEN-M3 (2026-07-04). Amendments only via ICR (docs/contracts/icr/);
- * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
+ * FROZEN-M3 (2026-07-04); AMENDED-M6 (2026-07-05 — the eleventh read model,
+ * `resource-health`, added additively: the supervision/governor instrument
+ * per blueprint §11, pressure level + per-session footprints + shed/recycle
+ * notices as STATES, labels + numbers only [X2]). Amendments only via ICR
+ * (docs/contracts/icr/); BE-ORCH lands, FE-ORCH co-signs. Prose of record:
+ * docs/contracts/ws-protocol.md.
  * ============================================================================
  */
 
@@ -27,7 +31,19 @@ import type { EventSource } from './events.js';
 import type { QuotaWindow } from './quota.js';
 import type { AccountLabel, Backend } from './vocab.js';
 
-/** The ten §6.3 dashboard leads, in the blueprint's order. */
+/**
+ * The dashboard leads carried as `read-model-snapshot` kinds. The first ten
+ * are the §6.3 observability leads, in the blueprint's order; `resource-health`
+ * (the eleventh, M6) is the supervision/governor instrument of blueprint §11.
+ *
+ * ADDITIVITY NOTE (M6): appending `resource-health` to this CLOSED registry is
+ * a deliberate wire ADDITION — the §13.3 forward-tolerant reader rule tolerates
+ * unknown `kind`s but NOT unknown `readModel`s (a `read-model-snapshot` with an
+ * unregistered `readModel` answers `bad-request`). A client built against the
+ * ten-lead M3 set will REJECT a `resource-health` snapshot rather than ignore
+ * it, so this is versioned (`1.3.0` → `1.4.0`, `FROZEN-M5` → `FROZEN-M6`), not
+ * an in-band unknown-kind push. Producers gate emission on the negotiated freeze.
+ */
 export const READ_MODEL_IDS = Object.freeze([
   'quota-gauges',
   'burn-rate',
@@ -39,6 +55,7 @@ export const READ_MODEL_IDS = Object.freeze([
   'skill-leaderboard',
   'session-outcomes',
   'local-offload',
+  'resource-health',
 ] as const);
 
 export type ReadModelId = (typeof READ_MODEL_IDS)[number];
@@ -249,6 +266,134 @@ export interface LocalOffloadSnapshot extends ReadModelSnapshotBase {
 }
 
 // ---------------------------------------------------------------------------
+// 11. Resource health — the supervision/governor instrument (blueprint §11, M6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Memory-pressure band (blueprint §11 thresholds). `normal` below amber;
+ * `amber` at pressure level 2 / free <25% / swap >20 GB (stop prewarm, shorten
+ * model TTL, offer hibernation); `red` at level 4 / free <12% / swap >26 GB
+ * (refuse non-account spawns, unload the local model, force-hibernate idle
+ * sessions). These are the STATES the FE renders — never raw free-RAM
+ * fabrications (§11: health signals are pressure/swap deltas, never naive free
+ * RAM). The band is derived by the broker; the wire carries the STATE.
+ */
+export const PRESSURE_STATES = Object.freeze(['normal', 'amber', 'red'] as const);
+
+export type PressureState = (typeof PRESSURE_STATES)[number];
+
+export function isPressureState(value: unknown): value is PressureState {
+  return typeof value === 'string' && (PRESSURE_STATES as readonly string[]).includes(value);
+}
+
+/**
+ * Per-session watchdog band (blueprint §11 / plan BE-9 phys_footprint
+ * thresholds): `ok` below the warn line, `warn` at the warn threshold (claude
+ * 3 GB / opencode 1 GB / serve sustained >500 MB), `recycle` at the recycle
+ * threshold (claude 6 GB / opencode 1.5 GB) — the checkpoint→kill→resume line
+ * that doubles as the [X4] continuation mechanism.
+ */
+export const WATCHDOG_BANDS = Object.freeze(['ok', 'warn', 'recycle'] as const);
+
+export type WatchdogBand = (typeof WATCHDOG_BANDS)[number];
+
+export function isWatchdogBand(value: unknown): value is WatchdogBand {
+  return typeof value === 'string' && (WATCHDOG_BANDS as readonly string[]).includes(value);
+}
+
+/**
+ * Shed/recycle actions the governor took, as STATES (M3 freshness doctrine:
+ * a notice is a STATE the FE renders, never an error). The first five are the
+ * [X1] SACRIFICE ORDER encoded in the scheduler (blueprint §11), in order:
+ * local model size → model KV/context → frontend shell weight → non-Claude
+ * session hibernation → scrollback/buffers. `recycle-session` is the
+ * per-session checkpoint→kill→resume. Account sessions are NEVER the victim of
+ * a shed action — the FE surfaces this order as an instrument, not an alarm.
+ */
+export const SHED_ACTIONS = Object.freeze([
+  'shed-local-model',
+  'shed-model-context',
+  'shed-frontend-weight',
+  'hibernate-non-account',
+  'trim-scrollback',
+  'recycle-session',
+] as const);
+
+export type ShedAction = (typeof SHED_ACTIONS)[number];
+
+export function isShedAction(value: unknown): value is ShedAction {
+  return typeof value === 'string' && (SHED_ACTIONS as readonly string[]).includes(value);
+}
+
+/**
+ * One live session's resource footprint — labels + numbers ONLY [X2]. No
+ * native session id, no cwd, no title: the `slot` is a per-account DISPLAY
+ * ordinal (0-based), not a native id — it lets the FE place multiple sessions
+ * of one account without ever carrying an identity-bearing key.
+ */
+export interface SessionFootprint {
+  readonly account: AccountLabel;
+  readonly backend: Backend;
+  /** Per-account display ordinal (0-based) — never a native id [X2]. */
+  readonly slot: number;
+  /** phys_footprint in MB (blueprint §11: phys_footprint, not ps rss). */
+  readonly footprintMb: number;
+  readonly band: WatchdogBand;
+  /** True while the session is hibernated (idle >30 min; never account sessions). */
+  readonly hibernated?: boolean;
+}
+
+/**
+ * A shed/recycle notice — a STATE, with the action, when it happened, and the
+ * affected line by LABEL only when one applies (a whole-machine action like
+ * `shed-local-model` may carry no account). NEVER an account session for a
+ * shed action (§11: account sessions are never the victim); `recycle-session`
+ * MAY carry an account because recycle IS the account continuation mechanism.
+ */
+export interface ShedNotice {
+  readonly action: ShedAction;
+  /** Epoch ms the action was taken. */
+  readonly at: number;
+  readonly account?: AccountLabel;
+  readonly backend?: Backend;
+}
+
+/**
+ * The supervision/governor instrument (blueprint §11). Pressure STATE +
+ * per-session footprints + shed/recycle notices, all labels + numbers only
+ * [X2]. Rides the `events` channel as a `read-model-snapshot` exactly like the
+ * §6.3 leads; its `sources` array carries the freshness of the feed the
+ * governor reads (the harness's own supervision telemetry surfaces as the
+ * generic freshness envelope — a missing feed is `no-signal`, never fabricated
+ * zeros). Absent optional numbers mean "not computable yet".
+ */
+export interface ResourceHealthSnapshot extends ReadModelSnapshotBase {
+  readonly readModel: 'resource-health';
+  readonly data: {
+    /** macOS memory-pressure level 0..4 (blueprint §11: amber@2, red@4). */
+    readonly pressureLevel: number;
+    /** The derived band the FE renders. */
+    readonly pressureState: PressureState;
+    /** Free physical RAM percentage, 0..100. */
+    readonly freeRamPct: number;
+    /** Swap in use, bytes (blueprint §11: amber >20 GB, red >26 GB). */
+    readonly swapUsedBytes: number;
+    /** Resident (non-hibernated) session count. */
+    readonly residentSessionCount: number;
+    /**
+     * The one GLOBAL "local model resident" budget line (blueprint §4.3/§11),
+     * bytes — 0 when nothing is loaded; absent when the LM Studio/Ollama feed
+     * is not readable (the freshness entry says why).
+     */
+    readonly localModelResidentBytes?: number;
+    /** Per-session footprints — labels + numbers only [X2]. */
+    readonly sessions: readonly SessionFootprint[];
+    /** Shed/recycle notices as STATES, most-recent-first is NOT required. */
+    readonly notices: readonly ShedNotice[];
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Union
 // ---------------------------------------------------------------------------
 
@@ -262,4 +407,5 @@ export type ReadModelSnapshot =
   | HealthSnapshot
   | SkillLeaderboardSnapshot
   | SessionOutcomesSnapshot
-  | LocalOffloadSnapshot;
+  | LocalOffloadSnapshot
+  | ResourceHealthSnapshot;

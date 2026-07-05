@@ -30,7 +30,7 @@ import {
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_HOOK_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M5';
+export const GOLDEN_HOOK_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M6';
 
 // ---------------------------------------------------------------------------
 // Fixture types

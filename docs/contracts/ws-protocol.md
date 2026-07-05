@@ -465,10 +465,11 @@ NO `raw_ref`, NO `file_refs`, NO native ids, NO tool/prompt bodies.
 
 ### 13.2 `read-model-snapshot`
 
-The ten §6.3 dashboard leads (closed registry `READ_MODEL_IDS`, in blueprint
-order): `quota-gauges` · `burn-rate` · `bedrock-cost` · `api-equivalent-usd`
-· `cache-hit-rate` · `latency` · `health` · `skill-leaderboard` ·
-`session-outcomes` · `local-offload`. Common envelope:
+The ten §6.3 dashboard leads plus the M6 supervision instrument (closed
+registry `READ_MODEL_IDS`, in blueprint order): `quota-gauges` · `burn-rate` ·
+`bedrock-cost` · `api-equivalent-usd` · `cache-hit-rate` · `latency` ·
+`health` · `skill-leaderboard` · `session-outcomes` · `local-offload` ·
+`resource-health` (§13.4, **frozen M6**). Common envelope:
 
 ```jsonc
 { "kind": "read-model-snapshot",
@@ -501,6 +502,65 @@ malformed **registered** kinds, kindless payloads, and unknown `readModel` /
 `source` / freshness values answer `bad-request`. Golden fixtures:
 `events-unknown-kind-tolerated`, `events-broker-payload-draft-opaque`
 (the M2-era frame, byte-identical, still valid).
+
+**Why `resource-health` (M6) is a version bump, not an unknown-kind push.**
+`READ_MODEL_IDS` is a CLOSED registry: a `read-model-snapshot` with an
+unregistered `readModel` answers `bad-request` (fixture
+`events-readmodel-unknown-id`). A client built against the ten-lead M3 set
+would therefore REJECT a `resource-health` snapshot rather than ignore it.
+Adding the eleventh read model is thus a genuine additive wire change —
+protocol `1.3.0` → `1.4.0`, `FROZEN-M5` → `FROZEN-M6`. Producers gate emission
+on the negotiated freeze (a broker that knows only M5 never emits it). The
+forward-tolerant escape hatch is for *new kinds*, not for growing a closed
+sub-registry.
+
+### 13.4 `resource-health` — the supervision/governor instrument — FROZEN (M6)
+
+The eleventh read model (blueprint §11: supervision is the core feature, not
+an add-on). Its PRODUCER is the supervision/governor (plan BE-9), NOT the §6.3
+observability publisher — it happens to ride the same `read-model-snapshot`
+wire union. Labels + numbers ONLY [X2]: no native session id (a per-account
+`slot` DISPLAY ordinal stands in), no cwd, no title. Types: `readModels.ts`
+(`ResourceHealthSnapshot`, `SessionFootprint`, `ShedNotice`).
+
+```jsonc
+{ "kind": "read-model-snapshot",
+  "readModel": "resource-health",
+  "capturedAt": 90100500,
+  "sources": [ { "source": "lmstudio", "state": "lmstudio-down" } ],  // §13.2 freshness
+  "data": {
+    "pressureLevel": 4,              // 0..4, macOS memory-pressure level (amber@2, red@4)
+    "pressureState": "red",          // PRESSURE_STATES: normal | amber | red (the STATE the FE renders)
+    "freeRamPct": 9.5,               // 0..100
+    "swapUsedBytes": 27917287424,    // amber >20 GB, red >26 GB
+    "residentSessionCount": 3,
+    "localModelResidentBytes": 0,    // optional; the ONE global local-model budget line (§4.3/§11)
+    "sessions": [                    // REQUIRED (may be empty): per-session footprints
+      { "account": "MAX_A", "backend": "claude_code", "slot": 1, "footprintMb": 3200, "band": "warn" } ],
+    "notices": [                     // REQUIRED (may be empty): shed/recycle STATES
+      { "action": "shed-local-model", "at": 90100400 },
+      { "action": "recycle-session", "at": 90100480, "account": "MAX_A", "backend": "claude_code" } ] } }
+```
+
+- `band` ∈ `ok · warn · recycle` (`WATCHDOG_BANDS`, blueprint §11 phys_footprint
+  thresholds: claude warn 3 GB / recycle 6 GB; opencode warn 1 GB / recycle
+  1.5 GB; serve sustained >500 MB). `slot` is a per-account display ordinal
+  (≥0), never a native id.
+- `notices[].action` ∈ `shed-local-model · shed-model-context ·
+  shed-frontend-weight · hibernate-non-account · trim-scrollback ·
+  recycle-session` (`SHED_ACTIONS`). The first five ARE the [X1] sacrifice
+  order in order (blueprint §11): local model size → model KV/context →
+  frontend shell weight → non-Claude hibernation → scrollback/buffers.
+  A notice is a STATE with a required epoch-ms `at` (M3 freshness doctrine —
+  never an error/toast). **Account sessions are never the victim of a shed**
+  (§11); `recycle-session` MAY carry an account because recycle IS the account
+  continuation mechanism ([X4]).
+- Per-session `account`/`backend` obey the frozen label↔backend pairing
+  (fixture `events-readmodel-resource-health-session-label-backend-mismatch`).
+- Golden fixtures: `events-readmodel-resource-health-*` (min-valid, full-valid,
+  and every invalid class — pressure-level overflow, unknown pressure state /
+  band / shed action, pairing violation, missing `at`, free-RAM overflow,
+  missing `sessions`).
 
 ## 14. Golden corpus — the BE↔FE contract device
 
@@ -791,3 +851,4 @@ schema change.
 | 2026-07-04 | §12 **session-id relay pin** (prose only, NO wire change; requested in the BE-6 M3 return): `sessionId` documented as harness-id-where-known with native-id relay until the BE-7/M4 ledger mapping — the exact hooks-contract §7 approvals-relay sentence, now stated for context-graph too; the composition root MUST inject the ledger resolver at M4 (the `resolveSessionId` seam, core/src/collector/graphfeed/hookTouches.ts). Validator, charset and golden fixtures unchanged. FE-ORCH co-sign: n/a (no wire change). | — (BE-ORCH steward, prose pin) |
 | 2026-07-04 | **M4 FREEZE.** New: the `workstream` channel (§16) — broker→client lineage fan-out (`workstream-list-snapshot` / `workstream-detail-snapshot` with the scope matrix / `workstream-node` upserts / `workstream-edge` appends with the frozen edge vocabulary `continue·fork·merge_parent·compact·sidechain·handoff·import·workflow` and the from/import + handoff-brief matrices / `workstream-brief` / `branch-advisory` / `workstream-merge-resolved`) + the client `workstream-merge-request` (2..16 distinct parents, mandatory conflict-surfacing `briefBody`) with its frozen error contract (§16.4); the same forward-tolerant unknown-kind reader rule as events §13.3; native ids REJECTED on the wire [X2]. Lineage seams frozen as port types (§15): `LineageRecorder` (launch/resume/fork/recycle/merge recorded AT ACTION TIME — the M2 `ContinuationEdgeEmitter` stub generalized; continuation = CHILD, in-place carries from === to) and `SessionIdResolver` (the §12 pin resolved). Amended frozen surfaces (recorded here, landed by this freeze agent): §3 channel registry + `workstream` (bidirectional, the approvals precedent); §8 replayable set + `workstream`; §7 error code `workstream-not-found`. Gateway/FE wiring seams landed via [ICR-0011](icr/icr-0011-gateway-workstream-slice.md) (gateway `WorkstreamEnginePort` + validated routing/publisher + absent-engine degrade; FE inbound-router workstream branch). Corpus: `workstream-payload` + `workstream-client-message` stages, one valid frame per kind + every invalid class; no existing fixture changed. Protocol `1.1.0` → `1.2.0`, `FROZEN-M3` → `FROZEN-M4`. No change to any M1–M3 wire shape. FE-ORCH co-sign: **co-signed (M5 review)** — the freeze-literal advance in `app/src/features/launch/wire.spec.ts` now pins `FROZEN-M5` (reached through `FROZEN-M4`) and the FE inbound-router `workstream` branch (`app/src/lib/ws/inboundRouter.ts`, opaque-tolerant `validateWorkstreamServerPayload`) both replay green; the FE golden-corpus round-trip (`app/src/lib/ws/goldenCorpus.spec.ts`, every `workstream` frame) is green on the FE side. | — (M4 freeze) |
 | 2026-07-04 | **M5 FREEZE.** New: the `pipelines` channel (§18) — broker→client catalog + run-monitor fan-out (`catalog-snapshot` [the builder palette; paths+names+labels only, X2] / `pipeline-run-snapshot` / `pipeline-run-status` / `pipeline-step-status` [per-step cost reference + the `memoized` resume-from-journal state] / `pipeline-validation-result` / `pipeline-saved`) + the six client verbs `pipeline-validate\|save\|launch\|pause\|resume\|cancel` with the frozen error contract (§18.4); the same forward-tolerant unknown-kind reader rule as events §13.3 / workstream §16.1; native ids REJECTED on the wire [X2]. Approval GATES ride the EXISTING approvals channel via the frozen `workflow-gate` source (§10.1, §18.3) — no new gate wire (the M2 one-inbox precedent). The versioned JSON DAG document the verbs carry is its own new contract [dag-schema.md](dag-schema.md) (FROZEN-M5 v1: step kinds prompt·skill·agent·workflow-script·approval, needs/when/forEach/loop, per-step account/budget/retry/outputSchema, the forward-INCOMPAT rule for schemaVersion + step kind). New closed registries: `CAPABILITY_KINDS`, `CATALOG_SCOPES`, `CAPABILITY_BACKEND_FAMILIES`, `PIPELINE_RUN_STATES`, `PIPELINE_STEP_STATES`, `PIPELINE_CLIENT_VERBS` (pipelines.ts). Amended frozen surfaces (recorded here, landed by this freeze agent): §3 channel registry + `pipelines` (bidirectional); §8 replayable set + `pipelines`; §7 error codes `pipeline-not-found`/`pipeline-run-not-found`/`pipeline-invalid`/`step-not-found`. Verified sufficient, NO amendment: the `workflow` edge type (already in the frozen §16 edge vocabulary since M4) + the events `(backend, raw_ref)` dedupe key carry the per-step-attempt lineage + cost seams (dag-schema.md §6, §18.5); the LineageRecorder port (§15.1) is correctly scoped to kernel actions — the pipeline runner records `workflow` edges directly. Corpus: `pipelines-payload` + `pipelines-client-message` stages, one valid frame per kind + each verb + every invalid class; no existing fixture changed. Protocol `1.2.0` → `1.3.0`, `FROZEN-M4` → `FROZEN-M5`. No change to any M1–M4 wire shape. FE-ORCH co-sign: **co-signed (M5 review, 2026-07-05)** — the one-line freeze-literal advance in `app/src/features/launch/wire.spec.ts` pins `FROZEN-M5` and the FE inbound-router `pipelines` branch (forward-tolerant `validatePipelineServerPayload`) both replay green; the FE golden-corpus round-trip (`app/src/lib/ws/goldenCorpus.spec.ts`, 114/114 incl. every `pipelines` frame + each of the six verbs) is green (record: [m5-dod.md](../runbooks/m5-dod.md) §6). | — (M5 freeze) |
+| 2026-07-05 | **M6 FREEZE (FINAL Stage-2 freeze; LIGHT by design).** ONE boundary-crossing addition: the eleventh `read-model-snapshot` kind `resource-health` (§13.4) — the supervision/governor instrument (blueprint §11), pressure STATE (`PRESSURE_STATES` normal\|amber\|red, level 0..4) + per-session footprints (`SessionFootprint`: account/backend/`slot` display-ordinal/footprintMb/`WATCHDOG_BANDS` ok\|warn\|recycle) + shed/recycle notices as STATES (`ShedNotice` + `SHED_ACTIONS`, the [X1] sacrifice order + recycle). Labels + numbers ONLY [X2]: no native id (the per-account `slot` ordinal stands in), no cwd, no title; per-session + notice account/backend obey the frozen pairing; account sessions are never a shed victim; `recycle-session` may carry an account (recycle IS the [X4] account-continuation path). PRODUCER = supervision/governor (plan BE-9), NOT the §6.3 observability publisher — it merely shares the wire union. Since `READ_MODEL_IDS` is a CLOSED registry (§13.3: unknown `readModel`s answer `bad-request`, NOT forward-tolerant), this is a genuine additive wire bump: protocol `1.3.0` → `1.4.0`, `FROZEN-M5` → `FROZEN-M6`. NO M1–M5 wire shape changed; NO channel/error-code/replay change (rides the existing `events` channel). NO schema change (read models are computed live; `READ_MODEL_IDS` has no schema CHECK companion). Corpus: 10 new `events-readmodel-resource-health-*` fixtures on the existing `events-payload` stage (min-valid, full-valid + every invalid class); `GOLDEN_WS_CORPUS_FREEZE`/`GOLDEN_HOOK_CORPUS_FREEZE` advanced to `FROZEN-M6` (typed `= PROTOCOL_FREEZE`). Integration-suite contract-of-record: [integration-suite.md](integration-suite.md) (plan §9.3/§9.4). Cross-department co-sign ripple (the M3/M4/M5 precedent): the downstream freeze-literal pins + the "ten leads" behavioral assertions in `core/` (BE) and `app/` (FE) advance with the consuming M6 agents. **FE-ORCH co-sign: co-signed (M6 gate, 2026-07-05)** — the FE resource/pressure instrument (`app/src/features/observability/ResourceHealthInstrument.tsx`) consumes `resource-health` as a SIBLING instrument under the same seam as the §6.3 leads (registered in `register.tsx`); `app/src/features/launch/wire.spec.ts` pins `GOLDEN_WS_CORPUS_FREEZE === 'FROZEN-M6'` and `app/src/features/observability/{golden,freshness}.spec.tsx` moved off the hard-coded "10" — all green at the gate (65 FE resource-health specs incl. the [X2] audit `resourceHealthAudit.spec.tsx` + render-count guards). BE-9-producer co-sign: co-signed (M6 gate, 2026-07-05) — `core/src/readmodels/publisher.spec.ts` narrowed to `.toEqual([...READ_MODEL_IDS].slice(0, 10))` / `.toHaveLength(10)` (the ten §6.3 observability leads; `resource-health` is the governor's kind, produced by the supervision publisher, not the §6.3 publisher); `core/src/collector/hooks/hooks.spec.ts` pins `GOLDEN_HOOK_CORPUS_FREEZE === 'FROZEN-M6'`. Both replayed green. Record: [m6-dod.md](../runbooks/m6-dod.md) §6. | — (M6 freeze; co-signs flipped at M6 gate) |

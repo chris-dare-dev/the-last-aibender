@@ -112,4 +112,4 @@ own reader — the shape above is the contract, not the Node implementation).
 
 | Date | Change | ICR |
 |---|---|---|
-| 2026-07-04 | Initial FROZEN-M2 freeze, codifying the M1 gateway implementation verbatim (shape, 0600/0700 + chmod discipline, atomic publish, ownership-checked removal, write-or-die boot). Boot-identity → watermark-invalidation rule added alongside ws-protocol §8. FE-ORCH co-sign: **pending**. | — (M2 freeze) |
+| 2026-07-04 | Initial FROZEN-M2 freeze, codifying the M1 gateway implementation verbatim (shape, 0600/0700 + chmod discipline, atomic publish, ownership-checked removal, write-or-die boot). Boot-identity → watermark-invalidation rule added alongside ws-protocol §8. FE-ORCH co-sign: **co-signed (M5 review, 2026-07-05)** — the FE reader side is implemented against this prose (`app/src/lib/bootstrap.ts`) and verified by `app/src/lib/bootstrap.spec.ts` (structural validation of absent/unreadable/malformed → "no broker advertised"; boot-identity change → watermark invalidation); clients never write the file. | — (M2 freeze) |

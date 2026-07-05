@@ -1,17 +1,17 @@
 # SQLite DDL contract — harness ledgers
 
-> ## 🔒 FROZEN-M1 (kernel slice) · FROZEN-M3 (events slice) · FROZEN-M4 (lineage slice) — 2026-07-04
+> ## 🔒 FROZEN-M1 (kernel slice) · FROZEN-M3 (events slice) · FROZEN-M4 (lineage slice) · FROZEN-M5 (pipeline slice) — 2026-07-04
 > **Owner: BE-ORCH.** After this banner, frozen sections change **only**
 > through an interface change request ([docs/contracts/icr/](icr/README.md)).
 > This contract is **amended per milestone** (plan §3): M3 appended the
-> events store (§7), M4 appended the X4 lineage tables (§8, this freeze),
-> M5 appends the pipeline tables — each amendment lands as a NEW migration
-> (never an edit to a frozen one) plus a new section here with its own
-> freeze banner.
+> events store (§7), M4 appended the X4 lineage tables (§8), M5 appended the
+> pipeline store + memoization journal (§10, this freeze) — each amendment
+> lands as a NEW migration (never an edit to a frozen one) plus a new section
+> here with its own freeze banner.
 >
-> The machine-checkable half is `packages/schema` (migrations 0001/0002/0003
-> + accessors). **This document is the prose of record when the two disagree
-> — file an ICR, never a silent divergence.**
+> The machine-checkable half is `packages/schema` (migrations 0001/0002/0003/
+> 0004 + accessors). **This document is the prose of record when the two
+> disagree — file an ICR, never a silent divergence.**
 
 Blueprint anchors: §4.1 (resume ledger), §6.2 (one SQLite/WAL store), plan §3
 (freeze schedule). State-machine mechanics were proven by SPIKE-D (vii): real
@@ -222,7 +222,7 @@ No DDL or transition-table change — this documents which component proves the
 |---|---|---|
 | M3 | `events`, `quota_snapshots`, `session_outcomes`, `prices` (§6.2) | **LANDED — §7, migration 0002 on the events-store sibling list** |
 | M4 | `workstream`, `session_node`, `session_edge`, `brief` (§5) | **LANDED — §8 (this freeze), migration 0003 on KERNEL_MIGRATIONS** |
-| M5 | workflow `runs`, `steps`, memoization journal (§7 of the blueprint) | reserved |
+| M5 | `pipeline_definition`, `pipeline_run`, `step_attempt` (memoization journal; §7 of the blueprint) | **LANDED — §10, migration 0004 on KERNEL_MIGRATIONS** |
 
 Each lands as migration 000N appended to `KERNEL_MIGRATIONS` (or a sibling
 list for a separate database file — decision at the owning milestone), plus a
@@ -602,7 +602,152 @@ Free-text NAMING columns (`title`, `description`, `tags`, `display_name`,
 `git_branch`) pass the §7.2 insert-time identity screen. No lineage column
 is `secret` [X2].
 
-## 9. Amendment record
+## 10. Migration 0004 `pipeline-tables-init` — the M5 pipeline store + memoization journal — FROZEN (M5)
+
+Blueprint §7 (pipeline engine), plan §4/BE-8, findings
+[pipeline-workflow-builder.md](../research/findings/pipeline-workflow-builder.md)
+§R3. Machine-checkable half:
+`packages/schema/src/migrations/0004-pipelines.ts` + accessors in
+`packages/schema/src/pipelines.ts`. Wire counterpart:
+[ws-protocol.md §18](ws-protocol.md) (the `pipelines` channel); the saved DAG
+document format: [dag-schema.md](dag-schema.md).
+
+### 10.1 KERNEL DATABASE (the db-placement decision, made at this freeze)
+
+Migration 0004 **appends to `KERNEL_MIGRATIONS`** — the pipeline store + the
+durable MEMOIZATION JOURNAL live in the KERNEL database
+(`~/.aibender/db/kernel.db`), NOT in the collector's events database. This
+follows the M4 lineage precedent (§8.1) for the SAME three reasons:
+
+1. **Same commit boundary as the lineage rows the run produces.** Findings §R3:
+   "every step attempt = a `session_node`" and "a pipeline is a workstream
+   subgraph". A step attempt writes both a `step_attempt` row (here) and a
+   `session_node` + `workflow` `session_edge` (migration 0003, same db) — one
+   WAL transaction scope, real FK-able co-location.
+2. **Write rate is the resume-ledger rate, not ingest rate.** Journal writes
+   happen per STEP ATTEMPT (a session action) — never the collector's
+   high-volume event ingest that forced events.db out (§7.1).
+3. **Resume is a single-database join.** Cross-restart resume re-walks the DAG
+   and reads `step_attempt` cached outputs + the `session_node` the attempt may
+   `resume` in place — both here, one query plan, no cross-file ATTACH.
+
+Migration ids stay repo-wide unique: 0001 = kernel (M1), 0002 = events (M3,
+sibling list), 0003 = lineage (M4, kernel list), 0004 = pipelines (M5, kernel
+list). The kernel db's `schema_meta` gains `('pipeline_ddl_version','1')` and
+`('pipeline_frozen_milestone','M5')`; the M1/M4 seeds are untouched (each slice
+gets its own keys — the events-db precedent). Times are ACTION/EVENT times
+rendered on the FE run monitor, so **epoch-ms INTEGERs** (`*_ms`, the migration
+0002/0003 precedent).
+
+### 10.2 `pipeline_definition`
+
+The SAVED versioned JSON DAG document (dag-schema.md v1), stored verbatim.
+
+```sql
+CREATE TABLE pipeline_definition (
+  id             TEXT PRIMARY KEY CHECK (length(id) > 0),         -- harness id, newId('wf')
+  name           TEXT NOT NULL CHECK (length(trim(name)) > 0),    -- identifier-free [X2]
+  document_json  TEXT NOT NULL CHECK (length(document_json) > 0), -- the full DAG doc, verbatim
+  schema_version INTEGER NOT NULL CHECK (schema_version > 0),     -- re-validated on load (forward-incompat)
+  schema_hash    TEXT NOT NULL CHECK (length(schema_hash) > 0),   -- sha256(document_json), pinned into runs
+  created_at_ms  INTEGER NOT NULL CHECK (created_at_ms >= 0),
+  updated_at_ms  INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+) STRICT;
+```
+
+Accessor: `upsert` overwrites by id (a save), preserving `created_at_ms`; the
+definition `name` passes the §7.2 insert-time identity screen [X2].
+
+### 10.3 `pipeline_run`
+
+One run of a definition (findings §R3 `workflow_run`).
+
+```sql
+CREATE TABLE pipeline_run (
+  id                 TEXT PRIMARY KEY CHECK (length(id) > 0),     -- harness id, newId('run')
+  pipeline_id        TEXT NOT NULL REFERENCES pipeline_definition(id),
+  schema_hash        TEXT NOT NULL CHECK (length(schema_hash) > 0), -- the doc hash this run PINNED (drift)
+  inputs_json        TEXT,                                        -- bound inputs (identifier-tagged)
+  workstream_id      TEXT,                                        -- X4 subgraph assignment
+  status             TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','running','paused','completed','failed','cancelled')),
+  cost_estimated_usd REAL CHECK (cost_estimated_usd IS NULL OR cost_estimated_usd >= 0),
+  started_at_ms      INTEGER CHECK (started_at_ms IS NULL OR started_at_ms >= 0),
+  finished_at_ms     INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= 0),
+  created_at_ms      INTEGER NOT NULL CHECK (created_at_ms >= 0),
+  updated_at_ms      INTEGER NOT NULL CHECK (updated_at_ms >= 0)
+) STRICT;
+CREATE INDEX pipeline_run_pipeline_idx ON pipeline_run (pipeline_id);
+CREATE INDEX pipeline_run_status_idx   ON pipeline_run (status);
+```
+
+### 10.4 `step_attempt` — THE memoization journal
+
+The durable journal (findings §R3 `step_attempt`, "step id + input hash →
+cached output"): **append-only**, keyed for cross-restart resume by
+`(run_id, step_id, iteration, input_hash)`.
+
+```sql
+CREATE TABLE step_attempt (
+  id                 TEXT PRIMARY KEY CHECK (length(id) > 0),     -- harness id, newId('sa')
+  run_id             TEXT NOT NULL REFERENCES pipeline_run(id),
+  step_id            TEXT NOT NULL CHECK (length(step_id) > 0),   -- the DAG step id (not an FK)
+  iteration          INTEGER NOT NULL DEFAULT 0 CHECK (iteration >= 0),  -- forEach/loop iteration
+  attempt            INTEGER NOT NULL DEFAULT 0 CHECK (attempt >= 0),    -- retry attempt (0 = first)
+  input_hash         TEXT NOT NULL CHECK (length(input_hash) > 0), -- THE memoization key: sha256(resolved inputs)
+  status             TEXT NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending','blocked','running','awaiting-approval',
+                                       'completed','memoized','failed','skipped','cancelled')),
+  session_id         TEXT,                                        -- the spawned session_node (workflow edge target); not an FK
+  account            TEXT CHECK (account IS NULL
+                       OR account IN ('MAX_A','MAX_B','ENT','AWS_DEV','LOCAL')),
+  output_json        TEXT,                                        -- the outputSchema-validated result (identifier-tagged)
+  cost_estimated_usd REAL CHECK (cost_estimated_usd IS NULL OR cost_estimated_usd >= 0),
+  tokens_in          INTEGER CHECK (tokens_in IS NULL OR tokens_in >= 0),
+  tokens_out         INTEGER CHECK (tokens_out IS NULL OR tokens_out >= 0),
+  error_kind         TEXT,                                        -- identifier-free failure class [X2]
+  started_at_ms      INTEGER CHECK (started_at_ms IS NULL OR started_at_ms >= 0),
+  finished_at_ms     INTEGER CHECK (finished_at_ms IS NULL OR finished_at_ms >= 0),
+  created_at_ms      INTEGER NOT NULL CHECK (created_at_ms >= 0)
+) STRICT;
+CREATE UNIQUE INDEX step_attempt_identity_idx ON step_attempt (run_id, step_id, iteration, attempt);
+CREATE INDEX step_attempt_memo_idx    ON step_attempt (run_id, step_id, iteration, input_hash);
+CREATE INDEX step_attempt_run_idx     ON step_attempt (run_id);
+CREATE INDEX step_attempt_session_idx ON step_attempt (session_id) WHERE session_id IS NOT NULL;
+```
+
+Rules (accessor-enforced, tested — pipelines.ts):
+
+- **THE resume lookup** (`findMemoized(runId, stepId, iteration, inputHash)`):
+  the newest COMPLETED attempt (`completed` or `memoized`) for a matching key
+  returns its cached `output_json` — the runner SKIPS re-execution (the M5 DoD;
+  durable across harness restarts, immune to the compaction-relocation bug class
+  of native #65796). A miss on a different `input_hash` (input changed) or on a
+  `failed` attempt correctly re-executes.
+- **Append-only** (`step_attempt_identity_idx` UNIQUE): a retry appends a NEW
+  row (`attempt+1`); recording an existing `(run, step, iteration, attempt)`
+  throws — the journal never overwrites history.
+- **[X2]:** `account` is the placeholder enum, CHECK-enforced; the definition
+  `name` is identity-screened; `document_json` / `inputs_json` / `output_json`
+  are machine-local content, `identifier`-tagged (`PIPELINES_FIELD_TAGS`) for
+  redaction — brief/prompt bodies legitimately carry paths, exempt from the
+  insert-time identity screen (the events §7.6 precedent).
+
+### 10.5 The `workflow`-edge + cost seams (verified, no amendment)
+
+Findings §R3: each step attempt is a `session_node` with `workflow`
+`session_edge`s to its successors; per-step cost lands in the events store.
+This freeze VERIFIED both seams are complete without a schema change: the
+`workflow` edge type has been in the frozen `session_edge` vocabulary since M4
+(§8.5), and the accessor accepts a step→successor `workflow` edge (not import →
+from required; not handoff → no mandatory brief; not continue → no self-edge).
+Per-step cost keys the events `(backend, raw_ref)` dedupe (§7.2) as
+`pipeline:<runId>:<stepId>:<iteration>` — distinct iterations are distinct keys;
+retry-safe re-ingest dedupes. The pipeline runner (BE-8) records these directly
+(NOT via the LineageRecorder port, which is for kernel session actions —
+ws-protocol.md §15.1 / dag-schema.md §6).
+
+## 11. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
@@ -611,3 +756,4 @@ is `secret` [X2].
 | 2026-07-04 | **M3 events-store freeze (§7).** Migration 0002 `events-store-init`: `events` fact table (dedupe UNIQUE (backend, raw_ref); label-enum + label↔backend pairing CHECKs [X2]; four token classes + 5m/1h TTL split + reasoning; `cost_estimated_usd` vs `cost_actual_usd` backfill target; latency/TTFT; tool/skill/agent/mcp attribution; `error_kind` enum; `file_refs`/`raw_ref`) + `quota_snapshots` + `session_outcomes` + `prices` (override-wins pinning). Decisions recorded: SEPARATE collector-owned database `~/.aibender/db/events.db` via the `EVENTS_STORE_MIGRATIONS` sibling list (§7.1, blueprint §6.2 "owned by the collector"; repo-wide-unique migration ids); epoch-ms integers for event-time columns (§7.2, wire-aligned); insert-time identity-shape screen on semantic columns with path/JSON columns `identifier`-tagged instead (§7.2/§7.6). Migration 0001 and KERNEL_MIGRATIONS untouched. | — (M3 freeze; plan §3 schema row) |
 | 2026-07-04 | §7.4 **usage-data mapping clarification** (prose only, NO DDL change; the interpretation question raised in the BE-5 M3 return): facets → `session_outcomes` (the assessment row); session-meta → `events` with `event_type 'session_meta'` (token totals, no outcome — never mirrored into `session_outcomes`, whose `outcome` is NOT NULL by design). Blesses the landed normalizer (core/src/collector/jsonl/usageData.ts). | — (BE-ORCH steward, prose pin) |
 | 2026-07-04 | **M4 lineage freeze (§8).** Migration 0003 `lineage-tables-init`: `workstream` (status enum, JSON tags) + `session_node` (HARNESS id PRIMARY — the resume-ledger id for kernel launches, reconciler-minted for external; native id a nullable write-once ATTRIBUTE; label-enum + pairing CHECKs [X2]; lineage state/origin/confidence enums; mutable `native_scope` for `/cd`; token/cost snapshots) + `brief` (kind session-end·pre-compact·session-start-injection·merge; provenance native-summary·local-draft·refined; body `identifier`-tagged) + `session_edge` (edge_type EXACTLY continue·fork·merge_parent·compact·sidechain·handoff·import·workflow; from/import + handoff-brief CHECK matrices; continue self-edges legal). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§8.1 — action-time recording shares the kernel's commit boundary; lineage writes are resume-ledger-rate; the SessionIdResolver join is single-db; repo-wide-unique migration ids 0001/0002/0003); epoch-ms integers for lineage times (§8.1); accessor-enforced edge legality + ATOMIC `recordMerge` (§8.5); naming-column identity screen + `LINEAGE_FIELD_TAGS` (§8.6). `schema_meta` gains lineage keys, M1 seeds untouched. Migrations 0001/0002 untouched; `openKernelStore` now also hands back the `lineage` accessors. | — (M4 freeze; plan §3 schema row) |
+| 2026-07-04 | **M5 pipeline freeze (§10).** Migration 0004 `pipeline-tables-init`: `pipeline_definition` (the saved versioned JSON DAG document verbatim + schema_version re-validated on load + schema_hash for drift) + `pipeline_run` (status enum pending·running·paused·completed·failed·cancelled; pinned schema_hash; inputs/workstream) + `step_attempt` = **THE memoization journal** (append-only via UNIQUE (run_id, step_id, iteration, attempt); the resume lookup `findMemoized(run,step,iteration,input_hash)` returns a COMPLETED/`memoized` attempt's cached output → no re-execution, the M5 DoD; state enum incl. `blocked`/`awaiting-approval`/`memoized`/`skipped`; nullable session_id = the spawned node / workflow-edge target; label-enum account CHECK [X2]). Decisions recorded: **KERNEL DATABASE via KERNEL_MIGRATIONS** (§10.1 — same commit boundary + query plan as the `workflow`-edge session_nodes each attempt produces; journal writes are resume-ledger-rate; repo-wide-unique migration ids 0001/0002/0003/0004); epoch-ms integers (§10.1); `PIPELINES_FIELD_TAGS` on document/inputs/output JSON, definition name identity-screened (§10.4). Verified sufficient, NO change: the `workflow` edge type (in the frozen §8.5 vocabulary since M4) + the events `(backend, raw_ref)` dedupe key carry the per-step lineage + cost seams (§10.5). `schema_meta` gains pipeline keys, M1/M4 seeds untouched. Migrations 0001/0002/0003 untouched; `openKernelStore` now also hands back the `pipelines` accessors. | — (M5 freeze; plan §3 schema row) |

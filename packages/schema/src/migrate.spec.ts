@@ -65,10 +65,15 @@ describe('createMigrationRunner', () => {
     const driver = memoryDriver();
     const runner = createMigrationRunner(driver);
     const applied = await runner.apply(KERNEL_MIGRATIONS);
-    // 0001 = M1 kernel tables; 0003 = M4 lineage tables (0002 lives on the
-    // separate collector events database — EVENTS_STORE_MIGRATIONS).
-    expect(applied.map((a) => a.name)).toEqual(['kernel-tables-init', 'lineage-tables-init']);
-    // the three kernel tables + the four lineage tables exist:
+    // 0001 = M1 kernel tables; 0003 = M4 lineage tables; 0004 = M5 pipeline
+    // tables (0002 lives on the separate collector events database —
+    // EVENTS_STORE_MIGRATIONS).
+    expect(applied.map((a) => a.name)).toEqual([
+      'kernel-tables-init',
+      'lineage-tables-init',
+      'pipeline-tables-init',
+    ]);
+    // the three kernel tables + four lineage tables + three pipeline tables:
     const tables = driver
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all()
@@ -80,6 +85,9 @@ describe('createMigrationRunner', () => {
     expect(tables).toContain('session_node');
     expect(tables).toContain('session_edge');
     expect(tables).toContain('brief');
+    expect(tables).toContain('pipeline_definition');
+    expect(tables).toContain('pipeline_run');
+    expect(tables).toContain('step_attempt');
   });
 
   // -- positive: re-run idempotence -------------------------------------------
@@ -166,7 +174,7 @@ describe('createMigrationRunner', () => {
     const second = openNodeSqliteDatabase({ path });
     const runner = createMigrationRunner(second.driver);
     expect(await runner.apply(KERNEL_MIGRATIONS)).toEqual([]); // already applied
-    expect((await runner.applied()).map((a) => a.id)).toEqual([1, 3]);
+    expect((await runner.applied()).map((a) => a.id)).toEqual([1, 3, 4]);
     second.driver.close();
     rmSync(dir, { recursive: true, force: true });
   });

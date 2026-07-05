@@ -122,6 +122,30 @@ import {
   isSessionNodeState,
   isWorkstreamStatus,
 } from './workstreams.js';
+import type {
+  CatalogEntry,
+  CatalogSnapshot,
+  OpaquePipelinePayload,
+  PipelineClientPayload,
+  PipelineRunSnapshot,
+  PipelineRunStatusEvent,
+  PipelineRunStatusRecord,
+  PipelineSaved,
+  PipelineServerPayload,
+  PipelineStepStatusEvent,
+  PipelineStepStatusRecord,
+  PipelineValidationResult,
+} from './pipelines.js';
+import {
+  PIPELINE_ID_RE,
+  PIPELINE_REQUEST_ID_RE,
+  isCapabilityBackendFamily,
+  isCapabilityKind,
+  isCatalogScope,
+  isPipelineRunState,
+  isPipelineStepState,
+} from './pipelines.js';
+import { validateDagDocument } from './dag/index.js';
 
 // ---------------------------------------------------------------------------
 // Field helpers
@@ -1897,4 +1921,376 @@ export function validateWorkstreamClientMessage(
   const params = validateWorkstreamMergeParams(value['params']);
   if (!params.ok) return params;
   return valid({ kind: 'workstream-merge-request', mergeId, params: params.value });
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline payloads (features 4/5 — the `pipelines` channel) — FROZEN-M5
+// ---------------------------------------------------------------------------
+
+function isPipelineId(value: unknown): value is string {
+  return typeof value === 'string' && PIPELINE_ID_RE.test(value);
+}
+
+function isPipelineRequestId(value: unknown): value is string {
+  return typeof value === 'string' && PIPELINE_REQUEST_ID_RE.test(value);
+}
+
+function isSha256Ref(value: unknown): value is string {
+  return typeof value === 'string' && /^sha256:[0-9a-f]{8,64}$/.test(value);
+}
+
+function validateCatalogEntry(value: unknown): ValidationResult<CatalogEntry> {
+  if (!isRecord(value)) return invalid('bad-request', 'catalog entry must be an object');
+  const capId = value['capId'];
+  if (!isSessionIdSegment(capId)) return invalid('bad-request', 'catalog entry capId malformed');
+  const kind = value['kind'];
+  if (!isCapabilityKind(kind)) return invalid('bad-request', `unknown capability kind ${JSON.stringify(kind)}`);
+  const name = value['name'];
+  if (!isNonEmptyString(name)) return invalid('bad-request', 'catalog entry name must be a non-empty string');
+  const scope = value['scope'];
+  if (!isCatalogScope(scope)) return invalid('bad-request', `unknown catalog scope ${JSON.stringify(scope)}`);
+  const backendFamily = value['backendFamily'];
+  if (!isCapabilityBackendFamily(backendFamily)) {
+    return invalid('bad-request', `unknown catalog backendFamily ${JSON.stringify(backendFamily)}`);
+  }
+  const workspace = value['workspace'];
+  if (workspace !== undefined && (!isNonEmptyString(workspace) || !workspace.startsWith('/'))) {
+    return invalid('bad-request', 'catalog entry workspace, when present, must be an absolute path');
+  }
+  const sourcePath = value['sourcePath'];
+  if (!isNonEmptyString(sourcePath) || !sourcePath.startsWith('/')) {
+    return invalid('bad-request', 'catalog entry sourcePath must be an absolute path');
+  }
+  const contentHash = value['contentHash'];
+  if (!isSha256Ref(contentHash)) {
+    return invalid('bad-request', 'catalog entry contentHash must be sha256:<hex>');
+  }
+  const slash = value['slash'];
+  if (slash !== undefined && (!isNonEmptyString(slash) || !slash.startsWith('/'))) {
+    return invalid('bad-request', 'catalog entry slash, when present, must start with /');
+  }
+  const argumentHint = value['argumentHint'];
+  if (argumentHint !== undefined && !isNonEmptyString(argumentHint)) {
+    return invalid('bad-request', 'catalog entry argumentHint, when present, must be a non-empty string');
+  }
+  const disableModelInvocation = value['disableModelInvocation'];
+  if (disableModelInvocation !== undefined && typeof disableModelInvocation !== 'boolean') {
+    return invalid('bad-request', 'catalog entry disableModelInvocation must be a boolean');
+  }
+  const accounts = value['accounts'];
+  let parsedAccounts: CatalogEntry['accounts'] | undefined;
+  if (accounts !== undefined) {
+    if (!Array.isArray(accounts) || accounts.length === 0 || !accounts.every(isAccountLabel)) {
+      return invalid('bad-request', 'catalog entry accounts, when present, must be a non-empty array of account labels');
+    }
+    parsedAccounts = accounts as CatalogEntry['accounts'];
+  }
+  return valid({
+    capId,
+    kind,
+    name,
+    scope,
+    backendFamily,
+    ...(workspace !== undefined ? { workspace } : {}),
+    sourcePath,
+    contentHash,
+    ...(slash !== undefined ? { slash } : {}),
+    ...(argumentHint !== undefined ? { argumentHint } : {}),
+    ...(disableModelInvocation !== undefined ? { disableModelInvocation } : {}),
+    ...(parsedAccounts !== undefined ? { accounts: parsedAccounts } : {}),
+  });
+}
+
+function validateCatalogSnapshot(value: Record<string, unknown>): ValidationResult<CatalogSnapshot> {
+  const capturedAt = value['capturedAt'];
+  if (!isEpochMs(capturedAt)) return invalid('bad-request', 'catalog-snapshot capturedAt must be epoch ms');
+  const workspace = value['workspace'];
+  if (workspace !== undefined && (!isNonEmptyString(workspace) || !workspace.startsWith('/'))) {
+    return invalid('bad-request', 'catalog-snapshot workspace, when present, must be an absolute path');
+  }
+  const entries = value['entries'];
+  if (!Array.isArray(entries)) return invalid('bad-request', 'catalog-snapshot entries must be an array');
+  const out: CatalogEntry[] = [];
+  for (const entry of entries as unknown[]) {
+    const parsed = validateCatalogEntry(entry);
+    if (!parsed.ok) return parsed;
+    out.push(parsed.value);
+  }
+  return valid({
+    kind: 'catalog-snapshot',
+    capturedAt,
+    ...(workspace !== undefined ? { workspace } : {}),
+    entries: out,
+  });
+}
+
+function validatePipelineStepStatusRecord(
+  value: Record<string, unknown>,
+): ValidationResult<PipelineStepStatusRecord> {
+  const runId = value['runId'];
+  if (!isPipelineId(runId)) return invalid('bad-request', 'pipeline step runId malformed');
+  const stepId = value['stepId'];
+  if (!isNonEmptyString(stepId)) return invalid('bad-request', 'pipeline step stepId must be a non-empty string');
+  const iteration = value['iteration'];
+  if (!isNonNegativeSafeInteger(iteration)) return invalid('bad-request', 'pipeline step iteration must be a non-negative safe integer');
+  const attempt = value['attempt'];
+  if (!isNonNegativeSafeInteger(attempt)) return invalid('bad-request', 'pipeline step attempt must be a non-negative safe integer');
+  const state = value['state'];
+  if (!isPipelineStepState(state)) return invalid('bad-request', `unknown pipeline step state ${JSON.stringify(state)}`);
+  const sessionId = value['sessionId'];
+  if (sessionId !== undefined && !isSessionIdSegment(sessionId)) {
+    return invalid('bad-request', 'pipeline step sessionId malformed');
+  }
+  const account = value['account'];
+  if (account !== undefined && !isAccountLabel(account)) {
+    return invalid('bad-request', `pipeline step account unknown ${JSON.stringify(account)}`);
+  }
+  const costEstimatedUsd = value['costEstimatedUsd'];
+  if (costEstimatedUsd !== undefined && !isNonNegativeFinite(costEstimatedUsd)) {
+    return invalid('bad-request', 'pipeline step costEstimatedUsd must be a non-negative finite number');
+  }
+  const tokensIn = value['tokensIn'];
+  if (tokensIn !== undefined && !isNonNegativeSafeInteger(tokensIn)) {
+    return invalid('bad-request', 'pipeline step tokensIn must be a non-negative safe integer');
+  }
+  const tokensOut = value['tokensOut'];
+  if (tokensOut !== undefined && !isNonNegativeSafeInteger(tokensOut)) {
+    return invalid('bad-request', 'pipeline step tokensOut must be a non-negative safe integer');
+  }
+  const startedAt = value['startedAt'];
+  if (startedAt !== undefined && !isEpochMs(startedAt)) return invalid('bad-request', 'pipeline step startedAt must be epoch ms');
+  const finishedAt = value['finishedAt'];
+  if (finishedAt !== undefined && !isEpochMs(finishedAt)) return invalid('bad-request', 'pipeline step finishedAt must be epoch ms');
+  const errorKind = value['errorKind'];
+  if (errorKind !== undefined && !isNonEmptyString(errorKind)) {
+    return invalid('bad-request', 'pipeline step errorKind, when present, must be a non-empty string');
+  }
+  return valid({
+    runId,
+    stepId,
+    iteration,
+    attempt,
+    state,
+    ...(sessionId !== undefined ? { sessionId } : {}),
+    ...(account !== undefined ? { account } : {}),
+    ...(costEstimatedUsd !== undefined ? { costEstimatedUsd } : {}),
+    ...(tokensIn !== undefined ? { tokensIn } : {}),
+    ...(tokensOut !== undefined ? { tokensOut } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(finishedAt !== undefined ? { finishedAt } : {}),
+    ...(errorKind !== undefined ? { errorKind } : {}),
+  });
+}
+
+function validatePipelineRunStatusRecord(
+  value: Record<string, unknown>,
+): ValidationResult<PipelineRunStatusRecord> {
+  const runId = value['runId'];
+  if (!isPipelineId(runId)) return invalid('bad-request', 'pipeline run runId malformed');
+  const pipelineId = value['pipelineId'];
+  if (!isPipelineId(pipelineId)) return invalid('bad-request', 'pipeline run pipelineId malformed');
+  const state = value['state'];
+  if (!isPipelineRunState(state)) return invalid('bad-request', `unknown pipeline run state ${JSON.stringify(state)}`);
+  const schemaHash = value['schemaHash'];
+  if (schemaHash !== undefined && !isSha256Ref(schemaHash)) {
+    return invalid('bad-request', 'pipeline run schemaHash must be sha256:<hex>');
+  }
+  const costEstimatedUsd = value['costEstimatedUsd'];
+  if (costEstimatedUsd !== undefined && !isNonNegativeFinite(costEstimatedUsd)) {
+    return invalid('bad-request', 'pipeline run costEstimatedUsd must be a non-negative finite number');
+  }
+  const startedAt = value['startedAt'];
+  if (startedAt !== undefined && !isEpochMs(startedAt)) return invalid('bad-request', 'pipeline run startedAt must be epoch ms');
+  const finishedAt = value['finishedAt'];
+  if (finishedAt !== undefined && !isEpochMs(finishedAt)) return invalid('bad-request', 'pipeline run finishedAt must be epoch ms');
+  const resumable = value['resumable'];
+  if (resumable !== undefined && typeof resumable !== 'boolean') {
+    return invalid('bad-request', 'pipeline run resumable, when present, must be a boolean');
+  }
+  return valid({
+    runId,
+    pipelineId,
+    state,
+    ...(schemaHash !== undefined ? { schemaHash } : {}),
+    ...(costEstimatedUsd !== undefined ? { costEstimatedUsd } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(finishedAt !== undefined ? { finishedAt } : {}),
+    ...(resumable !== undefined ? { resumable } : {}),
+  });
+}
+
+function validatePipelineRunSnapshot(
+  value: Record<string, unknown>,
+): ValidationResult<PipelineRunSnapshot> {
+  const capturedAt = value['capturedAt'];
+  if (!isEpochMs(capturedAt)) return invalid('bad-request', 'pipeline-run-snapshot capturedAt must be epoch ms');
+  const run = validatePipelineRunStatusRecord(isRecord(value['run']) ? value['run'] : {});
+  if (!run.ok) return run;
+  const steps = value['steps'];
+  if (!Array.isArray(steps)) return invalid('bad-request', 'pipeline-run-snapshot steps must be an array');
+  const out: PipelineStepStatusRecord[] = [];
+  for (const step of steps as unknown[]) {
+    if (!isRecord(step)) return invalid('bad-request', 'pipeline step must be an object');
+    const parsed = validatePipelineStepStatusRecord(step);
+    if (!parsed.ok) return parsed;
+    out.push(parsed.value);
+  }
+  return valid({ kind: 'pipeline-run-snapshot', capturedAt, run: run.value, steps: out });
+}
+
+function validatePipelineValidationResult(
+  value: Record<string, unknown>,
+): ValidationResult<PipelineValidationResult> {
+  const requestId = value['requestId'];
+  if (!isPipelineRequestId(requestId)) return invalid('bad-request', 'pipeline-validation-result requestId malformed');
+  const isValid = value['valid'];
+  if (typeof isValid !== 'boolean') return invalid('bad-request', 'pipeline-validation-result valid must be a boolean');
+  const issueCode = value['issueCode'];
+  const issueMessage = value['issueMessage'];
+  const issuePath = value['issuePath'];
+  if (isValid) {
+    if (issueCode !== undefined || issueMessage !== undefined || issuePath !== undefined) {
+      return invalid('bad-request', 'pipeline-validation-result valid=true must not carry issue fields');
+    }
+    return valid({ kind: 'pipeline-validation-result', requestId, valid: true });
+  }
+  if (!isNonEmptyString(issueCode)) return invalid('bad-request', 'pipeline-validation-result valid=false requires issueCode');
+  if (!isNonEmptyString(issueMessage)) return invalid('bad-request', 'pipeline-validation-result valid=false requires issueMessage');
+  if (issuePath !== undefined && typeof issuePath !== 'string') {
+    return invalid('bad-request', 'pipeline-validation-result issuePath, when present, must be a string');
+  }
+  return valid({
+    kind: 'pipeline-validation-result',
+    requestId,
+    valid: false,
+    issueCode,
+    issueMessage,
+    ...(issuePath !== undefined ? { issuePath } : {}),
+  });
+}
+
+function validatePipelineSaved(value: Record<string, unknown>): ValidationResult<PipelineSaved> {
+  const requestId = value['requestId'];
+  if (!isPipelineRequestId(requestId)) return invalid('bad-request', 'pipeline-saved requestId malformed');
+  const pipelineId = value['pipelineId'];
+  if (!isPipelineId(pipelineId)) return invalid('bad-request', 'pipeline-saved pipelineId malformed');
+  return valid({ kind: 'pipeline-saved', requestId, pipelineId });
+}
+
+/**
+ * Validate an inbound payload on the `pipelines` channel (client side).
+ *
+ * The FROZEN forward-tolerant reader rule (M5, the events §13.3 rule applied
+ * verbatim): a payload whose `kind` is a non-empty string OUTSIDE the frozen
+ * set decodes as an {@link OpaquePipelinePayload} and MUST be ignored.
+ * Registered kinds validate strictly; kindless payloads are malformed.
+ */
+export function validatePipelineServerPayload(
+  value: unknown,
+): ValidationResult<PipelineServerPayload | OpaquePipelinePayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'pipelines payload must be an object');
+  const kind = value['kind'];
+  if (!isNonEmptyString(kind)) return invalid('bad-request', 'pipelines payload kind must be a non-empty string');
+  switch (kind) {
+    case 'catalog-snapshot':
+      return validateCatalogSnapshot(value);
+    case 'pipeline-run-snapshot':
+      return validatePipelineRunSnapshot(value);
+    case 'pipeline-run-status': {
+      const parsed = validatePipelineRunStatusRecord(value);
+      return parsed.ok
+        ? valid({ kind: 'pipeline-run-status', ...parsed.value } satisfies PipelineRunStatusEvent)
+        : parsed;
+    }
+    case 'pipeline-step-status': {
+      const parsed = validatePipelineStepStatusRecord(value);
+      return parsed.ok
+        ? valid({ kind: 'pipeline-step-status', ...parsed.value } satisfies PipelineStepStatusEvent)
+        : parsed;
+    }
+    case 'pipeline-validation-result':
+      return validatePipelineValidationResult(value);
+    case 'pipeline-saved':
+      return validatePipelineSaved(value);
+    default:
+      return valid({ kind, opaque: true });
+  }
+}
+
+/**
+ * Validate an inbound `pipelines` payload on the BROKER side — one of the six
+ * pipeline verbs (besides the generic `replay-request`, which the gateway
+ * routes FIRST). Anything else answers `bad-request` (the workstream-client
+ * precedent). Note: a DAG document that fails static validation is NOT a
+ * `bad-request` on the launch/save verbs — the verb is well-formed; the broker
+ * answers `pipeline-invalid` at RUNTIME. So these validators check only that
+ * `document` is an object here; the broker runs {@link validateDagDocument}.
+ * BUT `pipeline-validate` DOES run the full DAG validation inline (its whole
+ * job is validation) so a malformed document there is a legitimate answer.
+ */
+export function validatePipelineClientMessage(
+  value: unknown,
+): ValidationResult<PipelineClientPayload> {
+  if (!isRecord(value)) return invalid('bad-request', 'pipelines message must be an object');
+  const kind = value['kind'];
+  const requestId = value['requestId'];
+  if (!isPipelineRequestId(requestId)) {
+    return invalid('bad-request', `pipelines verb requestId must match ${PIPELINE_REQUEST_ID_RE.source}`);
+  }
+  switch (kind) {
+    case 'pipeline-validate':
+    case 'pipeline-save': {
+      const parsed = validateDagDocument(value['document']);
+      if (!parsed.ok) {
+        // A malformed document is a shape error on the verb: the client sent a
+        // structurally-invalid DAG. (pipeline-validate's whole job is to
+        // report this, but the wire verb must still carry a parseable doc.)
+        return invalid('bad-request', `pipelines ${kind} document invalid: ${parsed.issue.message}`);
+      }
+      return valid({ kind, requestId, document: parsed.document });
+    }
+    case 'pipeline-launch': {
+      const pipelineId = value['pipelineId'];
+      const document = value['document'];
+      const hasPipeline = pipelineId !== undefined;
+      const hasDocument = document !== undefined;
+      if (hasPipeline === hasDocument) {
+        return invalid('bad-request', 'pipeline-launch requires exactly one of pipelineId | document');
+      }
+      let parsedDoc;
+      if (hasDocument) {
+        const parsed = validateDagDocument(document);
+        if (!parsed.ok) return invalid('bad-request', `pipeline-launch document invalid: ${parsed.issue.message}`);
+        parsedDoc = parsed.document;
+      }
+      if (hasPipeline && !isPipelineId(pipelineId)) {
+        return invalid('bad-request', 'pipeline-launch pipelineId malformed');
+      }
+      const inputs = value['inputs'];
+      if (inputs !== undefined && !isRecord(inputs)) {
+        return invalid('bad-request', 'pipeline-launch inputs, when present, must be an object');
+      }
+      const workstreamId = value['workstreamId'];
+      if (workstreamId !== undefined && !isLineageIdSegment(workstreamId)) {
+        return invalid('bad-request', 'pipeline-launch workstreamId malformed');
+      }
+      return valid({
+        kind: 'pipeline-launch',
+        requestId,
+        ...(hasPipeline ? { pipelineId: pipelineId as string } : {}),
+        ...(parsedDoc !== undefined ? { document: parsedDoc } : {}),
+        ...(inputs !== undefined ? { inputs: inputs as Record<string, unknown> } : {}),
+        ...(workstreamId !== undefined ? { workstreamId } : {}),
+      });
+    }
+    case 'pipeline-pause':
+    case 'pipeline-resume':
+    case 'pipeline-cancel': {
+      const runId = value['runId'];
+      if (!isPipelineId(runId)) return invalid('bad-request', `${kind} runId malformed`);
+      return valid({ kind, requestId, runId });
+    }
+    default:
+      return invalid('bad-request', `unknown pipelines client kind ${JSON.stringify(kind)}`);
+  }
 }

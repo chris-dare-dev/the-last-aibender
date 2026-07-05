@@ -16,6 +16,9 @@
  * `watermark-out-of-range` doc widened to cover JSON channel replay.
  * M4 freeze — `workstream-not-found` added (the merge-request verb's
  * unknown-workstream failure; ws-protocol.md §16, amendment-recorded).
+ * M5 freeze — `pipeline-not-found` / `pipeline-run-not-found` /
+ * `pipeline-invalid` / `step-not-found` added (the pipeline verbs' runtime
+ * failures; ws-protocol.md §18, amendment-recorded).
  * ============================================================================
  */
 
@@ -57,6 +60,26 @@ export const ERROR_CODES = Object.freeze([
    * `session-not-found` on the lineage-entity axis.
    */
   'workstream-not-found',
+  /**
+   * A pipeline verb named a `pipelineId` with no saved definition (M5 freeze).
+   * Runtime state, not malformed traffic — the pipeline-entity axis.
+   */
+  'pipeline-not-found',
+  /**
+   * A run verb (pause/resume/cancel) named a `runId` with no run (M5 freeze).
+   */
+  'pipeline-run-not-found',
+  /**
+   * A launch/save verb carried a DAG document that failed static validation
+   * (M5 freeze). The detail rides the `pipeline-validation-result` payload
+   * (issue class + path); the error itself is GENERIC [X2].
+   */
+  'pipeline-invalid',
+  /**
+   * A pipeline verb referenced a step id absent from the run's document
+   * (M5 freeze). The pipeline-step-entity axis.
+   */
+  'step-not-found',
   /** Binary PTY frame exceeds PTY_FRAME_MAX_PAYLOAD_BYTES or is malformed. */
   'oversized-frame',
   /**

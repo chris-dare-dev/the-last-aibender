@@ -7,7 +7,9 @@
  * BE-ORCH lands, FE-ORCH co-signs. Prose of record: docs/contracts/ws-protocol.md.
  * Amendments: M4 freeze — the `workstream` channel (stream `workstream`)
  * registered for the X4 lineage view (workstreams.ts; ws-protocol.md §16,
- * amendment-recorded). No M1–M3 channel or rule changed.
+ * amendment-recorded). M5 freeze — the `pipelines` channel (stream
+ * `pipelines`) registered for features 4/5 (pipelines.ts; ws-protocol.md §18,
+ * amendment-recorded). No M1–M4 channel or rule changed.
  * ============================================================================
  */
 
@@ -20,6 +22,8 @@ export const CHANNEL = Object.freeze({
   CONTROL: 'control',
   /** M4: the X4 lineage fan-out + merge-request channel (workstreams.ts). */
   WORKSTREAM: 'workstream',
+  /** M5: the catalog + pipeline run-monitor fan-out + verb channel (pipelines.ts). */
+  PIPELINES: 'pipelines',
 } as const);
 
 export type StaticChannelName = (typeof CHANNEL)[keyof typeof CHANNEL];
@@ -47,6 +51,7 @@ export const STREAMS = Object.freeze([
   'transcript',
   'context-graph',
   'workstream',
+  'pipelines',
 ] as const);
 
 export type StreamName = (typeof STREAMS)[number];

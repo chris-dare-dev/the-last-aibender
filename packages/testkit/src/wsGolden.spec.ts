@@ -19,7 +19,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M4');
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M5');
   });
 
   it('every fixture replays to its pinned verdict at its pinned stage', () => {
@@ -143,11 +143,14 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
         // M4 freeze stages
         'workstream-payload',
         'workstream-client-message',
+        // M5 freeze stages
+        'pipelines-payload',
+        'pipelines-client-message',
       ].sort(),
     );
   });
 
-  it('M2/M3/M4 surfaces have both valid and invalid coverage (valid + every invalid class)', () => {
+  it('M2/M3/M4/M5 surfaces have both valid and invalid coverage (valid + every invalid class)', () => {
     for (const stage of [
       'transcript-payload',
       'approvals-client-message',
@@ -158,6 +161,8 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
       'events-payload',
       'workstream-payload',
       'workstream-client-message',
+      'pipelines-payload',
+      'pipelines-client-message',
     ] as const) {
       const ofStage = GOLDEN_WS_FIXTURES.filter((f) => f.stage === stage);
       expect(ofStage.some((f) => f.expect.valid), `${stage} valid`).toBe(true);

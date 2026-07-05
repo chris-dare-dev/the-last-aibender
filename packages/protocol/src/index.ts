@@ -3,10 +3,39 @@
  * aibender-core gateway (BE-3) and every frontend client (FE-2).
  *
  * ============================================================================
- * FROZEN-M4 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs (SI-ORCH co-signs
- * the hooks slices). The M4 freeze adds the X4 lineage surfaces; every
- * M1–M3 shape is carried forward unchanged. Amendments ONLY via ICR
+ * FROZEN-M5 (2026-07-04) — owner BE-ORCH, FE-ORCH co-signs. The M5 freeze adds
+ * the features-4/5 surfaces (catalog scanner + pipeline engine); every M1–M4
+ * shape is carried forward unchanged. Amendments ONLY via ICR
  * (docs/contracts/icr/).
+ *
+ * Promoted to FROZEN at M5:
+ *   - the versioned JSON DAG document format + validator (dag/): step kinds
+ *     {prompt|skill|agent|workflow-script|approval}, `needs:` edges, `when`
+ *     conditionals, `forEach`+`maxParallel`, `loop`, first-class `approval`
+ *     gates; per-step account/backend/cwd/permissionMode/budget/retry/
+ *     outputSchema; document `schemaVersion` with the forward-INCOMPAT rule
+ *     (unknown versions + unknown step kinds are REFUSED, the opposite of the
+ *     wire channels' forward-tolerant unknown-KIND rule — a DAG document is
+ *     load-bearing execution state, not fire-and-forget fan-out). Validation
+ *     semantics: cycle detection, unknown-step-kind, dangling-needs,
+ *     duplicate-step-id, invalid-account (+ account/backend consistency),
+ *     bad-shape. Prose of record: docs/contracts/dag-schema.md v1.
+ *   - the `pipelines` channel payloads (pipelines.ts): broker→client
+ *     `catalog-snapshot` (the builder palette; paths+names+labels only [X2])
+ *     + `pipeline-run-snapshot`/`pipeline-run-status`/`pipeline-step-status`
+ *     (the run monitor, per-step cost reference + resume-from-journal
+ *     affordance) + `pipeline-validation-result` + `pipeline-saved`; client
+ *     verbs `pipeline-validate|save|launch|pause|resume|cancel`; unknown
+ *     broker-pushed kinds stay legal-and-ignored by the same forward-tolerant
+ *     reader rule the events/workstream channels froze. Approval GATES ride
+ *     the EXISTING approvals channel via the frozen `workflow-gate` source
+ *     (§10.1) — no new gate wire (the M2 one-inbox precedent).
+ *   - error codes `pipeline-not-found` / `pipeline-run-not-found` /
+ *     `pipeline-invalid` / `step-not-found` (errors.ts amendment)
+ *   - the `pipelines` channel joins the replayable fan-out set (replay.ts)
+ *
+ * FROZEN-M4 (2026-07-04). The M4 freeze added the X4 lineage surfaces; every
+ * M1–M3 shape is carried forward unchanged.
  *
  * Promoted to FROZEN at M4 (workstreams.ts + amendments recorded in the
  * owning modules and docs):
@@ -85,15 +114,15 @@
  */
 
 /**
- * Protocol version. `1.2.0` = the M4 freeze (additive: the workstream
- * channel + lineage seams + hooks routing; `1.1.0` was the M3 freeze,
- * `1.0.0` the M2 full freeze, `1.0.0-m1-core` the M1-CORE freeze).
+ * Protocol version. `1.3.0` = the M5 freeze (additive: the pipelines channel +
+ * the versioned JSON DAG schema module; `1.2.0` was the M4 freeze, `1.1.0` the
+ * M3 freeze, `1.0.0` the M2 full freeze, `1.0.0-m1-core` the M1-CORE freeze).
  * Consumers may assert against {@link PROTOCOL_FREEZE}.
  */
-export const PROTOCOL_VERSION = '1.2.0' as const;
+export const PROTOCOL_VERSION = '1.3.0' as const;
 
 /** Freeze marker for runtime assertions and golden fixtures. */
-export const PROTOCOL_FREEZE = 'FROZEN-M4' as const;
+export const PROTOCOL_FREEZE = 'FROZEN-M5' as const;
 
 // FROZEN surfaces (M1-CORE, carried forward) ----------------------------------
 export {
@@ -138,6 +167,7 @@ export {
   type EventsServerPayload,
   type FrozenM1Payload,
   type FrozenPayload,
+  type PipelineChannelPayload,
   type WorkstreamChannelPayload,
 } from './envelope.js';
 
@@ -375,3 +405,97 @@ export {
   type WorkstreamStatus,
   type WorkstreamSummary,
 } from './workstreams.js';
+
+// FROZEN surfaces promoted at M5 ------------------------------------------------
+
+// The versioned JSON DAG document format + validator (dag-schema.md v1).
+export {
+  ACCOUNT_STEP_BACKENDS,
+  CAPABILITY_SCOPES,
+  DAG_ID_RE,
+  DAG_ISSUE_CODES,
+  DAG_NAME_RE,
+  DAG_SCHEMA_VERSION,
+  EXECUTABLE_STEP_KINDS,
+  ON_ERROR_POLICIES,
+  PERMISSION_MODES,
+  RETRY_ON_CLASSES,
+  STEP_BACKENDS,
+  STEP_ID_RE,
+  STEP_KINDS,
+  isCapabilityScope,
+  isPermissionMode,
+  isRetryOnClass,
+  isStepBackend,
+  isStepKind,
+  validateDagDocument,
+  type AgentStep,
+  type ApprovalStep,
+  type CapabilityRef,
+  type CapabilityScope,
+  type DagDefaults,
+  type DagDocument,
+  type DagInputSchema,
+  type DagIssueCode,
+  type DagValidationIssue,
+  type DagValidationResult,
+  type ExecutableStepKind,
+  type LoopControl,
+  type OnErrorLiteral,
+  type OnErrorPolicy,
+  type PermissionMode,
+  type PipelineStep,
+  type PromptStep,
+  type RetryOnClass,
+  type RetryPolicy,
+  type SkillStep,
+  type StepBackend,
+  type StepBudget,
+  type StepKind,
+  type WorkflowScriptStep,
+} from './dag/index.js';
+
+// The `pipelines` channel payloads + client verbs (ws-protocol.md §18).
+export {
+  CAPABILITY_BACKEND_FAMILIES,
+  CAPABILITY_KINDS,
+  CATALOG_SCOPES,
+  PIPELINE_CLIENT_VERBS,
+  PIPELINE_ID_RE,
+  PIPELINE_REQUEST_ID_RE,
+  PIPELINE_RUN_STATES,
+  PIPELINE_RUN_VERBS,
+  PIPELINE_SERVER_PAYLOAD_KINDS,
+  PIPELINE_STEP_STATES,
+  isCapabilityBackendFamily,
+  isCapabilityKind,
+  isCatalogScope,
+  isPipelineRunState,
+  isPipelineStepState,
+  type CapabilityBackendFamily,
+  type CapabilityKind,
+  type CatalogEntry,
+  type CatalogScope,
+  type CatalogSnapshot,
+  type OpaquePipelinePayload,
+  type PipelineCancelRequest,
+  type PipelineClientPayload,
+  type PipelineClientVerb,
+  type PipelineLaunchRequest,
+  type PipelinePauseRequest,
+  type PipelineResumeRequest,
+  type PipelineRunSnapshot,
+  type PipelineRunState,
+  type PipelineRunStatusEvent,
+  type PipelineRunStatusRecord,
+  type PipelineSaveRequest,
+  type PipelineSaved,
+  type PipelineServerPayload,
+  type PipelineStepState,
+  type PipelineStepStatusEvent,
+  type PipelineStepStatusRecord,
+  type PipelineValidateRequest,
+  type PipelineValidationResult,
+} from './pipelines.js';
+
+export { validatePipelineClientMessage, validatePipelineServerPayload } from './validate.js';

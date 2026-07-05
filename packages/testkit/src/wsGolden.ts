@@ -53,11 +53,13 @@ import {
   validateTranscriptPayload,
   validateWorkstreamClientMessage,
   validateWorkstreamServerPayload,
+  validatePipelineClientMessage,
+  validatePipelineServerPayload,
   type ErrorCode,
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M4';
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M5';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -91,7 +93,10 @@ export type GoldenWsStage =
   | 'events-payload'
   // M4 freeze stages ----------------------------------------------------------
   | 'workstream-payload'
-  | 'workstream-client-message';
+  | 'workstream-client-message'
+  // M5 freeze stages ----------------------------------------------------------
+  | 'pipelines-payload'
+  | 'pipelines-client-message';
 
 export type GoldenWsExpectation =
   | { readonly valid: true }
@@ -164,7 +169,7 @@ function transcriptFrame(sessionId: string, seq: number, payload: unknown): stri
 }
 
 function staticFrame(
-  channel: 'events' | 'quota' | 'approvals' | 'context-graph' | 'workstream',
+  channel: 'events' | 'quota' | 'approvals' | 'context-graph' | 'workstream' | 'pipelines',
   seq: number,
   payload: unknown,
 ): string {
@@ -221,6 +226,37 @@ const GOLDEN_WS_MERGE_REQUEST = {
     briefBody: 'merge brief: shared goal; conflicts surfaced explicitly.',
     workstreamId: 'ws_golden',
   },
+} as const;
+
+// Shared M5 pipeline fixture records (synthesized, [X2]).
+const GOLDEN_CATALOG_ENTRY = {
+  capId: 'cap_fake_1',
+  kind: 'skill',
+  name: 'write-report',
+  scope: 'project',
+  backendFamily: 'claude',
+  workspace: '/synthetic/workspace',
+  sourcePath: '/synthetic/workspace/.claude/skills/write-report/SKILL.md',
+  contentHash: 'sha256:deadbeefcafe',
+  slash: '/write-report',
+} as const;
+
+const GOLDEN_DAG_DOCUMENT = {
+  schemaVersion: 1,
+  id: 'wf_fake_1',
+  name: 'golden pipeline',
+  steps: [{ id: 'a', kind: 'prompt', prompt: 'do the thing' }],
+} as const;
+
+const GOLDEN_PIPELINE_STEP = {
+  runId: 'run_fake_1',
+  stepId: 'a',
+  iteration: 0,
+  attempt: 0,
+  state: 'memoized',
+  sessionId: 'ses_fake_1',
+  account: 'MAX_A',
+  costEstimatedUsd: 0.01,
 } as const;
 
 const FULL_STATUS = {
@@ -2165,6 +2201,301 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
       'unknown workstreamId is runtime state, never conflated with malformed traffic',
   },
 
+  // ==== M5 freeze: pipelines channel — broker → client ==========================
+  {
+    name: 'pipelines-catalog-snapshot-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 0, {
+      kind: 'catalog-snapshot',
+      capturedAt: 90000000,
+      workspace: '/synthetic/workspace',
+      entries: [GOLDEN_CATALOG_ENTRY],
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+    notes: 'the builder palette: capability entries (paths+names+labels only [X2])',
+  },
+  {
+    name: 'pipelines-run-snapshot-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 1, {
+      kind: 'pipeline-run-snapshot',
+      capturedAt: 90000000,
+      run: {
+        runId: 'run_fake_1',
+        pipelineId: 'wf_fake_1',
+        state: 'running',
+        resumable: true,
+        schemaHash: 'sha256:deadbeefcafe',
+      },
+      steps: [GOLDEN_PIPELINE_STEP],
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+    notes: 'the run monitor: run + per-step status (memoized = resumed-from-journal cache hit)',
+  },
+  {
+    name: 'pipelines-run-status-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 2, {
+      kind: 'pipeline-run-status',
+      runId: 'run_fake_1',
+      pipelineId: 'wf_fake_1',
+      state: 'completed',
+      costEstimatedUsd: 1.5,
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'pipelines-step-status-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 3, { kind: 'pipeline-step-status', ...GOLDEN_PIPELINE_STEP }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'pipelines-validation-result-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 4, {
+      kind: 'pipeline-validation-result',
+      requestId: 'req_v1',
+      valid: false,
+      issueCode: 'cycle',
+      issueMessage: 'the needs graph is not a DAG',
+      issuePath: 'steps',
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+    notes: 'validation failure is a NORMAL answer (not an error envelope) — carries the issue class',
+  },
+  {
+    name: 'pipelines-saved-valid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 5, {
+      kind: 'pipeline-saved',
+      requestId: 'req_s1',
+      pipelineId: 'wf_fake_1',
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'pipelines-unknown-kind-tolerated',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 6, { kind: 'pipeline-cost-rollup-m6', foo: 1 }),
+    stage: 'pipelines-payload',
+    expect: { valid: true },
+    notes: 'the frozen forward-tolerant reader rule: unknown kinds are legal-and-ignored (opaque)',
+  },
+  {
+    name: 'pipelines-payload-missing-kind',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 7, { capturedAt: 90000000 }),
+    stage: 'pipelines-payload',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'tolerance is for KINDS only — a kindless payload is malformed',
+  },
+  {
+    name: 'pipelines-catalog-relative-sourcepath',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 8, {
+      kind: 'catalog-snapshot',
+      capturedAt: 90000000,
+      entries: [{ ...GOLDEN_CATALOG_ENTRY, sourcePath: 'relative/SKILL.md' }],
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'pipelines-run-status-unknown-state',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: staticFrame('pipelines', 9, {
+      kind: 'pipeline-run-status',
+      runId: 'run_fake_1',
+      pipelineId: 'wf_fake_1',
+      state: 'exploded',
+    }),
+    stage: 'pipelines-payload',
+    expect: { valid: false, code: 'bad-request' },
+  },
+
+  // ==== M5 freeze: pipelines channel — client → broker ==========================
+  {
+    name: 'pipelines-validate-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 0, {
+      kind: 'pipeline-validate',
+      requestId: 'req_v1',
+      document: GOLDEN_DAG_DOCUMENT,
+    }),
+    stage: 'pipelines-client-message',
+    expect: { valid: true },
+  },
+  {
+    name: 'pipelines-save-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 1, {
+      kind: 'pipeline-save',
+      requestId: 'req_s1',
+      document: GOLDEN_DAG_DOCUMENT,
+    }),
+    stage: 'pipelines-client-message',
+    expect: { valid: true },
+  },
+  {
+    name: 'pipelines-launch-by-id-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 2, {
+      kind: 'pipeline-launch',
+      requestId: 'req_l1',
+      pipelineId: 'wf_fake_1',
+      inputs: { paths: ['/synthetic/a.ts'] },
+      workstreamId: 'ws_golden',
+    }),
+    stage: 'pipelines-client-message',
+    expect: { valid: true },
+    notes: 'the [X1] differentiator: per-step account routing rides the DAG; launch binds inputs',
+  },
+  {
+    name: 'pipelines-resume-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 3, {
+      kind: 'pipeline-resume',
+      requestId: 'req_r1',
+      runId: 'run_fake_1',
+    }),
+    stage: 'pipelines-client-message',
+    expect: { valid: true },
+    notes: 'resume-from-journal: completed steps return cached output without re-execution (M5 DoD)',
+  },
+  {
+    name: 'pipelines-replay-request-valid',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 4, { kind: 'replay-request', channel: 'pipelines', fromSeq: 0 }),
+    stage: 'replay-request',
+    expect: { valid: true },
+    notes: 'pipelines joined the replayable fan-out set at M5',
+  },
+  {
+    name: 'pipelines-launch-both-id-and-document',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 5, {
+      kind: 'pipeline-launch',
+      requestId: 'req_l2',
+      pipelineId: 'wf_fake_1',
+      document: GOLDEN_DAG_DOCUMENT,
+    }),
+    stage: 'pipelines-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'launch names EXACTLY ONE of pipelineId | document',
+  },
+  {
+    name: 'pipelines-validate-cyclic-document',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 6, {
+      kind: 'pipeline-validate',
+      requestId: 'req_v2',
+      document: {
+        schemaVersion: 1,
+        id: 'wf_fake_c',
+        name: 'cyclic',
+        steps: [{ id: 'a', kind: 'prompt', prompt: 'p', needs: ['a'] }],
+      },
+    }),
+    stage: 'pipelines-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'a structurally invalid DAG on the wire verb is a shape error',
+  },
+  {
+    name: 'pipelines-client-unknown-kind',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: staticFrame('pipelines', 7, { kind: 'pipeline-teleport', requestId: 'req_x' }),
+    stage: 'pipelines-client-message',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'clients send exactly the six pipeline verbs (+ the generic replay-request)',
+  },
+
+  // ==== M5 freeze: pushed errors for the new codes ==============================
+  {
+    name: 'pushed-error-pipeline-not-found',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: controlFrame(6, {
+      kind: 'error',
+      code: 'pipeline-not-found',
+      message: 'no saved pipeline for that id',
+      retryable: false,
+      correlatesTo: 'req_l1',
+      channel: 'pipelines',
+    }),
+    stage: 'error-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'pushed-error-pipeline-run-not-found',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: controlFrame(7, {
+      kind: 'error',
+      code: 'pipeline-run-not-found',
+      message: 'no run for that id',
+      retryable: false,
+      correlatesTo: 'req_r1',
+      channel: 'pipelines',
+    }),
+    stage: 'error-payload',
+    expect: { valid: true },
+  },
+  {
+    name: 'pushed-error-pipeline-invalid',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: controlFrame(8, {
+      kind: 'error',
+      code: 'pipeline-invalid',
+      message: 'the pipeline document failed validation',
+      retryable: false,
+      correlatesTo: 'req_l1',
+      channel: 'pipelines',
+    }),
+    stage: 'error-payload',
+    expect: { valid: true },
+    notes: 'launch/save carrying a document that fails static validation → generic error [X2]',
+  },
+  {
+    name: 'pushed-error-step-not-found',
+    kind: 'text',
+    direction: 'broker-to-client',
+    frame: controlFrame(9, {
+      kind: 'error',
+      code: 'step-not-found',
+      message: 'the run has no such step',
+      retryable: false,
+      channel: 'pipelines',
+    }),
+    stage: 'error-payload',
+    expect: { valid: true },
+  },
+
   // ---- binary PTY frames ---------------------------------------------------------
   {
     name: 'pty-frame-output-valid',
@@ -2349,6 +2680,13 @@ export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayR
         ? { valid: true, stage: 'workstream-client-message' }
         : { valid: false, code: merge.code, stage: 'workstream-client-message' };
     }
+    // M5: pipelines is the third one (the six pipeline verbs).
+    if (channel === 'pipelines') {
+      const verb = validatePipelineClientMessage(payload);
+      return verb.ok
+        ? { valid: true, stage: 'pipelines-client-message' }
+        : { valid: false, code: verb.code, stage: 'pipelines-client-message' };
+    }
     // Everything else stays broker→client only.
     return { valid: false, code: 'bad-request', stage: 'channel-policy' };
   }
@@ -2385,6 +2723,14 @@ export function replayGoldenWsFixture(fixture: GoldenWsFixture): GoldenWsReplayR
     return workstream.ok
       ? { valid: true, stage: 'workstream-payload' }
       : { valid: false, code: workstream.code, stage: 'workstream-payload' };
+  }
+
+  // pipelines (M5): the catalog + run-monitor union, forward-tolerant on unknown kinds.
+  if (channel === 'pipelines') {
+    const pipelines = validatePipelineServerPayload(payload);
+    return pipelines.ok
+      ? { valid: true, stage: 'pipelines-payload' }
+      : { valid: false, code: pipelines.code, stage: 'pipelines-payload' };
   }
 
   // events (M3): the frozen payload union, forward-tolerant on unknown kinds.

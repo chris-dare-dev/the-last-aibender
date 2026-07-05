@@ -1,18 +1,21 @@
 # WS protocol contract — envelope, channels, PTY frames, flow control
 
-> ## 🔒 FROZEN-M4 — 2026-07-04
-> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M4 freeze adds the X4 lineage
-> surfaces: the **`workstream` channel** (§16 — lineage snapshots, node/edge
-> events, briefs, the branch-now advisory, and the client merge request) and
-> the **lineage seams** (§15 — the kernel-facing edge recorder and the
-> ledger session-id resolver). Every M1–M3 shape is carried forward
-> unchanged (M3 froze the `events` union, §13). Every section below is
-> **FROZEN** and changes **only** through an interface change request
-> ([docs/contracts/icr/](icr/README.md)): an implementer files
-> `icr-NNNN-<slug>.md`, BE-ORCH lands the change, FE-ORCH co-signs.
+> ## 🔒 FROZEN-M5 — 2026-07-04
+> **Owner: BE-ORCH · Co-sign: FE-ORCH.** The M5 freeze adds the features-4/5
+> surfaces: the **`pipelines` channel** (§18 — the catalog palette snapshot,
+> the pipeline run monitor, and the client verbs
+> validate/save/launch/pause/resume/cancel). Approval GATES ride the EXISTING
+> approvals channel via the frozen `workflow-gate` source (§10.1) — no new gate
+> wire (the M2 one-inbox precedent). The versioned JSON DAG document format the
+> verbs carry is its own contract, [dag-schema.md](dag-schema.md). Every M1–M4
+> shape is carried forward unchanged (M4 froze the `workstream` channel §16 +
+> the lineage seams §15). Every section below is **FROZEN** and changes **only**
+> through an interface change request ([docs/contracts/icr/](icr/README.md)): an
+> implementer files `icr-NNNN-<slug>.md`, BE-ORCH lands the change, FE-ORCH
+> co-signs.
 >
 > The machine-checkable half of this contract is `packages/protocol`
-> (`PROTOCOL_VERSION = '1.2.0'`, `PROTOCOL_FREEZE = 'FROZEN-M4'`). **This
+> (`PROTOCOL_VERSION = '1.3.0'`, `PROTOCOL_FREEZE = 'FROZEN-M5'`). **This
 > document is the prose of record when the two disagree — file an ICR, never
 > a silent divergence.**
 
@@ -78,6 +81,7 @@ schedule), plan BE-3 (gateway). Flow-control mechanics were proven by SPIKE-D
 | `transcript.<sid>` | `transcript` | broker → client (+ client `replay-request` §8) | `transcript-delta` / `transcript-tool` / `transcript-result` (§9) |
 | `context-graph` | `context-graph` | broker → client (+ client `replay-request` §8) | `context-touch` (§12) |
 | `workstream` | `workstream` | bidirectional | lineage fan-out + tolerated unknown kinds / client `workstream-merge-request` + `replay-request` (§16, **frozen M4**) |
+| `pipelines` | `pipelines` | bidirectional | catalog + run-monitor fan-out + tolerated unknown kinds / client pipeline verbs + `replay-request` (§18, **frozen M5**) |
 
 `<sid>` is a **harness** session id (never a native id), charset
 `[A-Za-z0-9_-]`, 1–64 chars (`SESSION_ID_SEGMENT_RE`, `MAX_SESSION_ID_BYTES`).
@@ -253,8 +257,9 @@ oversized frame, non-pending approval decision) are pushed on `control` as:
 `bad-envelope` · `bad-auth` · `unknown-channel` · `unknown-verb` ·
 `verb-reserved` · `bad-request` · `session-not-found` ·
 `session-not-resumable` · `double-resume-blocked` · `approval-not-pending` ·
-`workstream-not-found` · `oversized-frame` · `watermark-out-of-range` ·
-`internal`
+`workstream-not-found` · `pipeline-not-found` · `pipeline-run-not-found` ·
+`pipeline-invalid` · `step-not-found` · `oversized-frame` ·
+`watermark-out-of-range` · `internal`
 
 `approval-not-pending` (M2, amendment-recorded): a decision referenced an
 approval that is not pending — unknown id, already resolved, or expired. This
@@ -267,6 +272,15 @@ named a `workstreamId` with no workstream row (§16.4). Runtime state, never
 conflated with malformed traffic — the lineage-entity parallel of
 `session-not-found`.
 
+`pipeline-not-found` · `pipeline-run-not-found` · `pipeline-invalid` ·
+`step-not-found` (M5, amendment-recorded): the pipeline verbs' runtime failures
+(§18.4). `pipeline-not-found` = an unknown saved `pipelineId`;
+`pipeline-run-not-found` = an unknown `runId` on pause/resume/cancel;
+`pipeline-invalid` = a launch/save carried a DAG document that failed static
+validation (the detail rides the `pipeline-validation-result` payload, the error
+itself is GENERIC [X2]); `step-not-found` = a referenced step id absent from the
+run's document. All runtime state, never conflated with malformed traffic.
+
 Adding a code after freeze is an ICR.
 
 ## 8. JSON reconnect-replay — FROZEN (M2)
@@ -277,8 +291,8 @@ the axis):
 - The broker journals a **bounded** window of outbound envelopes per
   replayable channel, scoped to the broker boot. Replayable channels =
   the broker→client fan-out set: `events`, `quota`, `approvals`,
-  `transcript.<sid>`, `context-graph`, and — M4, amendment-recorded —
-  `workstream` (`isReplayableChannel`). NOT `control`
+  `transcript.<sid>`, `context-graph`, `workstream` (M4), and — M5,
+  amendment-recorded — `pipelines` (`isReplayableChannel`). NOT `control`
   (correlates by id, dies with the connection) and NOT `pty.<sid>` (bytes
   replay on the `streamOffset` axis, §6).
 - On (re)connect a client MAY send one `replay-request` per channel — **on
@@ -491,15 +505,16 @@ malformed **registered** kinds, kindless payloads, and unknown `readModel` /
 ## 14. Golden corpus — the BE↔FE contract device
 
 `GOLDEN_WS_FIXTURES` in `packages/testkit` (ICR-0003, extended at the M2
-freeze, the M3 freeze with the `events-payload` stage, and the M4 freeze
-with the `workstream-payload` + `workstream-client-message` stages;
-`GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M4'` must equal the protocol package's
+freeze, the M3 freeze with the `events-payload` stage, the M4 freeze
+with the `workstream-payload` + `workstream-client-message` stages, and the
+M5 freeze with the `pipelines-payload` + `pipelines-client-message` stages;
+`GOLDEN_WS_CORPUS_FREEZE = 'FROZEN-M5'` must equal the protocol package's
 `PROTOCOL_FREEZE`). Every frozen payload family has valid + every invalid
 class pinned as exact wire bytes — including one valid snapshot per §6.3
-read model and one valid frame per §16 workstream kind; both departments'
-CI replays the same frames (plan §9.3 BE↔FE #1). A fixture change requires
-both orchestrators' sign-off. The hooks acceptance surface has its own
-sibling corpus (`GOLDEN_HOOK_FIXTURES`,
+read model, one valid frame per §16 workstream kind, and one valid frame per
+§18 pipelines kind + each verb; both departments' CI replays the same frames
+(plan §9.3 BE↔FE #1). A fixture change requires both orchestrators' sign-off.
+The hooks acceptance surface has its own sibling corpus (`GOLDEN_HOOK_FIXTURES`,
 [hooks-contract.md §6](hooks-contract.md)).
 
 ## 15. Lineage seams — FROZEN (M4)
@@ -656,7 +671,115 @@ its watermark) always finds a fresh snapshot inside the bounded journal
 window; below-floor history is unrecoverable by design and the next
 snapshot re-baselines the view.
 
-## 17. Amendment record
+## 18. `pipelines` payloads — FROZEN (M5)
+
+The features-4/5 feed (blueprint §7, plan §4/BE-8, §5/FE-6, findings
+[pipeline-workflow-builder.md](../research/findings/pipeline-workflow-builder.md)
+§R1/§R3). Bidirectional like `approvals`/`workstream`; replayable (§8).
+Validators: `validatePipelineServerPayload` (client inbound) /
+`validatePipelineClientMessage` (broker inbound). Types + vocabularies:
+`pipelines.ts`. The versioned JSON DAG document the verbs carry is its own
+contract, [dag-schema.md](dag-schema.md). **[X2] identity discipline:** payloads
+carry file paths, content hashes, harness ids, capability NAMES, and placeholder
+account labels ONLY — never native session ids (the event-summary/workstream
+precedent), never real emails/account-ids/tokens. Per-step cost is an ESTIMATE
+unless a field is explicitly labeled actual.
+
+### 18.1 Broker → client (fan-out, journaled §8)
+
+| Kind | Semantics |
+|---|---|
+| `catalog-snapshot` | the builder palette for one (workspace, account) resolution: `capturedAt`, `workspace?`, `entries: CatalogEntry[]`. Fired on boot and on FSEvents change (mirrors the CLI's live-reload) |
+| `pipeline-run-snapshot` | one run's full monitor state: `capturedAt`, `run: PipelineRunStatusRecord`, `steps: PipelineStepStatusRecord[]`. Pushed on boot/subscribe and on rebuild |
+| `pipeline-run-status` | a run-level status transition (upsert keyed on `runId`) |
+| `pipeline-step-status` | a per-step-attempt transition (upsert keyed on `runId`+`stepId`+`iteration`+`attempt`) |
+| `pipeline-validation-result` | the answer to a `pipeline-validate` verb: `requestId`, `valid`; on failure `issueCode`/`issueMessage`/`issuePath?` (the dag-schema.md §4 issue class). Validation failure is a NORMAL answer, NOT an error envelope |
+| `pipeline-saved` | the answer to a `pipeline-save` verb: `requestId`, `pipelineId` |
+
+`CatalogEntry = { capId, kind ∈ skill·command·agent·workflow·oc-agent·
+oc-command·plugin, name, scope ∈ enterprise·user·project·plugin·
+opencode-global·opencode-project, backendFamily ∈ claude·opencode, workspace?,
+sourcePath (absolute), contentHash (sha256:…), slash?, argumentHint?,
+disableModelInvocation?, accounts? }` — the normalized scanner record (findings
+§R1), paths+names+labels only [X2]. The parsed frontmatter is DELIBERATELY NOT
+on the wire (it can carry arbitrary user keys; the palette needs only the
+invocation surface).
+
+`PipelineRunStatusRecord = { runId, pipelineId, state ∈ pending·running·paused·
+completed·failed·cancelled, schemaHash?, costEstimatedUsd?, startedAt?,
+finishedAt?, resumable? }` (`resumable` drives the resume-from-journal
+affordance). `PipelineStepStatusRecord = { runId, stepId, iteration, attempt,
+state ∈ pending·blocked·running·awaiting-approval·completed·memoized·failed·
+skipped·cancelled, sessionId? (the spawned node — the `workflow` lineage edge
+target), account?, costEstimatedUsd?, tokensIn?, tokensOut?, startedAt?,
+finishedAt?, errorKind? }`. `memoized` = resumed from the journal WITHOUT
+re-execution (the M5 DoD); `awaiting-approval` = paused on a first-class
+`approval` gate (the gate itself rides the approvals channel §10.1).
+
+**Forward-tolerant reader rule (frozen, the §13.3 rule applied verbatim):** a
+broker push whose `kind` is a non-empty string outside the frozen set is legal
+and MUST be ignored by clients (decoded opaque). Registered kinds validate
+strictly; kindless payloads answer `bad-request`. Producers emit registered
+kinds only (tolerance is a READER rule).
+
+### 18.2 Client → broker: the pipeline verbs
+
+The six verbs the FE sends (the §16.2 merge-request precedent: a feature-scoped
+verb rides its fan-out channel, not `control`). Each carries a client-generated
+`requestId` (`[A-Za-z0-9_-]{1,128}`) and is answered by a payload/pushed error
+correlated on it.
+
+| `kind` | Params | Semantics |
+|---|---|---|
+| `pipeline-validate` | `document` (a DAG doc) | static validation, no run; answered by `pipeline-validation-result` |
+| `pipeline-save` | `document` | persist a definition; answered by `pipeline-saved` |
+| `pipeline-launch` | EXACTLY ONE of `pipelineId` \| `document`; `inputs?`; `workstreamId?` | start a run; per-step account routing rides the DAG (the [X1] differentiator) |
+| `pipeline-pause` | `runId` | pause a running walk (in-flight steps finish; no new steps start) |
+| `pipeline-resume` | `runId` | resume FROM THE JOURNAL — completed steps return cached output, never re-executing |
+| `pipeline-cancel` | `runId` | abort a run; all in-flight steps aborted, child process groups reaped (findings §R3) |
+
+`pipeline-validate`/`pipeline-save` carry a parseable DAG document on the wire;
+a structurally-invalid document is a `bad-request` shape error on the VERB
+(the validation-result payload reports the issue class for `pipeline-validate`).
+
+### 18.3 Approval gates ride the approvals channel (no new wire)
+
+A pipeline `approval` step (dag-schema.md §2) pauses the walk; the pending gate
+is an `approval-request` with `source: 'workflow-gate'` on the EXISTING
+`approvals` channel (§10.1: `runId`/`stepId` REQUIRED, `toolName`/`toolUseId`
+forbidden) — the M2 one-inbox precedent. The FE answers `approval-decision`;
+the broker fans out `approval-resolved`. No pipelines-channel gate payload
+exists by design.
+
+### 18.4 Error contract (frozen)
+
+Verb failures answer PUSHED errors (§7) with `correlatesTo: requestId` and
+`channel: "pipelines"`:
+
+| Code | Class |
+|---|---|
+| `bad-request` | shape violations (malformed verb/params, invalid DAG document on validate/save, launch naming both/neither pipelineId+document) |
+| `pipeline-not-found` | a launch named a `pipelineId` with no saved definition |
+| `pipeline-run-not-found` | a pause/resume/cancel named an unknown `runId` |
+| `pipeline-invalid` | a launch/save DAG document failed static validation (detail rides the validation-result payload; the error is GENERIC [X2]) |
+| `step-not-found` | a referenced step id is absent from the run's document |
+| `internal` | engine failure; message GENERIC [X2] |
+
+### 18.5 Snapshot delivery + lineage/cost seams
+
+Same posture as §13/§16.5: the broker pushes catalog + run snapshots on boot
+and on change; a client replaying from its watermark always finds a fresh
+snapshot inside the bounded journal window. **Lineage:** each step attempt =
+a `session_node` with `workflow` `session_edge`s to its successors — recorded by
+the pipeline runner (BE-8) directly on the lineage store (NOT via the
+`LineageRecorder` port §15.1, which is for kernel session actions) and published
+through the shared workstream publisher (dag-schema.md §6). **Cost:** per-step
+cost lands in the events store via the `(backend, raw_ref)` dedupe key
+([sqlite-ddl.md §7.2](sqlite-ddl.md)), `raw_ref` keyed
+`pipeline:<runId>:<stepId>:<iteration>` — verified sufficient at this freeze, no
+schema change.
+
+## 19. Amendment record
 
 | Date | Change | ICR |
 |---|---|---|
@@ -666,4 +789,5 @@ snapshot re-baselines the view.
 | 2026-07-04 | §6 **attach-semantics behavior pin** (prose only, NO wire change, requested in the BE-3 M2 return): OUTPUT frames for `pty.<sid>` flow to a connection only after its first `pty-replay-request` on that channel — the replay-request doubles as the attach verb (`fromWatermark` 0 = from session birth); never-attached connections receive nothing and pin nothing; clients must replay-request on every (re)connect. Matches the landed BE-3 implementation and the FE-2 client's documented duty; golden fixtures unaffected. FE-ORCH co-sign: **co-signed (M4 review)** — the FE client implements the duty (first `pty-replay-request` sent immediately on openPty-while-connected + on every (re)connect; asserted in `app/src/lib/ws/wsClient.spec.ts`). | — (BE-ORCH steward, prose pin) |
 | 2026-07-04 | **M3 FREEZE.** Closed the one open surface: the `events` payload union (§13) — `event-summary` (normalized events-store row fan-out, value-light [X2]) + `read-model-snapshot` (the ten §6.3 dashboard leads with a REQUIRED per-source freshness field; degraded sources are states, never errors) + the frozen forward-tolerant unknown-kind rule (§13.3, the M2 opaque policy made permanent). New closed registries: `EVENT_SOURCES`, `SOURCE_FRESHNESS_STATES`, `EVENT_ERROR_KINDS`, `READ_MODEL_IDS` (shared with schema migration 0002 CHECKs). Verified sufficient, NO amendment: quota snapshot (§11) carries the statusline tee data exactly (five_hour/seven_day → 5h/7d, usedPct, resetsAt); context-graph touch (§12) stays paths+session-ids only [X2]. Corpus: `events-payload` stage added; fixture `events-broker-payload-draft-opaque` kept byte-identical and valid, its pinned stage moved channel-policy→events-payload (the deferral resolving as recorded at M2); 19 new events fixtures (valid per read model + every invalid class). Protocol `1.0.0` → `1.1.0`, `FROZEN-M2` → `FROZEN-M3`. No new error codes; no change to any M1/M2 wire shape. FE-ORCH co-sign: **co-signed (M4 review)** — the freeze-literal advance replayed green (the pin now reads FROZEN-M4, reached through FROZEN-M3); events union consumed by the FE-5 dashboards under the forward-tolerant reader rule, golden-corpus suites green on both sides. | — (M3 freeze) |
 | 2026-07-04 | §12 **session-id relay pin** (prose only, NO wire change; requested in the BE-6 M3 return): `sessionId` documented as harness-id-where-known with native-id relay until the BE-7/M4 ledger mapping — the exact hooks-contract §7 approvals-relay sentence, now stated for context-graph too; the composition root MUST inject the ledger resolver at M4 (the `resolveSessionId` seam, core/src/collector/graphfeed/hookTouches.ts). Validator, charset and golden fixtures unchanged. FE-ORCH co-sign: n/a (no wire change). | — (BE-ORCH steward, prose pin) |
-| 2026-07-04 | **M4 FREEZE.** New: the `workstream` channel (§16) — broker→client lineage fan-out (`workstream-list-snapshot` / `workstream-detail-snapshot` with the scope matrix / `workstream-node` upserts / `workstream-edge` appends with the frozen edge vocabulary `continue·fork·merge_parent·compact·sidechain·handoff·import·workflow` and the from/import + handoff-brief matrices / `workstream-brief` / `branch-advisory` / `workstream-merge-resolved`) + the client `workstream-merge-request` (2..16 distinct parents, mandatory conflict-surfacing `briefBody`) with its frozen error contract (§16.4); the same forward-tolerant unknown-kind reader rule as events §13.3; native ids REJECTED on the wire [X2]. Lineage seams frozen as port types (§15): `LineageRecorder` (launch/resume/fork/recycle/merge recorded AT ACTION TIME — the M2 `ContinuationEdgeEmitter` stub generalized; continuation = CHILD, in-place carries from === to) and `SessionIdResolver` (the §12 pin resolved). Amended frozen surfaces (recorded here, landed by this freeze agent): §3 channel registry + `workstream` (bidirectional, the approvals precedent); §8 replayable set + `workstream`; §7 error code `workstream-not-found`. Gateway/FE wiring seams landed via [ICR-0011](icr/icr-0011-gateway-workstream-slice.md) (gateway `WorkstreamEnginePort` + validated routing/publisher + absent-engine degrade; FE inbound-router workstream branch). Corpus: `workstream-payload` + `workstream-client-message` stages, one valid frame per kind + every invalid class; no existing fixture changed. Protocol `1.1.0` → `1.2.0`, `FROZEN-M3` → `FROZEN-M4`. No change to any M1–M3 wire shape. FE-ORCH co-sign: **pending** (includes the one-line freeze-literal advance in `app/src/features/launch/wire.spec.ts` and the FE router branch, both replayed green by the FE suites). | — (M4 freeze) |
+| 2026-07-04 | **M4 FREEZE.** New: the `workstream` channel (§16) — broker→client lineage fan-out (`workstream-list-snapshot` / `workstream-detail-snapshot` with the scope matrix / `workstream-node` upserts / `workstream-edge` appends with the frozen edge vocabulary `continue·fork·merge_parent·compact·sidechain·handoff·import·workflow` and the from/import + handoff-brief matrices / `workstream-brief` / `branch-advisory` / `workstream-merge-resolved`) + the client `workstream-merge-request` (2..16 distinct parents, mandatory conflict-surfacing `briefBody`) with its frozen error contract (§16.4); the same forward-tolerant unknown-kind reader rule as events §13.3; native ids REJECTED on the wire [X2]. Lineage seams frozen as port types (§15): `LineageRecorder` (launch/resume/fork/recycle/merge recorded AT ACTION TIME — the M2 `ContinuationEdgeEmitter` stub generalized; continuation = CHILD, in-place carries from === to) and `SessionIdResolver` (the §12 pin resolved). Amended frozen surfaces (recorded here, landed by this freeze agent): §3 channel registry + `workstream` (bidirectional, the approvals precedent); §8 replayable set + `workstream`; §7 error code `workstream-not-found`. Gateway/FE wiring seams landed via [ICR-0011](icr/icr-0011-gateway-workstream-slice.md) (gateway `WorkstreamEnginePort` + validated routing/publisher + absent-engine degrade; FE inbound-router workstream branch). Corpus: `workstream-payload` + `workstream-client-message` stages, one valid frame per kind + every invalid class; no existing fixture changed. Protocol `1.1.0` → `1.2.0`, `FROZEN-M3` → `FROZEN-M4`. No change to any M1–M3 wire shape. FE-ORCH co-sign: **co-signed (M5 review)** — the freeze-literal advance in `app/src/features/launch/wire.spec.ts` now pins `FROZEN-M5` (reached through `FROZEN-M4`) and the FE inbound-router `workstream` branch (`app/src/lib/ws/inboundRouter.ts`, opaque-tolerant `validateWorkstreamServerPayload`) both replay green; the FE golden-corpus round-trip (`app/src/lib/ws/goldenCorpus.spec.ts`, every `workstream` frame) is green on the FE side. | — (M4 freeze) |
+| 2026-07-04 | **M5 FREEZE.** New: the `pipelines` channel (§18) — broker→client catalog + run-monitor fan-out (`catalog-snapshot` [the builder palette; paths+names+labels only, X2] / `pipeline-run-snapshot` / `pipeline-run-status` / `pipeline-step-status` [per-step cost reference + the `memoized` resume-from-journal state] / `pipeline-validation-result` / `pipeline-saved`) + the six client verbs `pipeline-validate\|save\|launch\|pause\|resume\|cancel` with the frozen error contract (§18.4); the same forward-tolerant unknown-kind reader rule as events §13.3 / workstream §16.1; native ids REJECTED on the wire [X2]. Approval GATES ride the EXISTING approvals channel via the frozen `workflow-gate` source (§10.1, §18.3) — no new gate wire (the M2 one-inbox precedent). The versioned JSON DAG document the verbs carry is its own new contract [dag-schema.md](dag-schema.md) (FROZEN-M5 v1: step kinds prompt·skill·agent·workflow-script·approval, needs/when/forEach/loop, per-step account/budget/retry/outputSchema, the forward-INCOMPAT rule for schemaVersion + step kind). New closed registries: `CAPABILITY_KINDS`, `CATALOG_SCOPES`, `CAPABILITY_BACKEND_FAMILIES`, `PIPELINE_RUN_STATES`, `PIPELINE_STEP_STATES`, `PIPELINE_CLIENT_VERBS` (pipelines.ts). Amended frozen surfaces (recorded here, landed by this freeze agent): §3 channel registry + `pipelines` (bidirectional); §8 replayable set + `pipelines`; §7 error codes `pipeline-not-found`/`pipeline-run-not-found`/`pipeline-invalid`/`step-not-found`. Verified sufficient, NO amendment: the `workflow` edge type (already in the frozen §16 edge vocabulary since M4) + the events `(backend, raw_ref)` dedupe key carry the per-step-attempt lineage + cost seams (dag-schema.md §6, §18.5); the LineageRecorder port (§15.1) is correctly scoped to kernel actions — the pipeline runner records `workflow` edges directly. Corpus: `pipelines-payload` + `pipelines-client-message` stages, one valid frame per kind + each verb + every invalid class; no existing fixture changed. Protocol `1.2.0` → `1.3.0`, `FROZEN-M4` → `FROZEN-M5`. No change to any M1–M4 wire shape. FE-ORCH co-sign: **co-signed (M5 review, 2026-07-05)** — the one-line freeze-literal advance in `app/src/features/launch/wire.spec.ts` pins `FROZEN-M5` and the FE inbound-router `pipelines` branch (forward-tolerant `validatePipelineServerPayload`) both replay green; the FE golden-corpus round-trip (`app/src/lib/ws/goldenCorpus.spec.ts`, 114/114 incl. every `pipelines` frame + each of the six verbs) is green (record: [m5-dod.md](../runbooks/m5-dod.md) §6). | — (M5 freeze) |

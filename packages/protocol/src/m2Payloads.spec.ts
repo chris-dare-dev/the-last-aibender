@@ -42,10 +42,10 @@ describe('M2 registries are closed and exact', () => {
     expect([...QUOTA_WINDOWS]).toEqual(['5h', '7d', '7d_sonnet']);
     expect([...QUOTA_SOURCES]).toEqual(['statusline', 'oauth-poll']);
     expect([...CONTEXT_GRAPH_RELATIONS]).toEqual(['read', 'write', 'instructions', 'watched']);
-    // `workstream` joined the replayable set at the M4 freeze (amendment-
-    // recorded in ws-protocol.md §8/§16); the M2 five are unchanged.
+    // `workstream` joined the replayable set at M4 and `pipelines` at M5
+    // (amendment-recorded in ws-protocol.md §8/§16/§18); the M2 five unchanged.
     expect([...REPLAYABLE_STREAMS].sort()).toEqual(
-      ['approvals', 'context-graph', 'events', 'quota', 'transcript', 'workstream'].sort(),
+      ['approvals', 'context-graph', 'events', 'pipelines', 'quota', 'transcript', 'workstream'].sort(),
     );
   });
 });

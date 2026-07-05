@@ -25,6 +25,7 @@ import type { ValidationResult } from './result.js';
 import { invalid, valid } from './result.js';
 import type { TranscriptPayload } from './transcript.js';
 import type { WorkstreamClientPayload, WorkstreamServerPayload } from './workstreams.js';
+import type { PipelineClientPayload, PipelineServerPayload } from './pipelines.js';
 
 export interface Envelope<TPayload = unknown> {
   /** Logical stream family — MUST equal `streamForChannel(channel)`. */
@@ -61,11 +62,20 @@ export type EventsServerPayload = EventSummary | ReadModelSnapshot;
 export type WorkstreamChannelPayload = WorkstreamServerPayload | WorkstreamClientPayload;
 
 /**
- * The full frozen cross-channel JSON payload union as of the M4 freeze. The
- * M3 freeze closed the last M2-deferred surface (the `events` union); M4
- * adds the `workstream` channel union (X4 lineage) without touching any
- * earlier shape. Unknown kinds on `events` and `workstream` remain
- * legal-and-ignored by the frozen forward-tolerant reader rule.
+ * `pipelines` channel payloads (FROZEN-M5): the broker→client catalog + run-
+ * monitor fan-out union + the client→broker pipeline verbs (pipelines.ts).
+ * Unknown broker-pushed kinds stay legal-and-ignored by the same
+ * forward-tolerant reader rule the events channel froze at M3.
+ */
+export type PipelineChannelPayload = PipelineServerPayload | PipelineClientPayload;
+
+/**
+ * The full frozen cross-channel JSON payload union as of the M5 freeze. The
+ * M3 freeze closed the last M2-deferred surface (the `events` union); M4 added
+ * the `workstream` channel union (X4 lineage); M5 adds the `pipelines` channel
+ * union (features 4/5) — each without touching any earlier shape. Unknown
+ * kinds on `events`, `workstream`, and `pipelines` remain legal-and-ignored by
+ * the frozen forward-tolerant reader rule.
  */
 export type FrozenPayload =
   | FrozenM1Payload
@@ -75,7 +85,8 @@ export type FrozenPayload =
   | ContextGraphTouch
   | JsonReplayRequest
   | EventsServerPayload
-  | WorkstreamChannelPayload;
+  | WorkstreamChannelPayload
+  | PipelineChannelPayload;
 
 /**
  * Structural + consistency validation of a decoded JSON envelope. Enforces

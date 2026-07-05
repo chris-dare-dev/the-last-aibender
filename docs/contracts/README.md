@@ -17,15 +17,16 @@ silent divergence.
 | `bootstrap-file.md` | Gateway port/token discovery file format | BE-ORCH + FE-ORCH | M2 |
 | `dag-schema.md` | Pipeline JSON DAG v1 | BE-ORCH | M5 |
 
-Status: **M4 — `ws-protocol.md` is FROZEN-M4** (M3 closed the `events`
-union §13; M4 added the `workstream` channel §16 + the lineage seams §15),
-`sqlite-ddl.md` carries three frozen slices (M1 kernel §1–§5, M3 events §7,
-M4 lineage §8), `hooks-contract.md` is FROZEN-M2 with the M3 acceptance
-types (§7) and the M4 [X4] routing (§7.1), `bootstrap-file.md` is FROZEN-M2
-— all 2026-07-04 (FE-ORCH / SI-ORCH co-signs pending per the amendment
-tables). The machine-checkable half of the WS contract is
-`PROTOCOL_VERSION 1.2.0` (`PROTOCOL_FREEZE = 'FROZEN-M4'`) plus the golden
-corpora in `packages/testkit` (`GOLDEN_WS_CORPUS_FREEZE` /
-`GOLDEN_HOOK_CORPUS_FREEZE`). No open deferrals. `dag-schema.md` does not
-exist yet (M5). Landed ICRs and the deferred watch list live in
-[icr/](icr/README.md).
+Status: **M5 — `ws-protocol.md` is FROZEN-M5** (M3 closed the `events`
+union §13; M4 added the `workstream` channel §16 + the lineage seams §15;
+M5 added the `pipelines` channel §18), `sqlite-ddl.md` carries four frozen
+slices (M1 kernel §1–§5, M3 events §7, M4 lineage §8, M5 pipelines §10),
+`dag-schema.md` is **FROZEN-M5 v1** (the versioned JSON DAG document +
+validator), `hooks-contract.md` is FROZEN-M2 with the M3 acceptance types
+(§7) and the M4 [X4] routing (§7.1), `bootstrap-file.md` is FROZEN-M2 — all
+2026-07-04 (FE-ORCH / SI-ORCH co-signs pending per the amendment tables).
+The machine-checkable half of the WS + DAG contracts is
+`PROTOCOL_VERSION 1.3.0` (`PROTOCOL_FREEZE = 'FROZEN-M5'`; `DAG_SCHEMA_VERSION
+1`) plus the golden corpora in `packages/testkit` (`GOLDEN_WS_CORPUS_FREEZE` /
+`GOLDEN_HOOK_CORPUS_FREEZE`). No open deferrals. Landed ICRs and the deferred
+watch list live in [icr/](icr/README.md).

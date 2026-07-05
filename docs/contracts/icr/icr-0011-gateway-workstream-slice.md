@@ -78,6 +78,10 @@ kernel message tap for composeBroker's transcript tee).
 ## Sign-off
 
 - Owning orchestrator (BE-ORCH): **landed** (2026-07-04, M4 freeze agent)
-- Counterpart orchestrator (FE-ORCH): **pending** — bundled with the M4
-  freeze co-sign (the FE half is the router branch + one literal, both
-  replayed green by the FE suites)
+- Counterpart orchestrator (FE-ORCH): **co-signed (M5 review, 2026-07-05)** —
+  the FE half is the `workstream` inbound-router branch
+  (`app/src/lib/ws/inboundRouter.ts`, opaque-tolerant
+  `validateWorkstreamServerPayload`, `replayableChannelOf`/`seqOf` coverage)
+  plus the `wire.spec.ts` freeze literal (now `FROZEN-M5`, reached through
+  `FROZEN-M4`); both replay green, and `app/src/lib/ws/goldenCorpus.spec.ts`
+  round-trips every workstream frame against the real FE router.

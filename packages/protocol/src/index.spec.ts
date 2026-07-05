@@ -16,21 +16,22 @@ import {
 
 describe('@aibender/protocol (M4 freeze)', () => {
   // M0 asserted 'prefreeze'; M1 asserted '1.0.0-m1-core'; M2 asserted
-  // '1.0.0'; M3 asserted '1.1.0'. Updated at each freeze landing — this
-  // change IS the M4 freeze.
-  it('imports and self-identifies as FROZEN-M4', () => {
-    expect(PROTOCOL_VERSION).toBe('1.2.0');
-    expect(PROTOCOL_FREEZE).toBe('FROZEN-M4');
+  // '1.0.0'; M3 asserted '1.1.0'; M4 asserted '1.2.0'. Updated at each freeze
+  // landing — this change IS the M5 freeze.
+  it('imports and self-identifies as FROZEN-M5', () => {
+    expect(PROTOCOL_VERSION).toBe('1.3.0');
+    expect(PROTOCOL_FREEZE).toBe('FROZEN-M5');
   });
 
   // -- positive ------------------------------------------------------------
 
-  it('registers exactly the six static channels (plan §3 five + the M4 workstream channel)', () => {
+  it('registers exactly the seven static channels (plan §3 five + M4 workstream + M5 pipelines)', () => {
     expect([...STATIC_CHANNELS].sort()).toEqual(
-      ['approvals', 'context-graph', 'control', 'events', 'quota', 'workstream'].sort(),
+      ['approvals', 'context-graph', 'control', 'events', 'pipelines', 'quota', 'workstream'].sort(),
     );
     expect(CHANNEL.CONTEXT_GRAPH).toBe('context-graph');
     expect(CHANNEL.WORKSTREAM).toBe('workstream');
+    expect(CHANNEL.PIPELINES).toBe('pipelines');
   });
 
   it('builds session-scoped channel names', () => {

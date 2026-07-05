@@ -24,7 +24,7 @@
  *   - events accessors: validated insert path with (backend, raw_ref) dedupe,
  *     identity-shape screen [X2], Cost Explorer cost_actual_usd backfill,
  *     quota/outcome dedupe, override-wins price pinning (events.ts)
- * Frozen at M4 (this freeze):
+ * Frozen at M4:
  *   - migration 0003: workstream / session_node / session_edge / brief
  *     (blueprint §5) — appended to KERNEL_MIGRATIONS: the lineage ledger
  *     lives in the KERNEL database (decision recorded in sqlite-ddl.md §8.1;
@@ -34,7 +34,18 @@
  *     id backfill, the edge from/import + handoff-brief matrices, the ATOMIC
  *     recordMerge write path (one new node + N merge_parent edges), the
  *     detached-HEAD bucket queries, identity screen on naming columns [X2]
- * Lands later (via ICR): M5 pipeline tables.
+ * Frozen at M5 (this freeze):
+ *   - migration 0004: pipeline_definition / pipeline_run / step_attempt
+ *     (blueprint §7) — appended to KERNEL_MIGRATIONS: the pipeline store +
+ *     the durable MEMOIZATION JOURNAL live in the KERNEL database (decision
+ *     recorded in sqlite-ddl.md §10.1 — same commit boundary + query plan as
+ *     the `workflow`-edge session_nodes each step attempt produces; journal
+ *     writes are resume-ledger-rate)
+ *   - pipeline accessors (pipelines.ts): definition upsert-by-id, run
+ *     bookkeeping, the append-only step_attempt journal with the resume
+ *     lookup findMemoized (a completed attempt's cached output is returned
+ *     without re-execution — the M5 DoD), identity screen on the definition
+ *     name [X2]
  *
  * Field-tag convention (consumed by @aibender/shared redaction filters):
  * columns carrying sensitive material are declared in KERNEL_FIELD_TAGS with
@@ -128,6 +139,8 @@ export { EVENTS_STORE_MIGRATIONS, MIGRATION_0002_EVENTS } from './migrations/000
 
 export { MIGRATION_0003_LINEAGE } from './migrations/0003-lineage.js';
 
+export { MIGRATION_0004_PIPELINES } from './migrations/0004-pipelines.js';
+
 export {
   ACTIVE_SESSION_STATES,
   IllegalTransitionError,
@@ -170,6 +183,26 @@ export {
   type WorkstreamRow,
   type WorkstreamsStore,
 } from './lineage.js';
+
+export {
+  PIPELINES_FIELD_TAGS,
+  PipelineNotFoundError,
+  PipelineRunNotFoundError,
+  PipelineStoreError,
+  createPipelinesStore,
+  type NewPipelineDefinitionRow,
+  type NewPipelineRunRow,
+  type NewStepAttemptRow,
+  type PipelineDefinitionRow,
+  type PipelineDefinitionsStore,
+  type PipelineRunRow,
+  type PipelineRunsStore,
+  type PipelinesStore,
+  type PipelinesStoreOptions,
+  type StepAttemptResult,
+  type StepAttemptRow,
+  type StepAttemptsStore,
+} from './pipelines.js';
 
 export {
   EVENTS_FIELD_TAGS,
@@ -222,6 +255,7 @@ import {
   type SchemaMetaStore,
 } from './kernel.js';
 import { createLineageStore, type LineageStore } from './lineage.js';
+import { createPipelinesStore, type PipelinesStore } from './pipelines.js';
 import { createMigrationRunner } from './migrate.js';
 import { KERNEL_MIGRATIONS } from './migrations/0001-kernel.js';
 import { EVENTS_STORE_MIGRATIONS } from './migrations/0002-events.js';
@@ -236,6 +270,8 @@ export interface KernelStore {
   readonly schemaMeta: SchemaMetaStore;
   /** M4: the [X4] lineage ledger (migration 0003 — same database, see lineage.ts). */
   readonly lineage: LineageStore;
+  /** M5: the pipeline store + memoization journal (migration 0004, see pipelines.ts). */
+  readonly pipelines: PipelinesStore;
   close(): void;
 }
 
@@ -261,6 +297,7 @@ export async function openKernelStore(options: OpenKernelStoreOptions): Promise<
     accountProfiles: createAccountProfilesStore(driver, storeOptions),
     schemaMeta: createSchemaMetaStore(driver),
     lineage: createLineageStore(driver),
+    pipelines: createPipelinesStore(driver),
     close: () => driver.close(),
   };
 }

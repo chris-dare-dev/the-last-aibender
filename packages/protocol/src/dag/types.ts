@@ -25,7 +25,7 @@
  * ============================================================================
  */
 
-import type { AccountLabel } from '../vocab.js';
+import { isClaudeAccountLabel, type AccountLabel } from '../vocab.js';
 
 /** The one schema version this freeze understands. */
 export const DAG_SCHEMA_VERSION = 1 as const;
@@ -93,8 +93,8 @@ export type ExecutableStepKind = (typeof EXECUTABLE_STEP_KINDS)[number];
  * {@link import('../vocab.js').Backend} enum in ONE way: `bedrock` names the
  * OpenCode→Bedrock path explicitly (findings §R2 sketch), so a step can pin
  * "run this on AWS_DEV via OpenCode against Bedrock". The account label already
- * implies the backend family (LABEL_BACKENDS); `backend` is an OPTIONAL
- * override the validator checks for consistency with the account.
+ * implies the backend family ({@link accountStepBackendsFor}); `backend` is an
+ * OPTIONAL override the validator checks for consistency with the account.
  */
 export const STEP_BACKENDS = Object.freeze([
   'claude',
@@ -110,18 +110,24 @@ export function isStepBackend(value: unknown): value is StepBackend {
 }
 
 /**
- * The one legal backend family per account label for pipeline steps
- * (mirrors LABEL_BACKENDS, expanded so AWS_DEV admits both the generic
- * `opencode` and the explicit `bedrock` route it fronts).
+ * The legal backend family per account label for pipeline steps (mirrors the
+ * wire {@link import('../vocab.js').backendForLabel}, expanded so AWS_DEV admits
+ * both the generic `opencode` and the explicit `bedrock` route it fronts).
+ *
+ * A FUNCTION, not a Record (ICR-0013): the Claude-account label form is OPEN
+ * (`MAX_C`, `MAX_D`, …), so a fixed 5-key Record would silently return
+ * `undefined` for a newly provisioned Max account. Any `MAX_<X>`/`ENT` maps to
+ * the single `claude` step backend; `AWS_DEV`→`opencode|bedrock`;
+ * `LOCAL`→`lmstudio`. Returns `[]` for a label outside the sanctioned form —
+ * callers pass a validated {@link AccountLabel}, so an empty list means "no
+ * legal backend", which the validator surfaces as `invalid-account`.
  */
-export const ACCOUNT_STEP_BACKENDS: Readonly<Record<AccountLabel, readonly StepBackend[]>> =
-  Object.freeze({
-    MAX_A: ['claude'],
-    MAX_B: ['claude'],
-    ENT: ['claude'],
-    AWS_DEV: ['opencode', 'bedrock'],
-    LOCAL: ['lmstudio'],
-  });
+export function accountStepBackendsFor(label: AccountLabel): readonly StepBackend[] {
+  if (isClaudeAccountLabel(label)) return ['claude'];
+  if (label === 'AWS_DEV') return ['opencode', 'bedrock'];
+  if (label === 'LOCAL') return ['lmstudio'];
+  return [];
+}
 
 // ---------------------------------------------------------------------------
 // Permission modes (findings §1.3 subagent frontmatter — the SDK set)

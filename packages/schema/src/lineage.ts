@@ -27,7 +27,7 @@
  */
 
 import {
-  LABEL_BACKENDS,
+  backendForLabel,
   isAccountLabel,
   isBackend,
   isBriefKind,
@@ -541,10 +541,10 @@ export function createLineageStore(
       if (!isAccountLabel(input.account)) {
         throw new LineageStoreError(`unknown account label ${JSON.stringify(input.account)}`);
       }
-      if (LABEL_BACKENDS[input.account] !== input.backend) {
+      if (backendForLabel(input.account) !== input.backend) {
         throw new LineageStoreError(
           `label/backend pairing violation: ${input.account} requires ` +
-            `${LABEL_BACKENDS[input.account]}, got ${String(input.backend)}`,
+            `${backendForLabel(input.account)}, got ${String(input.backend)}`,
         );
       }
       if (!isSessionNodeState(input.state)) {

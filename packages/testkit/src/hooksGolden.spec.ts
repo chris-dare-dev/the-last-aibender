@@ -14,7 +14,7 @@ describe('golden hook-POST fixture corpus (hooks-contract.md §6; M3 freeze + M4
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M6');
+    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M7');
   });
 
   it('every fixture replays to its pinned verdict', () => {

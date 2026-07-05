@@ -25,7 +25,7 @@ describe('golden WS-protocol fixture corpus (plan §9.3 BE↔FE #1; ICR-0003; M4
 
   it('pins the same freeze the protocol package self-identifies as', () => {
     expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M6');
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M7');
   });
 
   it('every fixture replays to its pinned verdict at its pinned stage', () => {

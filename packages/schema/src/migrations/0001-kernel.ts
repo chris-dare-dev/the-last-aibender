@@ -26,6 +26,7 @@ import type { Migration } from '../index.js';
 
 import { MIGRATION_0003_LINEAGE } from './0003-lineage.js';
 import { MIGRATION_0004_PIPELINES } from './0004-pipelines.js';
+import { MIGRATION_0005_ACCOUNT_REGISTRY } from './0005-account-registry.js';
 
 export const MIGRATION_0001_KERNEL: Migration = {
   id: 1,
@@ -106,11 +107,14 @@ CREATE INDEX resume_ledger_native_idx ON resume_ledger (native_session_id)
  * The full ordered migration list for the kernel database. Appended per
  * milestone (never reorder, never edit a frozen migration): 0001 = M1 kernel
  * tables; 0003 = the M4 [X4] lineage tables; 0004 = the M5 pipeline tables +
- * memoization journal (0002 is the events store on the SEPARATE collector
- * database — EVENTS_STORE_MIGRATIONS; ids stay repo-wide unique).
+ * memoization journal; 0005 = the M7 account-registry relaxation (the
+ * account-label CHECKs widen from the closed 5-set to the open MAX_<X> form —
+ * ICR-0013). 0002 is the events store on the SEPARATE collector database
+ * (EVENTS_STORE_MIGRATIONS; 0006 is its M7 sibling); ids stay repo-wide unique.
  */
 export const KERNEL_MIGRATIONS: readonly Migration[] = Object.freeze([
   MIGRATION_0001_KERNEL,
   MIGRATION_0003_LINEAGE,
   MIGRATION_0004_PIPELINES,
+  MIGRATION_0005_ACCOUNT_REGISTRY,
 ]);

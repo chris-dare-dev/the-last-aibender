@@ -2,10 +2,15 @@
  * Identity → account-label mapping loader [X2].
  *
  * The mapping from real identities (account emails, org/account UUIDs, AWS
- * account ids) to the placeholder labels MAX_A/MAX_B/ENT/AWS_DEV/LOCAL lives
- * ONLY in a machine-local JSON file:
+ * account ids) to the placeholder labels lives ONLY in a machine-local JSON
+ * file:
  *
  *     $AIBENDER_HOME/identity-map.json     (default: ~/.aibender/identity-map.json)
+ *
+ * Keys are sanctioned account labels — a Claude account in the OPEN Max form
+ * (`^MAX_[A-Z]$`: MAX_A, MAX_B, MAX_C, MAX_D, …) or `ENT`, plus the fixed
+ * backend labels AWS_DEV/LOCAL (ICR-0013). Adding a newly provisioned Max
+ * account is a new machine-local KEY, never a code change.
  *
  * That file is NEVER committed — the repo ships only a pointer example with
  * empty values at infra/profiles/identity-map.example.json. File format:
@@ -14,6 +19,7 @@
  *       "$comment": "keys starting with $ are ignored",
  *       "MAX_A":   ["<identity string>", ...],
  *       "MAX_B":   [],
+ *       "MAX_C":   [],
  *       "ENT":     [],
  *       "AWS_DEV": []
  *     }
@@ -21,7 +27,7 @@
  * Loader semantics (tested):
  *   - missing file  → empty map, `loaded: false` (mapping degrades; redaction
  *     stays fail-closed — see redaction.ts: unmapped identifiers are REDACTED)
- *   - malformed JSON / unknown label key / non-string identity → throw
+ *   - malformed JSON / non-sanctioned label key / non-string identity → throw
  *     IdentityMapError (loud, never silently partial)
  *   - identities are matched after NFC normalization + trim + lowercase
  *   - one identity mapping to two labels is ambiguous → throw
@@ -31,7 +37,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { ACCOUNT_LABELS, type AccountLabel } from '@aibender/protocol';
+import { CLAUDE_ACCOUNT_LABEL_RE, isAccountLabel, type AccountLabel } from '@aibender/protocol';
 
 export class IdentityMapError extends Error {
   override readonly name = 'IdentityMapError';
@@ -97,9 +103,14 @@ export function parseIdentityMap(json: string, source?: string): IdentityMap {
   const seen = new Map<string, AccountLabel>();
   for (const [key, value] of Object.entries(raw)) {
     if (key.startsWith('$')) continue; // comment keys, e.g. "$comment"
-    if (!(ACCOUNT_LABELS as readonly string[]).includes(key)) {
+    // The account-label FORM is the validation ceiling (ICR-0013), NOT a
+    // hardcoded 5-set — so a newly provisioned Max account (MAX_C, MAX_D, …)
+    // may key the machine-local map without a code change. A non-sanctioned
+    // key ("HACKER", an email, "MAX_AB") is still rejected loudly.
+    if (!isAccountLabel(key)) {
       throw new IdentityMapError(
-        `unknown label key ${JSON.stringify(key)} (want one of ${ACCOUNT_LABELS.join(', ')}; ` +
+        `unknown label key ${JSON.stringify(key)} (want a sanctioned account label: ` +
+          `a Max account matching ${CLAUDE_ACCOUNT_LABEL_RE.source}, ENT, AWS_DEV, or LOCAL; ` +
           `keys starting with "$" are ignored)`,
       );
     }

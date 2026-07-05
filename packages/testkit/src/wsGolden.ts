@@ -62,7 +62,7 @@ import {
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M6';
+export const GOLDEN_WS_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M7';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -349,6 +349,46 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     notes: 'pty substrate is claude_code-only — this is the allowed pairing',
   },
   {
+    name: 'control-launch-max-c-open-form',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(30, {
+      kind: 'launch',
+      id: 'req_40',
+      params: {
+        accountLabel: 'MAX_C',
+        backend: 'claude_code',
+        substrate: 'sdk',
+        cwd: '/synthetic/workspace',
+        purpose: 'golden launch on a newly provisioned Max account',
+      },
+    }),
+    stage: 'control-request',
+    expect: { valid: true },
+    notes:
+      'ICR-0013: MAX_C is a sanctioned Max-account label by FORM (^MAX_[A-Z]$) — ' +
+      'admitted WITHOUT a code change, still paired to claude_code',
+  },
+  {
+    name: 'control-launch-max-d-open-form-pty',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(31, {
+      kind: 'launch',
+      id: 'req_41',
+      params: {
+        accountLabel: 'MAX_D',
+        backend: 'claude_code',
+        substrate: 'pty',
+        cwd: '/synthetic/workspace',
+        purpose: 'golden attended session on a newly provisioned Max account',
+      },
+    }),
+    stage: 'control-request',
+    expect: { valid: true },
+    notes: 'ICR-0013: MAX_D by FORM, attended pty (claude_code-only) — the allowed pairing',
+  },
+  {
     name: 'control-launch-local',
     kind: 'text',
     direction: 'client-to-broker',
@@ -550,6 +590,47 @@ export const GOLDEN_WS_FIXTURES: readonly GoldenWsFixture[] = Object.freeze([
     }),
     stage: 'control-request',
     expect: { valid: false, code: 'bad-request' },
+  },
+  {
+    name: 'control-launch-nonsanctioned-label',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(32, {
+      kind: 'launch',
+      id: 'req_42',
+      params: {
+        accountLabel: 'HACKER',
+        backend: 'claude_code',
+        substrate: 'sdk',
+        cwd: '/synthetic/workspace',
+        purpose: 'golden non-sanctioned label rejection',
+      },
+    }),
+    stage: 'control-request',
+    expect: { valid: false, code: 'bad-request' },
+    notes:
+      'ICR-0013: the account-label FORM is a REAL gate — a non-sanctioned label ' +
+      '(not ^MAX_[A-Z]$ / ENT / AWS_DEV / LOCAL) is REFUSED, proving the widening ' +
+      'is not anything-goes',
+  },
+  {
+    name: 'control-launch-lowercase-max-label',
+    kind: 'text',
+    direction: 'client-to-broker',
+    frame: controlFrame(34, {
+      kind: 'launch',
+      id: 'req_44',
+      params: {
+        accountLabel: 'max_c',
+        backend: 'claude_code',
+        substrate: 'sdk',
+        cwd: '/synthetic/workspace',
+        purpose: 'golden lowercase form rejection',
+      },
+    }),
+    stage: 'control-request',
+    expect: { valid: false, code: 'bad-request' },
+    notes: 'the form is case-sensitive and anchored — lowercase max_c is NOT MAX_C',
   },
   {
     name: 'control-launch-pty-non-claude',

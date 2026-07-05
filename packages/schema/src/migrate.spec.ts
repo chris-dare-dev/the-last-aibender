@@ -66,12 +66,13 @@ describe('createMigrationRunner', () => {
     const runner = createMigrationRunner(driver);
     const applied = await runner.apply(KERNEL_MIGRATIONS);
     // 0001 = M1 kernel tables; 0003 = M4 lineage tables; 0004 = M5 pipeline
-    // tables (0002 lives on the separate collector events database —
-    // EVENTS_STORE_MIGRATIONS).
+    // tables; 0005 = M7 account-registry relaxation (0002 lives on the separate
+    // collector events database — EVENTS_STORE_MIGRATIONS).
     expect(applied.map((a) => a.name)).toEqual([
       'kernel-tables-init',
       'lineage-tables-init',
       'pipeline-tables-init',
+      'account-registry-open-form',
     ]);
     // the three kernel tables + four lineage tables + three pipeline tables:
     const tables = driver
@@ -174,7 +175,9 @@ describe('createMigrationRunner', () => {
     const second = openNodeSqliteDatabase({ path });
     const runner = createMigrationRunner(second.driver);
     expect(await runner.apply(KERNEL_MIGRATIONS)).toEqual([]); // already applied
-    expect((await runner.applied()).map((a) => a.id)).toEqual([1, 3, 4]);
+    // 0005 = the M7 account-registry table-rebuild — durable across a REOPEN of
+    // a file-backed WAL store (the smoke path exercised :memory:).
+    expect((await runner.applied()).map((a) => a.id)).toEqual([1, 3, 4, 5]);
     second.driver.close();
     rmSync(dir, { recursive: true, force: true });
   });

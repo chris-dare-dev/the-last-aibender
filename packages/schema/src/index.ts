@@ -141,6 +141,10 @@ export { MIGRATION_0003_LINEAGE } from './migrations/0003-lineage.js';
 
 export { MIGRATION_0004_PIPELINES } from './migrations/0004-pipelines.js';
 
+export { MIGRATION_0005_ACCOUNT_REGISTRY } from './migrations/0005-account-registry.js';
+
+export { MIGRATION_0006_ACCOUNT_REGISTRY_EVENTS } from './migrations/0006-account-registry-events.js';
+
 export {
   ACTIVE_SESSION_STATES,
   IllegalTransitionError,

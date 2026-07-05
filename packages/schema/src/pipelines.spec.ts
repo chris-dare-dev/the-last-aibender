@@ -38,9 +38,11 @@ async function seededDefinition(store: KernelStore): Promise<void> {
 describe('pipeline store (migration 0004, FROZEN-M5)', () => {
   // -- positive ------------------------------------------------------------
 
-  it('records the pipeline DDL slice in schema_meta WITHOUT touching the M1/M4 seeds', async () => {
+  it('records the pipeline DDL slice in its OWN schema_meta keys (not the shared base)', async () => {
     const store = await memoryStore();
-    expect(store.schemaMeta.get('frozen_milestone')).toBe('M1'); // untouched
+    // The base frozen_milestone advances with the newest kernel migration
+    // (0005 = M7, ICR-0013); the LINEAGE + PIPELINE slices keep their OWN keys.
+    expect(store.schemaMeta.get('frozen_milestone')).toBe('M7');
     expect(store.schemaMeta.get('lineage_frozen_milestone')).toBe('M4'); // untouched
     expect(store.schemaMeta.get('pipeline_ddl_version')).toBe('1');
     expect(store.schemaMeta.get('pipeline_frozen_milestone')).toBe('M5');

@@ -4,7 +4,6 @@
  */
 
 export {
-  ACCOUNT_STEP_BACKENDS,
   CAPABILITY_SCOPES,
   DAG_ID_RE,
   DAG_NAME_RE,
@@ -16,6 +15,7 @@ export {
   STEP_BACKENDS,
   STEP_ID_RE,
   STEP_KINDS,
+  accountStepBackendsFor,
   isCapabilityScope,
   isPermissionMode,
   isRetryOnClass,

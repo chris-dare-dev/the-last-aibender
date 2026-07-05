@@ -3,6 +3,19 @@
  * aibender-core gateway (BE-3) and every frontend client (FE-2).
  *
  * ============================================================================
+ * FROZEN-M7 (2026-07-05) — owner BE-ORCH, FE-ORCH co-signs (ICR-0013). The
+ * account-registry generalization ([X1] scalability): the CLOSED 5-label
+ * account set becomes an OPEN, validated FORM so a new Claude Max subscription
+ * (MAX_C, MAX_D, …) is admitted WITHOUT a code change. vocab.ts splits FIXED
+ * BACKEND LABELS {AWS_DEV, LOCAL} (closed) from CLAUDE ACCOUNT LABELS (open:
+ * `^MAX_[A-Z]$` + exact `ENT`); `isAccountLabel` keys off the form, not a
+ * hardcoded array; `LABEL_BACKENDS` (a Record) becomes `backendForLabel()` (a
+ * function). This is a validation-WIDENING additive change — every M1–M6 label
+ * is still valid, the label↔backend pairing invariant is preserved, and NO wire
+ * SHAPE changed — so a minor bump: `1.4.0` → `1.5.0`, `FROZEN-M6` →
+ * `FROZEN-M7`. Prose of record: docs/contracts/ws-protocol.md §4.1;
+ * docs/contracts/icr/icr-0013-account-registry.md.
+ *
  * FROZEN-M6 (2026-07-05) — owner BE-ORCH, FE-ORCH co-signs. The FINAL Stage-2
  * freeze. LIGHT by design (supervision is mostly core-internal): the ONE
  * boundary-crossing addition is the `resource-health` read model (the
@@ -101,9 +114,11 @@
  *   - transcript.<sid> payloads · approvals payloads · quota snapshot ·
  *     context-graph touch · JSON reconnect-replay · connect-time auth token
  *
- * Carried forward unchanged from FROZEN-M1-CORE (2026-07-04):
- *   - wire vocabularies (vocab.ts): account labels, backends, substrates,
- *     session states, label↔backend pairing
+ * Carried forward from FROZEN-M1-CORE (2026-07-04), account-label form WIDENED
+ * at M7 (ICR-0013):
+ *   - wire vocabularies (vocab.ts): account labels (now an OPEN validated FORM —
+ *     `^MAX_[A-Z]$` + `ENT` + the fixed backend labels AWS_DEV/LOCAL), backends,
+ *     substrates, session states, label↔backend pairing (now `backendForLabel()`)
  *   - channel registry (channels.ts): control · events · quota · approvals ·
  *     pty.<sid> · transcript.<sid> · context-graph, stream mapping
  *   - envelope (envelope.ts): { stream, channel, seq, payload }
@@ -126,31 +141,45 @@
  */
 
 /**
- * Protocol version. `1.4.0` = the M6 freeze (additive: the eleventh read model
- * `resource-health` — the supervision/governor instrument, blueprint §11 — on
- * the existing events channel; `1.3.0` was the M5 freeze (pipelines channel +
- * DAG schema module), `1.2.0` the M4 freeze, `1.1.0` the M3 freeze, `1.0.0` the
- * M2 full freeze, `1.0.0-m1-core` the M1-CORE freeze). Consumers may assert
- * against {@link PROTOCOL_FREEZE}.
+ * Protocol version. `1.5.0` = the M7 account-registry generalization (ICR-0013,
+ * additive/validation-widening: the account-label CLOSED 5-set became an OPEN
+ * validated FORM — `^MAX_[A-Z]$` + `ENT` + fixed backend labels — and
+ * `LABEL_BACKENDS` became `backendForLabel()`; no wire SHAPE changed).
+ * `1.4.0` was the M6 freeze (additive: the eleventh read model `resource-health`
+ * — the supervision/governor instrument, blueprint §11 — on the existing events
+ * channel); `1.3.0` was the M5 freeze (pipelines channel + DAG schema module),
+ * `1.2.0` the M4 freeze, `1.1.0` the M3 freeze, `1.0.0` the M2 full freeze,
+ * `1.0.0-m1-core` the M1-CORE freeze. Consumers may assert against
+ * {@link PROTOCOL_FREEZE}.
  */
-export const PROTOCOL_VERSION = '1.4.0' as const;
+export const PROTOCOL_VERSION = '1.5.0' as const;
 
 /** Freeze marker for runtime assertions and golden fixtures. */
-export const PROTOCOL_FREEZE = 'FROZEN-M6' as const;
+export const PROTOCOL_FREEZE = 'FROZEN-M7' as const;
 
-// FROZEN surfaces (M1-CORE, carried forward) ----------------------------------
+// FROZEN surfaces (M1-CORE; account-label form widened at M7 — ICR-0013) ------
 export {
   ACCOUNT_LABELS,
   BACKENDS,
-  LABEL_BACKENDS,
+  CLAUDE_ACCOUNT_LABEL_RE,
+  ENTERPRISE_ACCOUNT_LABEL,
+  FIXED_BACKEND_LABELS,
   SESSION_STATES,
   SUBSTRATES,
+  UnknownAccountLabelError,
+  backendForLabel,
+  backendForLabelOrUndefined,
   isAccountLabel,
   isBackend,
+  isClaudeAccountLabel,
+  isFixedBackendLabel,
   isSessionState,
   isSubstrate,
   type AccountLabel,
   type Backend,
+  type ClaudeAccountLabel,
+  type EnterpriseAccountLabel,
+  type FixedBackendLabel,
   type SessionState,
   type Substrate,
 } from './vocab.js';
@@ -435,7 +464,6 @@ export {
 
 // The versioned JSON DAG document format + validator (dag-schema.md v1).
 export {
-  ACCOUNT_STEP_BACKENDS,
   CAPABILITY_SCOPES,
   DAG_ID_RE,
   DAG_ISSUE_CODES,
@@ -448,6 +476,7 @@ export {
   STEP_BACKENDS,
   STEP_ID_RE,
   STEP_KINDS,
+  accountStepBackendsFor,
   isCapabilityScope,
   isPermissionMode,
   isRetryOnClass,

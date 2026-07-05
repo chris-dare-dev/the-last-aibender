@@ -30,7 +30,7 @@ import {
 } from '@aibender/protocol';
 
 /** The protocol freeze this corpus pins (asserted equal to PROTOCOL_FREEZE). */
-export const GOLDEN_HOOK_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M6';
+export const GOLDEN_HOOK_CORPUS_FREEZE: typeof PROTOCOL_FREEZE = 'FROZEN-M7';
 
 // ---------------------------------------------------------------------------
 // Fixture types
@@ -243,6 +243,20 @@ export const GOLDEN_HOOK_FIXTURES: readonly GoldenHookFixture[] = Object.freeze(
     }),
     expect: { accepted: false, httpStatus: 404 },
     notes: 'label attribution comes from the path ONLY — an unknown segment is never guessed [X2]',
+  },
+  {
+    name: 'hook-max-c-open-form-accepted',
+    accountSegment: 'MAX_C',
+    bodyJson: JSON.stringify({
+      hook_event_name: 'PostToolUse',
+      session_id: 'synth-native-1',
+      tool_name: 'Write',
+      tool_output: { ok: true },
+    }),
+    expect: { accepted: true, group: 'tool-lifecycle', gatingCapable: false },
+    notes:
+      'ICR-0013: a hook POST on a newly provisioned Max account (MAX_C) is ACCEPTED — the ' +
+      'path segment is a sanctioned label by FORM (^MAX_[A-Z]$), no code change needed',
   },
   {
     name: 'hook-lowercase-label-404',

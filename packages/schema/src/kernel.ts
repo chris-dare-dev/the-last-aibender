@@ -23,7 +23,7 @@
  */
 
 import {
-  LABEL_BACKENDS,
+  backendForLabel,
   isAccountLabel,
   isBackend,
   isSessionState,
@@ -222,10 +222,10 @@ export function createResumeLedgerStore(
       if (!isAccountLabel(input.accountLabel)) {
         throw new KernelStoreError(`unknown account label ${JSON.stringify(input.accountLabel)}`);
       }
-      if (LABEL_BACKENDS[input.accountLabel] !== input.backend) {
+      if (backendForLabel(input.accountLabel) !== input.backend) {
         throw new KernelStoreError(
           `label/backend pairing violation: ${input.accountLabel} requires ` +
-            `${LABEL_BACKENDS[input.accountLabel]}, got ${String(input.backend)}`,
+            `${backendForLabel(input.accountLabel)}, got ${String(input.backend)}`,
         );
       }
       if (input.substrate === 'pty' && input.backend !== 'claude_code') {

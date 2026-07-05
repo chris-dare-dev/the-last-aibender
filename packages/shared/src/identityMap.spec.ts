@@ -63,12 +63,26 @@ describe('parseIdentityMap', () => {
 
   // -- negative --------------------------------------------------------------
 
-  it('throws on invalid JSON, non-object roots, unknown label keys', () => {
+  it('throws on invalid JSON, non-object roots, non-sanctioned label keys', () => {
     expect(() => parseIdentityMap('{nope')).toThrow(IdentityMapError);
     expect(() => parseIdentityMap('[]')).toThrow(IdentityMapError);
     expect(() => parseIdentityMap('"MAX_A"')).toThrow(IdentityMapError);
-    expect(() => parseIdentityMap(JSON.stringify({ MAX_C: [] }))).toThrow(IdentityMapError);
+    // ICR-0013: the FORM is the ceiling, so a NON-sanctioned key still throws —
+    // a word ("HACKER"), a two-letter Max suffix ("MAX_AB"), a lowercase form
+    // ("max_a"), and an email-shaped key are all rejected.
+    expect(() => parseIdentityMap(JSON.stringify({ HACKER: [] }))).toThrow(IdentityMapError);
+    expect(() => parseIdentityMap(JSON.stringify({ MAX_AB: [] }))).toThrow(IdentityMapError);
     expect(() => parseIdentityMap(JSON.stringify({ max_a: [] }))).toThrow(IdentityMapError);
+    expect(() => parseIdentityMap(JSON.stringify({ 'x@example.com': [] }))).toThrow(IdentityMapError);
+  });
+
+  it('accepts a newly provisioned Max account key (MAX_C/MAX_D) by FORM (ICR-0013)', () => {
+    const map = parseIdentityMap(
+      JSON.stringify({ MAX_C: ['c@example.com'], MAX_D: ['d@example.com'] }),
+    );
+    expect(map.size).toBe(2);
+    expect(map.labelFor('c@example.com')).toBe('MAX_C');
+    expect(map.labelFor('d@example.com')).toBe('MAX_D');
   });
 
   it('throws on non-array values, non-string or blank identities', () => {

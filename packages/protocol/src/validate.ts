@@ -91,7 +91,7 @@ import type {
   TranscriptUsage,
 } from './transcript.js';
 import {
-  LABEL_BACKENDS,
+  backendForLabel,
   isAccountLabel,
   isBackend,
   isSessionState,
@@ -196,10 +196,10 @@ function validateLaunchParams(value: unknown): ValidationResult<LaunchParams> {
   if (!isBackend(backend)) {
     return invalid('bad-request', `unknown backend ${JSON.stringify(backend)}`);
   }
-  if (LABEL_BACKENDS[accountLabel] !== backend) {
+  if (backendForLabel(accountLabel) !== backend) {
     return invalid(
       'bad-request',
-      `label/backend pairing violation: ${accountLabel} requires ${LABEL_BACKENDS[accountLabel]}, got ${backend}`,
+      `label/backend pairing violation: ${accountLabel} requires ${backendForLabel(accountLabel)}, got ${backend}`,
     );
   }
   const substrate = value['substrate'];
@@ -981,10 +981,10 @@ function validateEventSummary(value: Record<string, unknown>): ValidationResult<
   if (!isBackend(backend)) {
     return invalid('bad-request', `event-summary backend unknown ${JSON.stringify(backend)}`);
   }
-  if (LABEL_BACKENDS[account] !== backend) {
+  if (backendForLabel(account) !== backend) {
     return invalid(
       'bad-request',
-      `event-summary label/backend pairing violation: ${account} requires ${LABEL_BACKENDS[account]}`,
+      `event-summary label/backend pairing violation: ${account} requires ${backendForLabel(account)}`,
     );
   }
   const source = value['source'];
@@ -1173,7 +1173,7 @@ function validateApiEquivalentUsd(
     const account = entry['account'];
     if (!isAccountLabel(account)) return invalid('bad-request', 'api-equivalent-usd account unknown');
     const backend = entry['backend'];
-    if (!isBackend(backend) || LABEL_BACKENDS[account] !== backend) {
+    if (!isBackend(backend) || backendForLabel(account) !== backend) {
       return invalid('bad-request', 'api-equivalent-usd entry violates the label/backend pairing');
     }
     const equivalentUsd = entry['equivalentUsd'];
@@ -1389,10 +1389,10 @@ function validateSessionFootprints(
     if (!isBackend(backend)) {
       return invalid('bad-request', `resource-health session backend unknown ${JSON.stringify(backend)}`);
     }
-    if (LABEL_BACKENDS[account] !== backend) {
+    if (backendForLabel(account) !== backend) {
       return invalid(
         'bad-request',
-        `resource-health session label/backend pairing violation: ${account} requires ${LABEL_BACKENDS[account]}`,
+        `resource-health session label/backend pairing violation: ${account} requires ${backendForLabel(account)}`,
       );
     }
     const slot = entry['slot'];
@@ -1444,10 +1444,10 @@ function validateShedNotices(value: unknown): ValidationResult<readonly ShedNoti
     if (backend !== undefined && !isBackend(backend)) {
       return invalid('bad-request', `resource-health notice backend unknown ${JSON.stringify(backend)}`);
     }
-    if (account !== undefined && backend !== undefined && LABEL_BACKENDS[account] !== backend) {
+    if (account !== undefined && backend !== undefined && backendForLabel(account) !== backend) {
       return invalid(
         'bad-request',
-        `resource-health notice label/backend pairing violation: ${account} requires ${LABEL_BACKENDS[account]}`,
+        `resource-health notice label/backend pairing violation: ${account} requires ${backendForLabel(account)}`,
       );
     }
     out.push({
@@ -1658,7 +1658,7 @@ function validateWorkstreamNodeRecord(value: unknown): ValidationResult<Workstre
     return invalid('bad-request', `workstream node account unknown ${JSON.stringify(account)}`);
   }
   const backend = value['backend'];
-  if (!isBackend(backend) || LABEL_BACKENDS[account] !== backend) {
+  if (!isBackend(backend) || backendForLabel(account) !== backend) {
     return invalid('bad-request', 'workstream node violates the label/backend pairing');
   }
   const state = value['state'];
@@ -2002,7 +2002,7 @@ function validateWorkstreamMergeParams(value: unknown): ValidationResult<Workstr
     return invalid('bad-request', `unknown account label ${JSON.stringify(accountLabel)}`);
   }
   const backend = value['backend'];
-  if (!isBackend(backend) || LABEL_BACKENDS[accountLabel] !== backend) {
+  if (!isBackend(backend) || backendForLabel(accountLabel) !== backend) {
     return invalid('bad-request', 'merge params violate the label/backend pairing');
   }
   const cwd = value['cwd'];

@@ -39,16 +39,39 @@ const newRow = (overrides: Partial<NewResumeLedgerRow> = {}): NewResumeLedgerRow
   ...overrides,
 });
 
-describe('migration 0001 seeds', () => {
-  it('seeds schema_meta and the five account profiles with NULL config dirs', async () => {
+describe('kernel migrations: 0001 seeds + 0005 account-registry relaxation', () => {
+  it('seeds the five account profiles and reflects the M7 relaxation in schema_meta', async () => {
     const store = await openStore();
-    expect(store.schemaMeta.get('ddl_version')).toBe('1');
-    expect(store.schemaMeta.get('frozen_milestone')).toBe('M1');
+    // 0005 (M7 account-registry relaxation) bumps the kernel schema_meta.
+    expect(store.schemaMeta.get('ddl_version')).toBe('5');
+    expect(store.schemaMeta.get('frozen_milestone')).toBe('M7');
+    // The SEED set is still the five originally provisioned placeholders — the
+    // migration RELAXES validation, it does not seed new accounts.
     const profiles = store.accountProfiles.list();
     expect(profiles.map((p) => p.label).sort()).toEqual(['AWS_DEV', 'ENT', 'LOCAL', 'MAX_A', 'MAX_B']);
     expect(profiles.every((p) => p.configDir === null)).toBe(true);
     expect(store.accountProfiles.get('AWS_DEV')?.backend).toBe('opencode');
     expect(store.accountProfiles.get('LOCAL')?.backend).toBe('lmstudio');
+  });
+
+  it('admits a newly provisioned Max account (MAX_C) into the resume ledger (ICR-0013)', async () => {
+    const store = await openStore();
+    const row = store.resumeLedger.insertBeforeSpawn(
+      newRow({ id: 'ses_maxc', accountLabel: 'MAX_C' as never, backend: 'claude_code' }),
+    );
+    expect(row.accountLabel).toBe('MAX_C');
+    // The form is still a GATE: a non-sanctioned label is refused at the accessor.
+    expect(() =>
+      store.resumeLedger.insertBeforeSpawn(
+        newRow({ id: 'ses_bad', accountLabel: 'HACKER' as never, backend: 'claude_code' }),
+      ),
+    ).toThrow();
+    // And a newly provisioned Max account MUST still be claude_code (pairing).
+    expect(() =>
+      store.resumeLedger.insertBeforeSpawn(
+        newRow({ id: 'ses_pair', accountLabel: 'MAX_C' as never, backend: 'opencode' }),
+      ),
+    ).toThrow();
   });
 });
 
@@ -253,12 +276,16 @@ describe('account_profiles + schema_meta accessors', () => {
     expect(store.accountProfiles.get('MAX_A')?.configDir).toBe('/machine-local/accounts/max-a');
   });
 
-  it('rejects relative config dirs and unknown labels', async () => {
+  it('rejects relative config dirs, non-sanctioned labels, and known-but-unseeded labels', async () => {
     const store = await openStore();
     expect(() => store.accountProfiles.setConfigDir('MAX_A', 'relative/dir')).toThrow(/absolute/);
-    expect(() => store.accountProfiles.setConfigDir('MAX_C' as never, '/x')).toThrow(
-      KernelStoreError,
+    // A NON-sanctioned label fails the form gate outright.
+    expect(() => store.accountProfiles.setConfigDir('HACKER' as never, '/x')).toThrow(
+      /unknown account label/,
     );
+    // MAX_C IS a sanctioned label now (ICR-0013), but no profile row was seeded
+    // for it — the accessor refuses the update with "not found", not silently.
+    expect(() => store.accountProfiles.setConfigDir('MAX_C' as never, '/x')).toThrow(/not found/);
   });
 
   it('schema_meta get/set/all round-trips and upserts', async () => {
@@ -267,7 +294,7 @@ describe('account_profiles + schema_meta accessors', () => {
     store.schemaMeta.set('kernel_boot_count', '2');
     expect(store.schemaMeta.get('kernel_boot_count')).toBe('2');
     expect(store.schemaMeta.get('missing')).toBeUndefined();
-    expect(store.schemaMeta.all()['ddl_version']).toBe('1');
+    expect(store.schemaMeta.all()['ddl_version']).toBe('5');
     expect(() => store.schemaMeta.set('  ', 'x')).toThrow(KernelStoreError);
   });
 

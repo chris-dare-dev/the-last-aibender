@@ -26,9 +26,9 @@
  */
 
 import {
-  LABEL_BACKENDS,
   QUOTA_SOURCES,
   QUOTA_WINDOWS,
+  backendForLabel,
   isAccountLabel,
   isBackend,
   isEventErrorKind,
@@ -293,10 +293,10 @@ function validateNewEvent(input: NewEventRow): void {
   if (!isAccountLabel(input.account)) {
     throw new EventsStoreError(`unknown account label ${JSON.stringify(input.account)}`);
   }
-  if (LABEL_BACKENDS[input.account] !== input.backend) {
+  if (backendForLabel(input.account) !== input.backend) {
     throw new EventsStoreError(
       `label/backend pairing violation: ${input.account} requires ` +
-        `${LABEL_BACKENDS[input.account]}, got ${String(input.backend)}`,
+        `${backendForLabel(input.account)}, got ${String(input.backend)}`,
     );
   }
   if (!isEventSource(input.source)) {

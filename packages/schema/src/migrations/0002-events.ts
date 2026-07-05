@@ -39,6 +39,8 @@
 
 import type { Migration } from '../index.js';
 
+import { MIGRATION_0006_ACCOUNT_REGISTRY_EVENTS } from './0006-account-registry-events.js';
+
 export const MIGRATION_0002_EVENTS: Migration = {
   id: 2,
   name: 'events-store-init',
@@ -181,8 +183,11 @@ CREATE TABLE prices (
  * The full ordered migration list for the COLLECTOR-OWNED events database
  * (`~/.aibender/db/events.db`) — the sibling list sqlite-ddl.md §6 reserved.
  * Later observability DDL appends here via ICR; kernel-ledger DDL (X4 at M4)
- * appends to KERNEL_MIGRATIONS instead. Never reorder, never edit 0002.
+ * appends to KERNEL_MIGRATIONS instead. 0006 = the M7 account-registry
+ * relaxation (account CHECKs widen to the open MAX_<X> form — ICR-0013). Never
+ * reorder, never edit 0002.
  */
 export const EVENTS_STORE_MIGRATIONS: readonly Migration[] = Object.freeze([
   MIGRATION_0002_EVENTS,
+  MIGRATION_0006_ACCOUNT_REGISTRY_EVENTS,
 ]);

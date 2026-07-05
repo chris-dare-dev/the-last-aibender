@@ -41,9 +41,13 @@ export const REQUEST_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 // ---------------------------------------------------------------------------
 
 export interface LaunchParams {
-  /** Placeholder label only — MAX_A/MAX_B/ENT/AWS_DEV/LOCAL [X2]. */
+  /**
+   * Placeholder label only [X2] — a Claude account (`^MAX_[A-Z]$` Max form or
+   * `ENT`) or a fixed backend label (AWS_DEV/LOCAL). The OPEN Max-account form
+   * (ICR-0013) admits MAX_C/MAX_D/… without a code change.
+   */
   readonly accountLabel: AccountLabel;
-  /** Must satisfy LABEL_BACKENDS pairing (validated). */
+  /** Must satisfy the backendForLabel() pairing (validated). */
   readonly backend: Backend;
   /** `pty` (attended TUI) is claude_code-only (validated; blueprint §4.1). */
   readonly substrate: Substrate;

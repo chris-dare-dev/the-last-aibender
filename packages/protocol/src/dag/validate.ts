@@ -16,8 +16,10 @@
  *   - dangling-needs        `needs`/`goto`/`forEach`-ref names an absent step
  *   - duplicate-step-id     two steps share an id
  *   - cycle                 the `needs:` graph is not a DAG
- *   - invalid-account       account label outside ACCOUNT_LABELS, or a
- *                           backend inconsistent with the account
+ *   - invalid-account       account label outside the sanctioned form
+ *                           (isAccountLabel — `^MAX_[A-Z]$`/`ENT`/fixed
+ *                           backend labels; ICR-0013), or a backend
+ *                           inconsistent with the account
  *   - bad-shape             field-level (blank id/name, empty steps, bad
  *                           budget/retry bounds, forEach+loop both set, …)
  *
@@ -45,12 +47,12 @@ import type {
   WorkflowScriptStep,
 } from './types.js';
 import {
-  ACCOUNT_STEP_BACKENDS,
   DAG_ID_RE,
   DAG_NAME_RE,
   DAG_SCHEMA_VERSION,
   ON_ERROR_POLICIES,
   STEP_ID_RE,
+  accountStepBackendsFor,
   isCapabilityScope,
   isPermissionMode,
   isRetryOnClass,
@@ -152,7 +154,7 @@ function checkAccountBackend(
     return fail('bad-shape', path, `unknown step backend ${JSON.stringify(backend)}`);
   }
   if (account !== undefined && backend !== undefined) {
-    const legal = ACCOUNT_STEP_BACKENDS[account];
+    const legal = accountStepBackendsFor(account);
     if (!(legal as readonly string[]).includes(backend)) {
       return fail(
         'invalid-account',

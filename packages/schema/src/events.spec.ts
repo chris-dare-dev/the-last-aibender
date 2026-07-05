@@ -48,13 +48,18 @@ function newEvent(overrides: Partial<NewEventRow> = {}): NewEventRow {
 // ---------------------------------------------------------------------------
 
 describe('events store — positive', () => {
-  it('opens :memory:, applies migration 0002, and reports its journal mode', async () => {
+  it('opens :memory:, applies the events migrations, and reports its journal mode', async () => {
     const store = await openStore();
     expect(store.journalMode).toBe('memory');
     const meta = store.driver
       .prepare("SELECT value FROM schema_meta WHERE key = 'frozen_milestone'")
       .get();
-    expect(meta?.['value']).toBe('M3');
+    // 0006 (M7 account-registry relaxation) bumps the events-store milestone.
+    expect(meta?.['value']).toBe('M7');
+    const ddl = store.driver
+      .prepare("SELECT value FROM schema_meta WHERE key = 'events_ddl_version'")
+      .get();
+    expect(ddl?.['value']).toBe('2');
   });
 
   it('the sibling migration list is well-ordered and repo-wide unique vs 0001', () => {

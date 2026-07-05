@@ -27,6 +27,10 @@
  * synthetic paths, obviously-fake bytes).
  */
 
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import {
   CHANNEL,
   decodePtyFrame,
@@ -40,6 +44,7 @@ import {
   type EventSummary,
   type QuotaSnapshot,
 } from '@aibender/protocol';
+import { openEventsStore, type EventsStore } from '@aibender/schema';
 import { FakePtyBackend, FakeQueryRunner } from '@aibender/testkit';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket as WsClient } from 'ws';
@@ -50,6 +55,7 @@ import {
   type BrokerPublishSinks,
   type ComposedBroker,
 } from './index.js';
+import { HOOK_TOKEN_HEADER } from '../collector/hooks/index.js';
 import type { RunnerMessageTap } from '../kernel/index.js';
 
 // ---------------------------------------------------------------------------
@@ -567,5 +573,124 @@ describe('composeBroker — M2/M3 ports through ONE composition, one socket', ()
     // (deny-shaped interrupt) rather than parking it forever.
     await expect(pending).resolves.toMatchObject({ behavior: 'deny' });
     expect(broker.kernel.isLive(sessionId)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-3 — the per-install hooks-endpoint token, READ at boot and enforced
+// (hooks-contract.md §4.2, ICR-0015; BE-MAIN follow-up #1). The broker READS
+// $AIBENDER_HOME/hook-token (SI-3 mints it; presence = opt-in) and passes it as
+// startHooksServer's authToken — proven end-to-end over the REAL loopback HTTP
+// endpoint composed by composeBroker.
+// ---------------------------------------------------------------------------
+
+describe('composeBroker — SEC-3 hooks-endpoint token gate', () => {
+  // A synthetic per-install token in the gateway-token shape (base64url-ish).
+  // [X2]: obviously fake, never a real secret.
+  const HOOK_TOKEN = 'synthesized-per-install-hook-token-000000000';
+  const HOOK_BODY = JSON.stringify({
+    hook_event_name: 'PostToolUse',
+    session_id: 'synth-native-hooks',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+    tool_output: { ok: true },
+  });
+
+  const postHook = (url: string, headers: Record<string, string> = {}): Promise<Response> =>
+    fetch(`${url}/hooks/v1/MAX_A`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: HOOK_BODY,
+    });
+
+  /**
+   * Compose a broker whose $AIBENDER_HOME is a fresh tmp dir; when `token` is
+   * given it is written to `<home>/hook-token` (0600, with a trailing newline
+   * exactly like SI-3's `printf '%s\n'`) BEFORE composition so the boot-time
+   * read sees it. The collector events store is the separate §6.2 database the
+   * operator config surface hands in.
+   */
+  async function composeHooksBroker(
+    token?: string,
+  ): Promise<{ broker: ComposedBroker; events: EventsStore }> {
+    const home = mkdtempSync(join(tmpdir(), 'aib-hooks-'));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    if (token !== undefined) {
+      writeFileSync(join(home, 'hook-token'), `${token}\n`, { mode: 0o600 });
+    }
+    const events = await openEventsStore({ path: ':memory:' });
+    cleanups.push(() => events.close());
+    const broker = await composeBroker({
+      storePath: ':memory:',
+      profiles: { aibenderHome: home },
+      runner: new FakeQueryRunner({ mode: 'manual' }),
+      baseEnv: {},
+      logger: QUIET,
+      gateway: { writeBootstrap: false, aibenderHome: home, logger: QUIET },
+      hooks: { events: events.events, port: 0 },
+    });
+    cleanups.push(() => broker.close());
+    return { broker, events };
+  }
+
+  it('token file present → 401s a token-less POST and accepts the correctly-headed one', async () => {
+    const { broker, events } = await composeHooksBroker(HOOK_TOKEN);
+    const url = broker.hooks!.url;
+    expect(url.startsWith('http://127.0.0.1:')).toBe(true); // loopback preserved
+
+    // No header → 401 BEFORE any parse/insert (the store stays empty).
+    expect((await postHook(url)).status).toBe(401);
+    expect(events.events.list()).toHaveLength(0);
+
+    // Wrong token → 401, still nothing inserted.
+    expect((await postHook(url, { [HOOK_TOKEN_HEADER]: `${HOOK_TOKEN}-x` })).status).toBe(401);
+    expect(events.events.list()).toHaveLength(0);
+
+    // The EXACT trimmed file contents → 204 accepted + one row. That the value
+    // WITHOUT the trailing newline is accepted proves the broker passed the
+    // TRIMMED token as authToken (an untrimmed authToken would 401 here).
+    expect((await postHook(url, { [HOOK_TOKEN_HEADER]: HOOK_TOKEN })).status).toBe(204);
+    expect(events.events.list()).toHaveLength(1);
+    expect(broker.hooks!.stats().rejected401).toBe(2);
+    expect(broker.hooks!.stats().accepted).toBe(1);
+  });
+
+  it('token file absent → authToken undefined; the endpoint keeps the open posture', async () => {
+    const { broker, events } = await composeHooksBroker(); // no token file written
+    const url = broker.hooks!.url;
+    // A header-less POST is accepted — byte-compatible with the M2–M6 open
+    // loopback posture (presence of the file is the operator opt-in).
+    expect((await postHook(url)).status).toBe(204);
+    expect(events.events.list()).toHaveLength(1);
+    expect(broker.hooks!.stats().rejected401).toBe(0);
+  });
+
+  it('the hooks token is DISTINCT from the per-boot WS gateway token (no cross-wiring)', async () => {
+    const { broker } = await composeHooksBroker(HOOK_TOKEN);
+    const url = broker.hooks!.url;
+    // Different values...
+    expect(HOOK_TOKEN).not.toBe(broker.gateway.token);
+    // ...and the endpoint enforces the HOOK token, not the gateway one: posting
+    // the gateway bootstrap token as the hook header is rejected 401, while the
+    // real per-install hook token is accepted.
+    expect((await postHook(url, { [HOOK_TOKEN_HEADER]: broker.gateway.token })).status).toBe(401);
+    expect((await postHook(url, { [HOOK_TOKEN_HEADER]: HOOK_TOKEN })).status).toBe(204);
+  });
+
+  it('without options.hooks the composed broker has no hooks endpoint (default composition unchanged)', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'aib-hooks-'));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    // A hook-token file is present, but with no options.hooks nothing reads it.
+    writeFileSync(join(home, 'hook-token'), `${HOOK_TOKEN}\n`, { mode: 0o600 });
+    const broker = await composeBroker({
+      storePath: ':memory:',
+      profiles: { aibenderHome: home },
+      runner: new FakeQueryRunner({ mode: 'manual' }),
+      baseEnv: {},
+      logger: QUIET,
+      gateway: { writeBootstrap: false, aibenderHome: home, logger: QUIET },
+    });
+    cleanups.push(() => broker.close());
+    expect(broker.hooks).toBeUndefined();
   });
 });

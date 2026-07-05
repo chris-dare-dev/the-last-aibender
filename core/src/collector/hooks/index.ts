@@ -7,6 +7,7 @@
 export { normalizeAcceptedHookPost, type NormalizeHookPostInput } from './normalize.js';
 
 export {
+  HOOK_TOKEN_HEADER,
   HOOKS_SERVER_HOST,
   MAX_HOOK_BODY_BYTES,
   startHooksServer,

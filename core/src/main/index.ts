@@ -41,6 +41,8 @@
  * `liveSpawnOptIn` (the backend refuses to construct without it).
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import {
@@ -93,7 +95,9 @@ import {
   type PtyFlowControlOptions,
   type TranscriptSource,
 } from '../gateway/index.js';
+import { startHooksServer, type HooksServer } from '../collector/hooks/index.js';
 import {
+  aibenderHomePath,
   approvalRelayFromBroker,
   createAccountRegistry,
   createApprovalBroker,
@@ -420,6 +424,58 @@ export type BrokerPublisherStarter = (
 ) => BrokerPublisherHandle | undefined | void;
 
 // ---------------------------------------------------------------------------
+// SEC-3 hooks-endpoint token (hooks-contract.md §4.2, ICR-0015): READ, never
+// mint. Distinct from the per-boot WS gateway token (gateway/token.ts).
+// ---------------------------------------------------------------------------
+
+/**
+ * The basename of the STABLE per-install hooks-endpoint token file under
+ * `$AIBENDER_HOME` — matches infra's `AIB_HOOK_TOKEN_NAME` (infra/hooks/lib.sh)
+ * so the broker READS the exact file SI-3 mints (`--hook-token`, 0600).
+ */
+export const HOOK_TOKEN_FILE_NAME = 'hook-token' as const;
+
+/**
+ * Resolve `$AIBENDER_HOME/hook-token` using the SAME home resolution
+ * composeBroker uses for the gateway bootstrap + profiles: an explicit
+ * gateway/profiles `aibenderHome`, else the `AIBENDER_HOME` env override, else
+ * `~/.aibender` (via {@link aibenderHomePath}). The gateway home wins when both
+ * are set — it is where the sibling gateway bootstrap already lands.
+ */
+function hookTokenFile(options: ComposeBrokerOptions): string {
+  const aibenderHome = options.gateway?.aibenderHome ?? options.profiles?.aibenderHome;
+  const env = options.gateway?.env ?? options.profiles?.env;
+  const home = aibenderHomePath({
+    ...(aibenderHome !== undefined ? { aibenderHome } : {}),
+    ...(env !== undefined ? { env } : {}),
+  });
+  return join(home, HOOK_TOKEN_FILE_NAME);
+}
+
+/**
+ * SEC-3 (hooks-contract.md §4.2, ICR-0015): READ the STABLE per-install hooks
+ * token SI-3 minted to `$AIBENDER_HOME/hook-token`. PRESENCE is the opt-in —
+ * SI-3 only writes the file under `--hook-token`, so a present, non-empty file
+ * means the operator turned the gate on and the broker must enforce it. The
+ * value is READ, never minted here: a per-boot value could never match the
+ * header SI-3 baked into on-disk settings.json. Trailing whitespace is trimmed
+ * (SI-3 writes `printf '%s\n'`); an absent / unreadable / empty / whitespace-only
+ * file → `undefined` → the open posture (NEVER an empty-string token, which
+ * would 401 every POST). Kept DISTINCT from the per-boot WS gateway token
+ * (gateway/token.ts `newBootToken()` — a separate secret in a separate file).
+ */
+function readHookToken(tokenFile: string): string | undefined {
+  let raw: string;
+  try {
+    raw = readFileSync(tokenFile, 'utf8');
+  } catch {
+    return undefined; // absent/unreadable → open posture (presence is the opt-in)
+  }
+  const token = raw.trim();
+  return token.length > 0 ? token : undefined;
+}
+
+// ---------------------------------------------------------------------------
 // Broker composition — the FULL broker: every gateway port through ONE call
 // (M1 control verbs; M2 pty/approvals/transcripts; M3 publisher lanes)
 // ---------------------------------------------------------------------------
@@ -567,6 +623,48 @@ export interface ComposeBrokerOptions extends ComposeKernelOptions {
     readonly idleWindowMs?: number;
     readonly logger?: Logger;
   };
+  /**
+   * SEC-3 / [X4]: the BE-5 hooks-contract.md ACCEPTING ENDPOINT lane
+   * (core/src/collector/hooks). Present → composeBroker starts the loopback
+   * HTTP endpoint AFTER the gateway is up, over the collector events store the
+   * operator supplies here, and wires: the shared ApprovalBroker
+   * (PermissionRequest → hook-floor slot), the frozen native→harness resolver
+   * ({@link BrokerPublishSinks.resolveSessionId} → `sessionIdOfNative`), and the
+   * [X4] automation routing ({@link BrokerPublishSinks.workstreamHooks} →
+   * `workstreams`). The endpoint is registered as a publisher handle so it is
+   * closed FIRST on shutdown (publisher-lane ordering — before the gateway).
+   * Absent → NO hooks endpoint (default composition unchanged) — this is the
+   * operator CONFIG surface the M3 publisher-seam doc comment defers to (the
+   * collector events store is the SEPARATE §6.2 database, not the kernel store,
+   * so the operator must open + hand it in).
+   *
+   * SEC-3 TOKEN (hooks-contract.md §4.2, ICR-0015): the endpoint's `authToken`
+   * is NOT configured here — composeBroker READS the STABLE per-install secret
+   * SI-3 minted to `$AIBENDER_HOME/hook-token` (basename = infra's
+   * AIB_HOOK_TOKEN_NAME) and passes it. PRESENCE of that file is the operator
+   * opt-in: a present, non-empty file → the gate enforces (token-less POSTs
+   * 401); absent / empty / whitespace-only → the open loopback posture
+   * (byte-compatible with M2–M6). The broker never MINTS the token (a per-boot
+   * value could never match the header SI-3 baked into on-disk settings.json)
+   * and keeps it DISTINCT from the per-boot WS gateway token.
+   */
+  readonly hooks?: {
+    /**
+     * The collector-owned events store (openEventsStore — the SEPARATE §6.2
+     * database, NEVER the kernel store). REQUIRED: every accepted post
+     * normalizes into it (source `hooks`).
+     */
+    readonly events: EventsTableStore;
+    /** Listen port. Default: AIBENDER_HOOKS_PORT env, else 4319. Tests pass 0. */
+    readonly port?: number;
+    /** `observe` (default, T3-safe) or `escalate` (answers a gating 200 in time). */
+    readonly floorPosture?: 'observe' | 'escalate';
+    /** Escalate-mode decision window, ms. */
+    readonly floorTimeoutMs?: number;
+    /** SessionStart injection deadline, ms. */
+    readonly sessionStartTimeoutMs?: number;
+    readonly nowMs?: () => number;
+  };
 }
 
 export interface ComposedBroker extends ComposedKernel {
@@ -604,6 +702,15 @@ export interface ComposedBroker extends ComposedKernel {
    * `governor.admitSpawnNow` from the spawn paths; tests drive it directly.
    */
   readonly supervision?: SupervisionSlice;
+  /**
+   * SEC-3 / [X4]: the composed hooks accepting endpoint (present iff
+   * `options.hooks` was given) — its `url`/`port` reach the loopback endpoint
+   * (tests POST against them; `port-in-use` degrades to `state:'port-in-use'`
+   * exactly like the gateway). The broker OWNS its shutdown (closed FIRST,
+   * before the gateway). The SEC-3 `authToken` gate is active iff
+   * `$AIBENDER_HOME/hook-token` was present + non-empty at boot.
+   */
+  readonly hooks?: HooksServer;
 }
 
 /**
@@ -938,13 +1045,49 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       await handle.close();
     }
   };
+  let hooksServer: HooksServer | undefined;
   try {
     for (const start of options.publishers ?? []) {
       const handle = start(sinks);
       if (handle !== undefined) publisherHandles.push(handle);
     }
+    // -- SEC-3 / [X4] hooks accepting endpoint lane (operator-config gated) ---
+    // Composed only when options.hooks supplies the collector events store, so
+    // the default composition + the M2/M3 test surface stay byte-identical. It
+    // READS the STABLE per-install token from $AIBENDER_HOME/hook-token (SI-3
+    // mints it; PRESENCE is the opt-in) and enforces it as authToken — an
+    // absent/empty file keeps the open loopback posture. It rides the SAME
+    // sinks the publisher lanes do (the frozen resolver + [X4] automation
+    // routing) and registers as a publisher handle so it closes FIRST on
+    // shutdown (before the gateway).
+    if (options.hooks !== undefined) {
+      const authToken = readHookToken(hookTokenFile(options));
+      const started = await startHooksServer({
+        events: options.hooks.events,
+        approvals,
+        ...(sinks.resolveSessionId !== undefined
+          ? { sessionIdOfNative: sinks.resolveSessionId }
+          : {}),
+        ...(sinks.workstreamHooks !== undefined ? { workstreams: sinks.workstreamHooks } : {}),
+        ...(authToken !== undefined ? { authToken } : {}),
+        ...(options.hooks.port !== undefined ? { port: options.hooks.port } : {}),
+        ...(options.hooks.floorPosture !== undefined
+          ? { floorPosture: options.hooks.floorPosture }
+          : {}),
+        ...(options.hooks.floorTimeoutMs !== undefined
+          ? { floorTimeoutMs: options.hooks.floorTimeoutMs }
+          : {}),
+        ...(options.hooks.sessionStartTimeoutMs !== undefined
+          ? { sessionStartTimeoutMs: options.hooks.sessionStartTimeoutMs }
+          : {}),
+        ...(options.hooks.nowMs !== undefined ? { nowMs: options.hooks.nowMs } : {}),
+      });
+      hooksServer = started;
+      publisherHandles.push({ close: () => started.close() });
+    }
   } catch (cause) {
-    // A publisher lane that failed to start must not leak the broker.
+    // A publisher lane / the hooks endpoint that failed to start must not leak
+    // the broker.
     await closePublishers();
     await gateway.close();
     await ptyHost?.shutdown();
@@ -964,6 +1107,7 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice } : {}),
     ...(pipelineSlice !== undefined ? { pipelines: pipelineSlice } : {}),
     ...(supervisionSlice !== undefined ? { supervision: supervisionSlice } : {}),
+    ...(hooksServer !== undefined ? { hooks: hooksServer } : {}),
     close: async () => {
       await closePublishers();
       // [X4]: drain in-flight brief automation before the wire goes down

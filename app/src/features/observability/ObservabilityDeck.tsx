@@ -17,12 +17,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useStore } from 'zustand';
-import {
-  READ_MODEL_IDS,
-  type Backend,
-  type QuotaWindow,
-  type ReadModelId,
-} from '@aibender/protocol';
+import { READ_MODEL_IDS, type QuotaWindow, type ReadModelId } from '@aibender/protocol';
 
 /**
  * The §6.3 dashboard leads this deck renders, in blueprint order. This is the
@@ -37,7 +32,7 @@ import {
 export const DASHBOARD_READ_MODEL_IDS: readonly ReadModelId[] = Object.freeze(
   READ_MODEL_IDS.filter((id) => id !== 'resource-health'),
 );
-import { connectionStore, quotaStore, useAccountRegistry } from '../../lib/index.ts';
+import { backendLabel, connectionStore, quotaStore, useAccountRegistry } from '../../lib/index.ts';
 import { Phosphor } from '../../chrome/phosphor.tsx';
 import './observability.css';
 import { fmtCountdown, fmtMs, fmtPct, fmtTokens, fmtTokensPerHour, fmtUsd } from './format.ts';
@@ -81,11 +76,13 @@ const WINDOW_LABELS: Readonly<Record<QuotaWindow, string>> = Object.freeze({
   '7d_sonnet': '7D SON',
 });
 
-const BACKEND_LABELS: Readonly<Record<Backend, string>> = Object.freeze({
-  claude_code: 'CLAUDE',
-  opencode: 'OPENCODE',
-  lmstudio: 'LMSTUDIO',
-});
+/**
+ * The engraved backend label ([X1] ICR-0016): resolved through the frozen
+ * backend REGISTRY via `backendLabel` (app/src/lib/backendLabels.ts), NOT a
+ * closed `Record<Backend, string>`. Byte-identical for the built-in three
+ * (`claude_code` → `CLAUDE`, etc.); a REGISTERED fourth backend surfaces its
+ * derived label on the latency / api-equiv rows with NO edit here.
+ */
 
 /** Leaderboard display cap — fixed geometry; overflow reads "+N". */
 export const MAX_LEADERBOARD_ROWS = 8;
@@ -371,7 +368,7 @@ export function ObservabilityDeck({ now, copyText }: ObservabilityDeckProps): Re
             data-testid={`equiv-${row.account}`}
           >
             <span className="ig-engraved ig-obs-key">
-              {row.account} {BACKEND_LABELS[row.backend]}
+              {row.account} {backendLabel(row.backend)}
             </span>
             <Phosphor signal={row.equivalentUsd}>
               <span className="ig-obs-num">{fmtUsd(row.equivalentUsd)}</span>
@@ -401,7 +398,7 @@ export function ObservabilityDeck({ now, copyText }: ObservabilityDeckProps): Re
       <Instrument id="latency" health={latencyVmv.health} copyText={copy}>
         {latencyVmv.rows.map((row) => (
           <div key={row.backend} className="ig-obs-row" data-testid={`latency-${row.backend}`}>
-            <span className="ig-engraved ig-obs-key">{BACKEND_LABELS[row.backend]}</span>
+            <span className="ig-engraved ig-obs-key">{backendLabel(row.backend)}</span>
             <span className="ig-obs-num">{fmtMs(row.p50Ms)}</span>
             <span className="ig-obs-num">{fmtMs(row.p95Ms)}</span>
             <span className="ig-engraved ig-obs-unit">

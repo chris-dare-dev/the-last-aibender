@@ -143,3 +143,5 @@ export {
   type AccountSyncResult,
   type RestartTrigger,
 } from './accountConfig.ts';
+
+export { BUILTIN_BACKEND_LABELS, backendLabel } from './backendLabels.ts';

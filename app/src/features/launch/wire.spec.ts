@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ACCOUNT_LABELS,
+  PROTOCOL_FREEZE,
   backendForLabel,
   validateControlRequest,
   validateEnvelope,
@@ -77,14 +78,19 @@ const VALID_LAUNCH_FIXTURES = [
 
 describe('FE-5 wire — golden corpus (positive)', () => {
   it('pins the same protocol freeze as the corpus', () => {
-    // Literal tracks the corpus freeze. Advanced to `FROZEN-M7` as the FE-ORCH
-    // co-sign of the M7 account-registry generalization (ICR-0013): the
-    // account-label set became an OPEN validated FORM and `LABEL_BACKENDS`
-    // became `backendForLabel()`. This is a validation-WIDENING change — the
-    // launch wire SHAPES are unchanged (every prior golden fixture replays
-    // byte-identically) and the corpus gained valid MAX_C/MAX_D launch fixtures
-    // + rejected non-sanctioned fixtures. This literal simply tracks it.
-    expect(GOLDEN_WS_CORPUS_FREEZE).toBe('FROZEN-M7');
+    // The corpus freeze MUST track the protocol's own `PROTOCOL_FREEZE` — the
+    // single source of truth — not a hand-copied literal that drifts on every
+    // freeze bump. This is stronger than the old `=== 'FROZEN-M7'` literal: it
+    // can never go stale, and it asserts the exact invariant we care about
+    // (the FE, the corpus, and the protocol all pin the SAME freeze).
+    //
+    // Advanced from FROZEN-M7 (ICR-0013 account-registry) to FROZEN-M8 via the
+    // FE-ORCH co-sign of the ICR-0016 BACKEND-registry generalization: `BACKENDS`
+    // became a `BackendDescriptor` registry and `LABEL_BACKENDS`/`sourceForBackend`
+    // resolve through it. Validation-WIDENING — the launch wire SHAPES are
+    // unchanged (every prior golden fixture replays byte-identically) and the
+    // corpus gained the synthetic fourth-backend fixtures.
+    expect(GOLDEN_WS_CORPUS_FREEZE).toBe(PROTOCOL_FREEZE);
   });
 
   for (const name of VALID_LAUNCH_FIXTURES) {

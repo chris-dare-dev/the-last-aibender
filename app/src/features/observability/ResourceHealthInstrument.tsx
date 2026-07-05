@@ -22,8 +22,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { useStore } from 'zustand';
-import type { Backend } from '@aibender/protocol';
-import { connectionStore } from '../../lib/index.ts';
+import { backendLabel, connectionStore } from '../../lib/index.ts';
 import './resourceHealth.css';
 import { fmtAge, fmtBytes, fmtMb, fmtPct } from './format.ts';
 import { absentHealth, type InstrumentHealth, type Remediation } from './freshness.ts';
@@ -35,12 +34,13 @@ import {
 } from './resourceHealth.ts';
 import { latestSnapshot, observabilityStore } from './store.ts';
 
-/** Engraved backend labels (mirrors the deck's map — labels only [X2]). */
-const BACKEND_LABELS: Readonly<Record<Backend, string>> = Object.freeze({
-  claude_code: 'CLAUDE',
-  opencode: 'OPENCODE',
-  lmstudio: 'LMSTUDIO',
-});
+/**
+ * Engraved backend labels ([X1] ICR-0016): resolved through the frozen backend
+ * REGISTRY via `backendLabel` (app/src/lib/backendLabels.ts) — the deck shares
+ * the same seam. Byte-identical for the built-in three; a REGISTERED fourth
+ * backend surfaces its derived label on the session / notice rows with NO edit
+ * here (labels only [X2]).
+ */
 
 /** The instrument's engraved header label. */
 export const RESOURCE_HEALTH_LABEL = 'RESOURCE HEALTH';
@@ -184,7 +184,7 @@ export function ResourceHealthInstrument({
                 data-hibernated={row.hibernated ? 'true' : 'false'}
               >
                 <span className="ig-engraved ig-obs-key">
-                  {row.account} {BACKEND_LABELS[row.backend]} #{row.slot}
+                  {row.account} {backendLabel(row.backend)} #{row.slot}
                 </span>
                 <span className="ig-obs-num">{fmtMb(row.footprintMb)}</span>
                 <span className={`ig-engraved ${statusClass(row.bandStatus)}`}>
@@ -217,7 +217,7 @@ export function ResourceHealthInstrument({
                 <span className="ig-engraved ig-obs-key">{row.label}</span>
                 {row.account !== undefined && row.backend !== undefined ? (
                   <span className="ig-engraved">
-                    {row.account} {BACKEND_LABELS[row.backend]}
+                    {row.account} {backendLabel(row.backend)}
                   </span>
                 ) : (
                   <span className="ig-engraved ig-obs-unit">MACHINE</span>

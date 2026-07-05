@@ -25,6 +25,7 @@
     "postinstall": "node scripts/fix-spawn-helper.mjs",
     "demo:m1": "tsx scripts/demo-m1.ts",
     "soak:m2": "tsx scripts/m2-soak/run.ts",
+    "soak:m6": "tsx scripts/m6-supervision-soak/run.ts",
     "start": "tsx src/main/index.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json"

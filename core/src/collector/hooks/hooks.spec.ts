@@ -40,12 +40,16 @@ const PERMISSION_REQUEST_BODY = JSON.stringify({
   tool_use_id: 'toolu_synth_9',
 });
 
-describe('startHooksServer — golden corpus replay (FROZEN-M5)', () => {
+// M6 freeze bumped GOLDEN_HOOK_CORPUS_FREEZE from FROZEN-M5 → FROZEN-M6
+// (protocol version tracked the resource-health read-model addition). This
+// BE-5 hooks-server assertion tracks the frozen marker; freeze-forced update
+// flagged to BE-ORCH via icr_request.
+describe('startHooksServer — golden corpus replay (FROZEN-M6)', () => {
   let store: EventsStore;
   let server: HooksServer;
 
   beforeEach(async () => {
-    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M5');
+    expect(GOLDEN_HOOK_CORPUS_FREEZE).toBe('FROZEN-M6');
     store = await openEventsStore({ path: ':memory:' });
     server = await startHooksServer({ events: store.events, port: 0, nowMs: () => 4242 });
     expect(server.state).toBe('listening');

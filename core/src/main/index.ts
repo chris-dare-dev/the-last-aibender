@@ -72,6 +72,18 @@ import {
   type PipelineSlice,
   type StepExecutor,
 } from '../pipelines/index.js';
+import {
+  createSupervisionSlice,
+  type FootprintSampler,
+  type FootprintThresholds,
+  type FrontendWeightPort,
+  type HibernatePort,
+  type LocalModelPort,
+  type PressureProbe,
+  type PressureThresholds,
+  type SupervisionSlice,
+  type WatchdogClass,
+} from '../supervision/index.js';
 
 import {
   KernelVerbError,
@@ -491,6 +503,40 @@ export interface ComposeBrokerOptions extends ComposeKernelOptions {
     readonly nowMs?: () => number;
     readonly sleep?: (ms: number) => Promise<void>;
   };
+  /**
+   * M6 [X1] BE-9: the supervision & resource-governor slice (blueprint §11).
+   * Present → composeBroker builds the governor over the injected telemetry
+   * ports and wires the resource-health publisher onto the gateway's events
+   * channel (the eleventh read model, frozen M6). The recycle port is bound to
+   * the BE-2 ptyHost (recycle = checkpoint→kill→resume, the [X4] continuation
+   * mechanism), so a watchdog-triggered recycle records its `continue` edge on
+   * the workstream lineage store exactly like an operator recycle.
+   *
+   * THE TELEMETRY PORTS ARE THE FAKE-IN-TESTS SEAM: `sampler`/`probe` are the
+   * two injected interfaces. Tests pass FAKES (no real process is ever bloated,
+   * no `memory_pressure` is ever shelled). At RUNTIME the composition-config
+   * slice (SI-3/launchd, a later wire) supplies the real macOS phys_footprint
+   * sampler + `createSpawnPressureProbe` with a spawn runner — GUARDED behind
+   * this opt-in exactly like the kernel's live-spawn gate. Absent → no
+   * supervision (M1–M5 behavior exactly; the resource-health instrument simply
+   * has no producer and the FE renders its NO SIGNAL freshness state).
+   */
+  readonly supervision?: {
+    /** phys_footprint sampler — the FAKE-in-tests / guarded-real seam. */
+    readonly sampler: FootprintSampler;
+    /** pressure-delta probe — the FAKE-in-tests / guarded-real seam. */
+    readonly probe: PressureProbe;
+    /** BE-4 residency ledger evict/budget port (localModelResidentBytes). */
+    readonly localModel?: LocalModelPort;
+    readonly frontend?: FrontendWeightPort;
+    /** Hibernate port; defaults to the ptyHost recycle-less suspend at runtime. */
+    readonly hibernate?: HibernatePort;
+    readonly footprintThresholds?: Partial<Record<WatchdogClass, FootprintThresholds>>;
+    readonly pressureThresholds?: Partial<PressureThresholds>;
+    readonly hysteresisMb?: number;
+    readonly idleWindowMs?: number;
+    readonly logger?: Logger;
+  };
 }
 
 export interface ComposedBroker extends ComposedKernel {
@@ -520,6 +566,14 @@ export interface ComposedBroker extends ComposedKernel {
    * directly.
    */
   readonly pipelines?: PipelineSlice;
+  /**
+   * M6 [X1] BE-9: the composed supervision slice (present iff
+   * `options.supervision` was given) — the governor + resource-health
+   * publisher. The operator drives `supervision.tickAndPublish` on a timer
+   * (the launchd/config slice) and calls `governor.register` /
+   * `governor.admitSpawnNow` from the spawn paths; tests drive it directly.
+   */
+  readonly supervision?: SupervisionSlice;
 }
 
 /**
@@ -571,6 +625,11 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
   const publishPipeline = (payload: PipelineServerPayload): void => {
     pipelineSink?.(payload);
   };
+
+  // -- [M6] supervision slice publisher (BE-9): LATE-BOUND — the governor's
+  // -- resource-health snapshot rides the EVENTS channel; before the gateway
+  // -- is up (nothing ticks during composition) publishes drop. --------------
+  let supervisionSink: ((payload: Readonly<Record<string, unknown>>) => void) | undefined;
 
   // -- transcript tee (ICR-0009): ONE kernel tap fans raw messages out to ----
   // -- however many TranscriptSource listeners subscribe (the gateway: one);
@@ -711,6 +770,47 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     });
   }
 
+  // -- [M6] supervision slice (BE-9): the governor over the injected telemetry
+  // -- ports (fake in tests, guarded-real at runtime). The recycle port is the
+  // -- ptyHost's recycle (checkpoint→kill→resume, the [X4] continuation
+  // -- mechanism — a watchdog recycle records its `continue` edge on the same
+  // -- lineage store as an operator recycle). The resource-health publisher
+  // -- rides the events channel (late-bound sink, below). ---------------------
+  let supervisionSlice: SupervisionSlice | undefined;
+  if (options.supervision !== undefined) {
+    const sup = options.supervision;
+    supervisionSlice = createSupervisionSlice({
+      sampler: sup.sampler,
+      probe: sup.probe,
+      // The resource-health snapshot rides the EVENTS channel through the
+      // late-bound sink (bound after the gateway is up, below).
+      sink: { publishEvent: (payload) => supervisionSink?.(payload) },
+      // Recycle = the ptyHost path (present iff the pty slice is composed); a
+      // watchdog recycle then records the [X4] continue edge downstream.
+      ...(ptyHost !== undefined
+        ? {
+            recycle: {
+              recycle: async (sessionId) => {
+                await ptyHost.recycle(sessionId);
+              },
+            },
+          }
+        : {}),
+      ...(sup.localModel !== undefined ? { localModel: sup.localModel } : {}),
+      ...(sup.frontend !== undefined ? { frontend: sup.frontend } : {}),
+      ...(sup.hibernate !== undefined ? { hibernate: sup.hibernate } : {}),
+      ...(sup.footprintThresholds !== undefined
+        ? { footprintThresholds: sup.footprintThresholds }
+        : {}),
+      ...(sup.pressureThresholds !== undefined
+        ? { pressureThresholds: sup.pressureThresholds }
+        : {}),
+      ...(sup.hysteresisMb !== undefined ? { hysteresisMb: sup.hysteresisMb } : {}),
+      ...(sup.idleWindowMs !== undefined ? { idleWindowMs: sup.idleWindowMs } : {}),
+      ...(sup.logger !== undefined ? { logger: sup.logger } : {}),
+    });
+  }
+
   // -- gateway over every port ------------------------------------------------
   const port = adaptSessionKernel(composed.kernel, composed.store.resumeLedger);
   let gateway: GatewayHandle;
@@ -767,6 +867,13 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     pipelineSink = (payload) => gateway.publishPipeline(payload);
   }
 
+  // -- [M6] bind the late supervision publisher (resource-health snapshots) --
+  // (the governor validates every snapshot before publish; the gateway's
+  // publishEvent re-validates — a malformed frame can never reach the wire.)
+  if (supervisionSlice !== undefined) {
+    supervisionSink = (payload) => gateway.publishEvent(payload);
+  }
+
   // -- M3 publisher lanes over the frozen-typed sinks -------------------------
   const sinks: BrokerPublishSinks = {
     publishQuota: (snapshot) => gateway.publishQuota(snapshot),
@@ -819,6 +926,7 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
     ...(ptyHost !== undefined ? { ptyHost } : {}),
     ...(workstreamSlice !== undefined ? { workstreams: workstreamSlice } : {}),
     ...(pipelineSlice !== undefined ? { pipelines: pipelineSlice } : {}),
+    ...(supervisionSlice !== undefined ? { supervision: supervisionSlice } : {}),
     close: async () => {
       await closePublishers();
       // [X4]: drain in-flight brief automation before the wire goes down
@@ -830,6 +938,7 @@ export async function composeBroker(options: ComposeBrokerOptions): Promise<Comp
       await gateway.close();
       workstreamSink = undefined; // the wire is gone; late publishes drop
       pipelineSink = undefined;
+      supervisionSink = undefined; // [M6]: the governor's late publishes drop
       await ptyHost?.shutdown();
       await composed.close();
       approvals.close();

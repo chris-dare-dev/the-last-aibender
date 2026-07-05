@@ -74,6 +74,15 @@ export const DEFAULT_READ_MODEL_SOURCES: Readonly<Record<ReadModelId, readonly E
     'skill-leaderboard': ['claude-jsonl', 'lmstudio'],
     'session-outcomes': ['claude-jsonl'],
     'local-offload': ['lmstudio', 'claude-jsonl', 'opencode-sse'],
+    // M6 freeze forced this entry: `resource-health` joined the CLOSED
+    // READ_MODEL_IDS registry (readModels.ts), so this exhaustive
+    // Record<ReadModelId, …> must cover it or the package fails to compile.
+    // The BE-6 publisher NEVER emits resource-health (its snapshotAll() emits
+    // exactly the ten §6.3 leads); the supervision governor (BE-9,
+    // core/src/supervision/) owns resource-health and supplies its own
+    // `sources`. This default is here only to satisfy the type + document the
+    // model's feed. Cross-package edit flagged to BE-ORCH via icr_request.
+    'resource-health': ['lmstudio'],
   });
 
 export interface ReadModelPublisherOptions {

@@ -149,7 +149,12 @@ describe('publisher — fixture-driven end-to-end (capturing sink)', () => {
     });
 
     const snapshots = publisher.publishAll();
-    expect(snapshots.map((s) => s.readModel)).toEqual([...READ_MODEL_IDS]);
+    // M6 freeze forced this: `resource-health` joined READ_MODEL_IDS (the 11th,
+    // owned by the BE-9 supervision governor, NOT this BE-6 publisher). The
+    // BE-6 publisher still emits exactly the TEN §6.3 observability leads —
+    // assert against that ten-lead slice, not the whole (now-11) registry.
+    // Cross-package freeze-forced test fix flagged to BE-ORCH via icr_request.
+    expect(snapshots.map((s) => s.readModel)).toEqual([...READ_MODEL_IDS].slice(0, 10));
     expect(sink.events).toHaveLength(10);
     for (const payload of sink.events) {
       // The JSON round-trip proves wire-serializability; the frozen

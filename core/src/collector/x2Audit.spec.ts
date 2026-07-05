@@ -20,7 +20,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { ACCOUNT_LABELS } from '@aibender/protocol';
+import { ACCOUNT_LABELS, EVENT_SOURCES, type EventSource } from '@aibender/protocol';
 import { openEventsStore, type EventsStore } from '@aibender/schema';
 import { buildFakeOpencodeDb } from '@aibender/testkit';
 
@@ -50,6 +50,42 @@ const AWS_ID = '7'.repeat(12);
 const TOKEN = ['sk-', 'synthfake', 'abcdef123456'].join('');
 
 const EVENTS_TABLES = ['events', 'quota_snapshots', 'session_outcomes', 'prices'] as const;
+
+// ---------------------------------------------------------------------------
+// X-2: the audit source list is DERIVED from the protocol's EVENT_SOURCES —
+// not a hardcoded literal — so a NEW source added to the vocabulary cannot
+// silently escape the sweep. Every EVENT_SOURCE is classified into exactly one
+// bucket; the test below asserts the buckets PARTITION EVENT_SOURCES, failing
+// loudly if a source is defined but left unclassified (hence unswept).
+// ---------------------------------------------------------------------------
+
+/** Sources whose rows land in the `events` table (the sweep's primary target). */
+const EVENTS_TABLE_SOURCES: readonly EventSource[] = [
+  'claude-jsonl',
+  'claude-otel',
+  'hooks',
+  'opencode-sse',
+  'opencode-db',
+  'bedrock-cost-explorer',
+  'bedrock-cloudwatch',
+  'lmstudio',
+];
+
+/**
+ * Sources exercised by this audit but whose rows land in a DIFFERENT store,
+ * not the `events` table — so they are swept by the all-tables column scan
+ * (EVENTS_TABLES) rather than the events-source check. `claude-quota` writes
+ * quota_snapshots (statusline tee + OAuth poller).
+ */
+const NON_EVENTS_TABLE_SOURCES: readonly EventSource[] = ['claude-quota'];
+
+/**
+ * Sources DEFINED in the vocabulary but not yet IMPLEMENTED, so no ingest path
+ * exists to exercise. `ent-analytics` is the optional admin-key-gated ENT org
+ * analytics adapter (events.ts). Listed EXPLICITLY: when it is implemented, it
+ * must move to EVENTS_TABLE_SOURCES (or the coverage assertion below fails).
+ */
+const UNIMPLEMENTED_SOURCES: readonly EventSource[] = ['ent-analytics'];
 
 describe('THE [X2] audit — zero identity-bearing rows across every source', () => {
   let dir: string;
@@ -315,21 +351,37 @@ describe('THE [X2] audit — zero identity-bearing rows across every source', ()
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('ingested rows from every source (the audit has teeth)', () => {
+  it('X-2: the audit buckets PARTITION EVENT_SOURCES (a new source cannot escape the sweep)', () => {
+    // Derive the coverage from the protocol's single source of truth. If a
+    // developer adds a source to EVENT_SOURCES but forgets to classify it here,
+    // this fails LOUDLY — the audit can never silently under-cover.
+    const classified = new Set<EventSource>([
+      ...EVENTS_TABLE_SOURCES,
+      ...NON_EVENTS_TABLE_SOURCES,
+      ...UNIMPLEMENTED_SOURCES,
+    ]);
+    const defined = new Set<EventSource>(EVENT_SOURCES);
+    // No overlap between buckets (each source classified exactly once).
+    expect(classified.size).toBe(
+      EVENTS_TABLE_SOURCES.length + NON_EVENTS_TABLE_SOURCES.length + UNIMPLEMENTED_SOURCES.length,
+    );
+    // Every DEFINED source is classified — the "no source left unswept" gate.
+    const unclassified = [...defined].filter((s) => !classified.has(s));
+    expect(unclassified, `EVENT_SOURCES not classified by the audit: ${unclassified.join(', ')}`)
+      .toEqual([]);
+    // And no classified source is stale (removed from the vocabulary).
+    const stale = [...classified].filter((s) => !defined.has(s));
+    expect(stale, `audit classifies sources not in EVENT_SOURCES: ${stale.join(', ')}`).toEqual([]);
+  });
+
+  it('ingested rows from every events-table source (the audit has teeth)', () => {
     const sources = new Set(store.events.list().map((row) => row.source));
-    for (const expected of [
-      'claude-jsonl',
-      'claude-otel',
-      'hooks',
-      'opencode-sse',
-      'opencode-db',
-      'bedrock-cost-explorer',
-      'bedrock-cloudwatch',
-      'lmstudio',
-    ]) {
-      expect(sources.has(expected as never), `source ${expected} ingested`).toBe(true);
+    // Iterate the DERIVED list, not a hardcoded literal.
+    for (const expected of EVENTS_TABLE_SOURCES) {
+      expect(sources.has(expected), `source ${expected} ingested`).toBe(true);
     }
-    expect(store.quotaSnapshots.list().length).toBeGreaterThanOrEqual(3);
+    // The non-events-table sources landed in their own stores.
+    expect(store.quotaSnapshots.list().length).toBeGreaterThanOrEqual(3); // claude-quota
     expect(store.sessionOutcomes.list().length).toBeGreaterThanOrEqual(1);
     expect(store.prices.list().length).toBeGreaterThanOrEqual(1);
   });

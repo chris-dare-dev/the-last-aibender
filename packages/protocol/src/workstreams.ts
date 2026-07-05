@@ -500,8 +500,17 @@ export interface LineageMergeAction {
   readonly parentSessionIds: readonly string[];
   /** The NEW merge node's harness session id. */
   readonly toSessionId: string;
-  /** The merge brief seeding the node, once persisted. */
-  readonly briefId?: string;
+  /**
+   * X-1 [X4]: the conflict-surfacing merge brief seeding the node. REQUIRED —
+   * blueprint §5 declares "merge = synthesis, not concatenation": a merge is
+   * seeded by a schema'd, conflict-surfacing brief, and the wire contract
+   * (`ws-protocol.md §16.2`) already marks `briefBody` required on
+   * `workstream-merge-request`. Closing the asymmetry: the kernel-facing
+   * recording port now requires `briefId` too, so a merge can NEVER be recorded
+   * without its brief (which would render a conflict-BLIND merge in the UI).
+   * The recorder additionally guards at runtime (recorder.ts merge case).
+   */
+  readonly briefId: string;
   readonly atEpochMs: number;
 }
 

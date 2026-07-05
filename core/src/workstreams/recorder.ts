@@ -218,6 +218,19 @@ export function createLineageRecorder(options: LineageRecorderOptions): LedgerLi
         });
         return;
       case 'merge': {
+        // X-1 [X4]: a merge is a SYNTHESIS seeded by the conflict-surfacing
+        // brief (blueprint §5 "merge = synthesis, not concatenation"). REQUIRE
+        // the briefId here — the port type now mandates it, and this runtime
+        // guard rejects a bypassing (external / plain-JS) caller too. A merge
+        // recorded without its brief would create merge_parent edges with no
+        // conflict narrative — a conflict-BLIND merge the UI renders as
+        // complete. `record` swallows this throw as a DROPPED action (never a
+        // silent partial merge). Guard BEFORE any store write so nothing lands.
+        if (typeof action.briefId !== 'string' || action.briefId.length === 0) {
+          throw new Error(
+            'merge requires a conflict-surfacing briefId (blueprint §5; ws-protocol.md §16.2)',
+          );
+        }
         // THE atomic merge path (node + N merge_parent edges + mandatory
         // brief in one transaction) is the engine's `store.recordMerge`
         // (engine.ts, ws-protocol.md §16.3). This port covers the case
@@ -238,7 +251,7 @@ export function createLineageRecorder(options: LineageRecorderOptions): LedgerLi
           fromNode: parent,
           toNode: action.toSessionId,
           edgeType: 'merge_parent' as const,
-          ...(action.briefId !== undefined ? { briefId: action.briefId } : {}),
+          briefId: action.briefId,
           confidence: 'recorded' as const,
         }));
         for (const wire of wires) {

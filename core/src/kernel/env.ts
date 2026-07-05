@@ -42,10 +42,84 @@ export const SCRUBBED_ENV_PREFIXES = Object.freeze(['CLAUDE_CODE_USE_'] as const
 /** Presence of this var in the base env is REFUSED, not scrubbed. */
 export const OAUTH_TOKEN_ENV_VAR = 'CLAUDE_CODE_OAUTH_TOKEN' as const;
 
-/** True when `name` is on the scrub list (exact or prefix match). */
+// ---------------------------------------------------------------------------
+// SEC-5 [X2] — secret-shaped-name fail-close (defense-in-depth)
+// ---------------------------------------------------------------------------
+
+/**
+ * SEC-5: the ONE credential-bearing SDK-namespace var whose PRESENCE is a hard
+ * refusal (its own typed error, {@link TokenMixingError}) rather than a scrub —
+ * mixing token-env auth with an OAuth-file-mode config dir is the issue-#37512
+ * hazard, and a silent scrub would hide an operator misconfiguration. Every
+ * OTHER unknown SDK-namespace var is fail-closed by SCRUBBING (below), not
+ * throwing — a hard throw would break every launch inside a host that itself
+ * sets CLAUDE_CODE_* vars (this harness runs inside Claude Code).
+ */
+
+/**
+ * SEC-5 [X2]: the SDK's own credential namespace. The exact-name scrub above
+ * only catches TODAY's known hijack vars — a FUTURE @anthropic-ai SDK bump
+ * could add a new credential var (e.g. `CLAUDE_CODE_OAUTH_PROVIDER_TOKEN`,
+ * `ANTHROPIC_BEDROCK_SECRET`) that would slip through unscrubbed into the
+ * child. Fail-CLOSED against LEAKAGE: any inbound `ANTHROPIC_*` / `CLAUDE_*`
+ * var NOT on the permit list is SCRUBBED (dropped from the child env), so a
+ * new SDK credential var can never pass through. A Claude subscription session
+ * authenticates via the OAuth-file-mode CLAUDE_CONFIG_DIR and needs NONE of the
+ * SDK's inbound credential env — dropping the whole unknown namespace is safe.
+ */
+const PERMITTED_SDK_NAMESPACE_VARS: ReadonlySet<string> = new Set([
+  // Injected BY buildSessionEnv itself; harmless if also present inbound
+  // (re-injected with byte-stable values below either way).
+  'CLAUDE_CONFIG_DIR',
+  'CLAUDE_SECURESTORAGE_CONFIG_DIR',
+  'CLAUDE_CODE_ENABLE_TELEMETRY',
+]);
+
+/** SDK-namespace prefixes the fail-close screens (ANTHROPIC_* / CLAUDE_*). */
+const SDK_NAMESPACE_PREFIXES = Object.freeze(['ANTHROPIC_', 'CLAUDE_'] as const);
+
+/**
+ * SEC-5: generic secret-shaped substrings. A base-env var whose NAME contains
+ * one of these (case-insensitive) is SCRUBBED so an incidental host secret
+ * (AWS creds, a GH token) can never ride into a Claude session. Scrub, not
+ * throw: these live OUTSIDE the SDK namespace and may legitimately exist in the
+ * operator's shell; dropping them is safe (a Claude subscription session needs
+ * none of them) and never blocks a launch.
+ */
+const SECRET_SHAPED_NAME_RE = /(TOKEN|SECRET|PASSWORD|CREDENTIAL|API_KEY|ACCESS_KEY|PRIVATE_KEY)/i;
+
+/** True when `name` is an SDK-namespace var (ANTHROPIC_* / CLAUDE_*). */
+function isSdkNamespaceVar(name: string): boolean {
+  return SDK_NAMESPACE_PREFIXES.some((prefix) => name.startsWith(prefix));
+}
+
+/**
+ * SEC-5: true when `name` is an unknown SDK-namespace var — in the
+ * `ANTHROPIC_` / `CLAUDE_` namespace, not the refused OAuth token (its own
+ * error), and not on the explicit permit list. The exact-scrub vars and the
+ * CLAUDE_CODE_USE_ prefix are already covered by {@link isScrubbedEnvVar}; this
+ * predicate widens the scrub to the WHOLE namespace so a future credential var
+ * is dropped.
+ */
+export function isUnknownSdkCredentialVar(name: string): boolean {
+  if (!isSdkNamespaceVar(name)) return false;
+  if (name === OAUTH_TOKEN_ENV_VAR) return false; // presence → TokenMixingError, never reaches here
+  return !PERMITTED_SDK_NAMESPACE_VARS.has(name);
+}
+
+/**
+ * True when `name` must be dropped from the spawn env. Fail-closed [X2]:
+ *  - exact known hijack vars (SCRUBBED_ENV_VARS);
+ *  - the CLAUDE_CODE_USE_* prefix (cloud-provider mode);
+ *  - SEC-5: any UNKNOWN `ANTHROPIC_` / `CLAUDE_` namespace var not permit-listed;
+ *  - SEC-5: any secret-shaped name (TOKEN/SECRET/KEY/…) outside the permit list.
+ */
 export function isScrubbedEnvVar(name: string): boolean {
   if ((SCRUBBED_ENV_VARS as readonly string[]).includes(name)) return true;
-  return SCRUBBED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix));
+  if (SCRUBBED_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) return true;
+  if (isUnknownSdkCredentialVar(name)) return true; // whole SDK namespace, permit-listed
+  if (SECRET_SHAPED_NAME_RE.test(name) && !PERMITTED_SDK_NAMESPACE_VARS.has(name)) return true;
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -119,6 +193,11 @@ export function buildSessionEnv(
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(base)) {
     if (value === undefined) continue;
+    // SEC-5 [X2]: isScrubbedEnvVar now fails CLOSED — it drops the known hijack
+    // vars, the CLAUDE_CODE_USE_* prefix, the WHOLE unknown ANTHROPIC_*/CLAUDE_*
+    // SDK namespace (so a future SDK credential var can never pass through), and
+    // any secret-shaped name. A Claude session gets its auth from the injected
+    // CLAUDE_CONFIG_DIR below, never from an inbound credential env.
     if (isScrubbedEnvVar(key)) continue;
     env[key] = value;
   }

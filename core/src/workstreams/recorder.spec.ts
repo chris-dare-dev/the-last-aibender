@@ -115,7 +115,71 @@ describe('record — endpoint healing from the resume ledger', () => {
 });
 
 describe('record — merge action (the already-materialized-node path)', () => {
+  /** X-1: a merge REQUIRES its conflict-surfacing brief; insert one first. */
+  const insertMergeBrief = (store: KernelStore, id: string, sourceNodes: string[]): void => {
+    store.lineage.briefs.insert({
+      id,
+      kind: 'merge',
+      bodyMd: '## merge brief\n\nconflicts surfaced explicitly.',
+      sourceNodes,
+      provenance: 'refined',
+    });
+  };
+
   it('writes N merge_parent edges into the merge node; refuses (drops) on a missing parent', async () => {
+    const { store, recorder, insertNode } = await harness();
+    insertNode('ses_p1');
+    insertNode('ses_p2');
+    insertNode('ses_mnode');
+    insertMergeBrief(store, 'br_merge_x1', ['ses_p1', 'ses_p2']);
+
+    recorder.record({
+      kind: 'merge',
+      parentSessionIds: ['ses_p1', 'ses_p2'],
+      toSessionId: 'ses_mnode',
+      briefId: 'br_merge_x1',
+      atEpochMs: 9,
+    });
+    const edges = store.lineage.edges.list({ edgeTypes: ['merge_parent'] });
+    expect(edges.map((edge) => edge.fromNode).sort()).toEqual(['ses_p1', 'ses_p2']);
+    // X-1: every merge_parent edge carries the conflict-surfacing brief.
+    expect(edges.every((e) => e.briefId === 'br_merge_x1')).toBe(true);
+
+    // Missing parent → the WHOLE action drops (validated up front).
+    recorder.record({
+      kind: 'merge',
+      parentSessionIds: ['ses_p1', 'ses_ghost'],
+      toSessionId: 'ses_mnode',
+      briefId: 'br_merge_x1',
+      atEpochMs: 10,
+    });
+    expect(store.lineage.edges.list({ edgeTypes: ['merge_parent'] })).toHaveLength(2);
+    expect(recorder.stats().dropped).toBe(1);
+  });
+
+  // -- X-1: the conflict-surfacing brief is MANDATORY -------------------------
+
+  it('X-1: a merge recorded with NO briefId is DROPPED (never a conflict-blind merge)', async () => {
+    const { store, recorder, insertNode } = await harness();
+    insertNode('ses_p1');
+    insertNode('ses_p2');
+    insertNode('ses_mnode');
+
+    // A bypassing (plain-JS / external) caller omits the now-required briefId.
+    // record() never throws — it drops the action and counts it. No edge lands.
+    recorder.record({
+      kind: 'merge',
+      parentSessionIds: ['ses_p1', 'ses_p2'],
+      toSessionId: 'ses_mnode',
+      atEpochMs: 9,
+    } as unknown as Parameters<typeof recorder.record>[0]);
+
+    expect(store.lineage.edges.list({ edgeTypes: ['merge_parent'] })).toHaveLength(0);
+    expect(recorder.stats().recorded).toBe(0);
+    expect(recorder.stats().dropped).toBe(1);
+  });
+
+  it('X-1: a merge recorded with an EMPTY-string briefId is DROPPED', async () => {
     const { store, recorder, insertNode } = await harness();
     insertNode('ses_p1');
     insertNode('ses_p2');
@@ -125,19 +189,11 @@ describe('record — merge action (the already-materialized-node path)', () => {
       kind: 'merge',
       parentSessionIds: ['ses_p1', 'ses_p2'],
       toSessionId: 'ses_mnode',
+      briefId: '',
       atEpochMs: 9,
     });
-    const edges = store.lineage.edges.list({ edgeTypes: ['merge_parent'] });
-    expect(edges.map((edge) => edge.fromNode).sort()).toEqual(['ses_p1', 'ses_p2']);
 
-    // Missing parent → the WHOLE action drops (validated up front).
-    recorder.record({
-      kind: 'merge',
-      parentSessionIds: ['ses_p1', 'ses_ghost'],
-      toSessionId: 'ses_mnode',
-      atEpochMs: 10,
-    });
-    expect(store.lineage.edges.list({ edgeTypes: ['merge_parent'] })).toHaveLength(2);
+    expect(store.lineage.edges.list({ edgeTypes: ['merge_parent'] })).toHaveLength(0);
     expect(recorder.stats().dropped).toBe(1);
   });
 });

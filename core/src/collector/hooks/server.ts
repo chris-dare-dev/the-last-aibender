@@ -31,7 +31,8 @@
  * (fire-and-forget posture; inserts are synchronous SQLite writes).
  */
 
-import { createServer, type Server } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
+import { createServer, type IncomingMessage, type Server } from 'node:http';
 
 import {
   DEFAULT_HOOKS_PORT,
@@ -65,10 +66,43 @@ export const HOOKS_SERVER_HOST = '127.0.0.1';
 /** Max accepted body bytes (a hook stdin JSON is small; 1 MiB is generous). */
 export const MAX_HOOK_BODY_BYTES = 1024 * 1024;
 
+/**
+ * SEC-3 [X2]: the header a hook POST presents its per-boot token in. Distinct
+ * from the WS gateway token — this is the hooks-endpoint credential SI-3
+ * injects into each account's hook settings at install time. Case-insensitive
+ * per HTTP; node lowercases header names.
+ */
+export const HOOK_TOKEN_HEADER = 'x-aibender-hook-token';
+
+/**
+ * SEC-3: constant-time token check for the hooks endpoint. Loopback binding
+ * (127.0.0.1) already blocks off-host traffic, but ANY other local process
+ * (a malicious npm dep, a browser extension, a compromised sibling) can reach
+ * 127.0.0.1:<port> and POST crafted PermissionRequest/SessionEnd/PreCompact
+ * events into the approval floor + session ledger. A per-install token the local
+ * attacker does not know closes that spoofing gap. Missing/non-string presented
+ * value is always false; length mismatch does a dummy compare (no length leak).
+ */
+function hookTokenMatches(expected: string, req: IncomingMessage): boolean {
+  const raw = req.headers[HOOK_TOKEN_HEADER];
+  // A repeated header arrives as string[]; only a single exact value is valid.
+  const presented = typeof raw === 'string' ? raw : undefined;
+  if (presented === undefined) return false;
+  const a = Buffer.from(expected, 'utf8');
+  const b = Buffer.from(presented, 'utf8');
+  if (a.length !== b.length) {
+    timingSafeEqual(a, a);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
 export interface HooksServerStats {
   readonly accepted: number;
   readonly rejected400: number;
   readonly rejected404: number;
+  /** SEC-3: posts rejected 401 for a missing/wrong per-boot hook token. */
+  readonly rejected401: number;
   readonly rowsInserted: number;
   readonly relaysRaised: number;
   readonly gatingAnswered: number;
@@ -118,6 +152,25 @@ export interface HooksServerOptions {
   /** Default: AIBENDER_HOOKS_PORT env, else 4319. Tests pass 0. */
   readonly port?: number;
   readonly nowMs?: () => number;
+  /**
+   * SEC-3 [X2]: the hooks-endpoint token. When set, EVERY POST must present it
+   * in the {@link HOOK_TOKEN_HEADER} header (constant-time checked) or the
+   * request is rejected `401` BEFORE any body parse, normalization,
+   * events-store insert, or approval-floor relay — so a local process that
+   * reaches 127.0.0.1:<port> without the token can no longer inject false
+   * PermissionRequest/SessionEnd/PreCompact events. LIFECYCLE (hooks-contract.md
+   * §4.2): this is a STABLE per-install secret — SI-3 mints it once and writes
+   * it 0600 to `$AIBENDER_HOME/hook-token`, injecting the matching header into
+   * each account's hook settings; the composition root (BE-MAIN) READS that
+   * same file at boot and passes the value here. It does NOT mint per boot — a
+   * per-boot value would never match the header baked into the on-disk hook
+   * settings. Kept DISTINCT from the per-boot WS gateway token. ABSENT keeps
+   * the M2–M6 behavior exactly (loopback-only, no header) for back-compat; the
+   * guard is a no-op then. The loopback bind (127.0.0.1) is preserved either
+   * way — the token is defense-in-depth against LOCAL-process spoofing, not
+   * network exposure.
+   */
+  readonly authToken?: string;
 }
 
 function envPort(): number | undefined {
@@ -136,6 +189,7 @@ export async function startHooksServer(options: HooksServerOptions): Promise<Hoo
     accepted: 0,
     rejected400: 0,
     rejected404: 0,
+    rejected401: 0,
     rowsInserted: 0,
     relaysRaised: 0,
     gatingAnswered: 0,
@@ -247,6 +301,16 @@ export async function startHooksServer(options: HooksServerOptions): Promise<Hoo
     });
     req.on('end', () => {
       void (async () => {
+        // SEC-3: token gate FIRST — before method/path/body. A local process
+        // that reaches the loopback socket without the token learns nothing
+        // (no path/label oracle) and cannot inject a spoofed event.
+        if (options.authToken !== undefined && !hookTokenMatches(options.authToken, req)) {
+          stats.rejected401 += 1;
+          res.writeHead(401);
+          res.end();
+          return;
+        }
+
         const url = req.url ?? '';
         const method = req.method ?? 'GET';
 

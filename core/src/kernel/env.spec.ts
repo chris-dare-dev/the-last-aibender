@@ -124,11 +124,56 @@ describe('buildSessionEnv — the single spawn layer (BE-1; blueprint §3 rules 
     }).toThrow(TypeError);
   });
 
-  it('isScrubbedEnvVar matches exactly and by prefix, not by substring', () => {
+  it('isScrubbedEnvVar catches the known exact + prefix hijack vars', () => {
     expect(isScrubbedEnvVar('ANTHROPIC_API_KEY')).toBe(true);
     expect(isScrubbedEnvVar('CLAUDE_CODE_USE_ANYTHING')).toBe(true);
-    expect(isScrubbedEnvVar('MY_ANTHROPIC_API_KEY')).toBe(false);
-    expect(isScrubbedEnvVar('CLAUDE_CODE_USEFUL')).toBe(false);
+    // Permit-listed SDK-injected vars are NOT scrubbed (re-injected below).
     expect(isScrubbedEnvVar('CLAUDE_CONFIG_DIR')).toBe(false);
+    expect(isScrubbedEnvVar('CLAUDE_SECURESTORAGE_CONFIG_DIR')).toBe(false);
+    // A benign non-namespace var passes through.
+    expect(isScrubbedEnvVar('PATH')).toBe(false);
+    expect(isScrubbedEnvVar('HOME')).toBe(false);
+  });
+
+  // -- SEC-5: fail-closed against a NEW SDK credential var / secret-shaped name -
+
+  it('SEC-5 scrubs the WHOLE unknown ANTHROPIC_*/CLAUDE_* SDK namespace', () => {
+    // A future SDK credential var not on any known list is dropped, not passed.
+    expect(isScrubbedEnvVar('ANTHROPIC_BEDROCK_SECRET')).toBe(true);
+    expect(isScrubbedEnvVar('CLAUDE_CODE_OAUTH_PROVIDER_TOKEN')).toBe(true);
+    expect(isScrubbedEnvVar('CLAUDE_CODE_USEFUL')).toBe(true); // whole namespace, permit-gated
+    expect(isScrubbedEnvVar('ANTHROPIC_BASE_URL')).toBe(true);
+    // Non-namespace vars are unaffected by the namespace rule.
+    expect(isScrubbedEnvVar('MY_UNRELATED_VAR')).toBe(false);
+  });
+
+  it('SEC-5 scrubs secret-shaped NAMES even outside the SDK namespace', () => {
+    expect(isScrubbedEnvVar('AWS_SECRET_ACCESS_KEY')).toBe(true);
+    expect(isScrubbedEnvVar('AWS_ACCESS_KEY_ID')).toBe(true);
+    expect(isScrubbedEnvVar('GITHUB_TOKEN')).toBe(true);
+    expect(isScrubbedEnvVar('MY_ANTHROPIC_API_KEY')).toBe(true); // contains API_KEY
+    expect(isScrubbedEnvVar('SSH_PRIVATE_KEY')).toBe(true);
+    // A benign name that merely CONTAINS a namespace word but no secret token
+    // and is not in the SDK namespace still passes.
+    expect(isScrubbedEnvVar('EDITOR')).toBe(false);
+  });
+
+  it('SEC-5: buildSessionEnv drops a synthesized future SDK credential var', () => {
+    const env = buildSessionEnv(PROFILE, {
+      baseEnv: {
+        PATH: '/usr/bin',
+        // Simulates a future @anthropic-ai SDK bump adding a fresh credential
+        // env the exact-name scrub does not know about.
+        CLAUDE_CODE_NEW_SECRET_TOKEN: 'synthesized-not-real',
+        ANTHROPIC_BASE_URL: 'https://synthetic.invalid',
+        AWS_SECRET_ACCESS_KEY: 'synthesized-aws-not-real',
+      },
+    });
+    expect(env).not.toHaveProperty('CLAUDE_CODE_NEW_SECRET_TOKEN');
+    expect(env).not.toHaveProperty('ANTHROPIC_BASE_URL');
+    expect(env).not.toHaveProperty('AWS_SECRET_ACCESS_KEY');
+    expect(env['PATH']).toBe('/usr/bin'); // benign vars still flow
+    // The injected account dirs are still present and correct.
+    expect(env['CLAUDE_CONFIG_DIR']).toBe(PROFILE.configDir);
   });
 });

@@ -13,7 +13,7 @@ import { GOLDEN_HOOK_CORPUS_FREEZE, GOLDEN_HOOK_FIXTURES } from '@aibender/testk
 import { openEventsStore, type EventsStore } from '@aibender/schema';
 
 import { createApprovalBroker, type ApprovalBroker } from '../../kernel/approvals.js';
-import { startHooksServer, type HooksServer } from './server.js';
+import { HOOK_TOKEN_HEADER, startHooksServer, type HooksServer } from './server.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -278,5 +278,102 @@ describe('PermissionRequest → ApprovalBroker hook-floor relay (real M2 broker)
     );
     expect(response.status).toBe(204);
     await server.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SEC-3 — per-boot token auth (local-process spoofing defense)
+// ---------------------------------------------------------------------------
+
+describe('SEC-3 — per-boot hook-endpoint token auth', () => {
+  const TOKEN = 'synthesized-hook-boot-token-not-real-000000000';
+  const VALID_BODY = JSON.stringify({
+    hook_event_name: 'PostToolUse',
+    session_id: 'synth-native-3',
+    tool_name: 'Bash',
+    tool_input: { command: 'ls' },
+    tool_output: { ok: true },
+  });
+
+  let store: EventsStore;
+  let server: HooksServer;
+
+  beforeEach(async () => {
+    store = await openEventsStore({ path: ':memory:' });
+    server = await startHooksServer({
+      events: store.events,
+      port: 0,
+      nowMs: () => 7,
+      authToken: TOKEN,
+    });
+    expect(server.state).toBe('listening');
+    expect(server.url.startsWith('http://127.0.0.1:')).toBe(true); // loopback preserved
+  });
+  afterEach(async () => {
+    await server.close();
+    store.close();
+  });
+
+  const post = (headers: Record<string, string>): Promise<Response> =>
+    fetch(`${server.url}/hooks/v1/MAX_A`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: VALID_BODY,
+    });
+
+  it('accepts a POST carrying the correct per-boot token', async () => {
+    const response = await post({ [HOOK_TOKEN_HEADER]: TOKEN });
+    expect(response.status).toBe(204); // accepted
+    expect(server.stats().accepted).toBe(1);
+    expect(server.stats().rowsInserted).toBe(1);
+    expect(server.stats().rejected401).toBe(0);
+    expect(store.events.list()).toHaveLength(1);
+  });
+
+  it('rejects 401 a POST with NO token — and inserts nothing (no spoofed event)', async () => {
+    const response = await post({});
+    expect(response.status).toBe(401);
+    expect(server.stats().rejected401).toBe(1);
+    expect(server.stats().accepted).toBe(0);
+    // The gate runs BEFORE body parse/normalize/insert — the store is untouched.
+    expect(store.events.list()).toHaveLength(0);
+  });
+
+  it('rejects 401 a POST with the WRONG token', async () => {
+    const response = await post({ [HOOK_TOKEN_HEADER]: `${TOKEN}-tampered` });
+    expect(response.status).toBe(401);
+    expect(server.stats().rejected401).toBe(1);
+    expect(store.events.list()).toHaveLength(0);
+  });
+
+  it('the 401 gate precedes even the 404 unknown-label path (no label oracle)', async () => {
+    // An unknown label WITH no token still answers 401, not 404 — a token-less
+    // local attacker cannot probe which account labels exist.
+    const response = await fetch(`${server.url}/hooks/v1/NOT_A_LABEL`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: VALID_BODY,
+    });
+    expect(response.status).toBe(401);
+    expect(server.stats().rejected401).toBe(1);
+    expect(server.stats().rejected404).toBe(0);
+  });
+
+  it('with NO authToken configured, the endpoint keeps its M2–M6 open behavior', async () => {
+    const openStore = await openEventsStore({ path: ':memory:' });
+    const openServer = await startHooksServer({
+      events: openStore.events,
+      port: 0,
+      nowMs: () => 7,
+    });
+    const response = await fetch(`${openServer.url}/hooks/v1/MAX_A`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: VALID_BODY,
+    });
+    expect(response.status).toBe(204); // no token demanded → accepted (back-compat)
+    expect(openServer.stats().rejected401).toBe(0);
+    await openServer.close();
+    openStore.close();
   });
 });

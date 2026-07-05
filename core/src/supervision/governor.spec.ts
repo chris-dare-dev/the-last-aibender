@@ -330,4 +330,83 @@ describe('BE-9 governor pressure flow + [X1] invariants', () => {
     governor.noteActivity('ses_oc', 2000); // the FE woke it
     expect(governor.hibernatedIds()).not.toContain('ses_oc');
   });
+
+  // -- OS-4: N-account budget generalization ----------------------------------
+
+  const RED = { pressureLevel: 4, freeRamPct: 9, swapUsedBytes: 28e9, pageoutRate: 2000 };
+
+  it('OS-4: an account spawn over the resident soft ceiling is admitted WITH an amber advisory (never refused)', async () => {
+    const governor = createGovernor({
+      sampler: fakeSampler(new Map()),
+      probe: fakeProbe(RED),
+      residentAccountSoftCeiling: 2,
+    });
+    await governor.tick(1); // establish red
+    governor.register(claudeSession('ses_a', 0));
+    governor.register({ ...claudeSession('ses_b', 1), account: 'MAX_B' });
+    // 2 resident accounts == ceiling → next account spawn carries the advisory,
+    // but is STILL admitted even at RED ([X1] absolute).
+    expect(governor.admitSpawnNow(true)).toEqual({
+      admit: true,
+      advisory: 'resident-account-soft-ceiling',
+    });
+    // A non-account spawn at red is still hard-refused (unchanged).
+    expect(governor.admitSpawnNow(false).admit).toBe(false);
+  });
+
+  it('OS-4: an IDLE account session is checkpoint-hibernated ONLY under sustained RED, and never sheds', async () => {
+    const hibernated: string[] = [];
+    const governor = createGovernor({
+      sampler: fakeSampler(new Map()),
+      probe: fakeProbe(RED),
+      hibernate: {
+        hibernate: async (id) => {
+          hibernated.push(id);
+        },
+      },
+      idleWindowMs: 1000,
+      sustainedRedTicksForAccountHibernation: 2, // 2 consecutive red ticks
+    });
+    governor.register(claudeSession('ses_acct', 0));
+    governor.noteActivity('ses_acct', 0); // idle since t=0
+
+    // Tick 1: RED but only 1 consecutive red tick → account NOT yet hibernated.
+    await governor.tick(2000);
+    expect(hibernated).not.toContain('ses_acct');
+
+    // Tick 2: 2 consecutive red ticks + idle past window → account is
+    // CHECKPOINT-hibernated (reversible), never a shed.
+    const result = await governor.tick(4000);
+    expect(hibernated).toContain('ses_acct');
+    expect(governor.hibernatedIds()).toContain('ses_acct');
+    // The account hibernation is NOT a shed: no shed-vocabulary notice targets it.
+    for (const notice of result.snapshot.data.notices) {
+      expect(notice.account).not.toBe('MAX_A');
+    }
+
+    // Reversible: account activity un-hibernates it (the resume ledger resumes).
+    governor.noteActivity('ses_acct', 5000);
+    expect(governor.hibernatedIds()).not.toContain('ses_acct');
+  });
+
+  it('OS-4: with the RED-hibernation gate DISABLED (default), an account is NEVER hibernated even under sustained RED', async () => {
+    const hibernated: string[] = [];
+    const governor = createGovernor({
+      sampler: fakeSampler(new Map()),
+      probe: fakeProbe(RED),
+      hibernate: {
+        hibernate: async (id) => {
+          hibernated.push(id);
+        },
+      },
+      idleWindowMs: 1000,
+      // sustainedRedTicksForAccountHibernation omitted → disabled (M6 rule).
+    });
+    governor.register(claudeSession('ses_acct', 0));
+    governor.noteActivity('ses_acct', 0);
+    await governor.tick(2000);
+    await governor.tick(4000);
+    await governor.tick(6000);
+    expect(hibernated).not.toContain('ses_acct'); // account never auto-hibernated
+  });
 });

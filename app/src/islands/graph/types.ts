@@ -70,9 +70,30 @@ export interface GraphMutationBatch {
   readonly pulses: readonly number[];
   /** Kind upgrades on existing nodes (reference → agent-artifact). */
   readonly retagged: readonly { readonly index: number; readonly kind: GraphNodeKind }[];
-  /** Node counts after this commit (the renderer/layout array sizes). */
+  /**
+   * OS-5 recency eviction: dense indices of nodes DROPPED this commit
+   * (least-recently-touched, past the store's configurable ceiling). The
+   * renderer TOMBSTONES these slots — destroy the sprite/halo, drop incident
+   * edges — rather than reindexing: the dense index axis (and the layout
+   * Float32Array offsets keyed on it) stays stable, so a drop never shifts a
+   * surviving node's position. Empty on every commit until the ceiling is
+   * reached (the default store is unbounded). Incident edges of a removed
+   * node are implicitly gone (the renderer culls any edge touching a removed
+   * index); no separate `removedEdges` axis is needed.
+   */
+  readonly removedNodes: readonly number[];
+  /** LIVE node/edge counts after this commit (graphology order/size). */
   readonly nodeCount: number;
   readonly edgeCount: number;
+  /**
+   * OS-5: the DENSE-INDEX high-water mark — one past the largest index ever
+   * assigned (`indexToId.length`). This, NOT {@link nodeCount}, sizes the
+   * position Float32Arrays: eviction tombstones a slot without reindexing, so
+   * the dense axis keeps growing while the live count shrinks. Equal to
+   * `nodeCount` until the first eviction; ≥ `nodeCount` after. Consumers that
+   * size arrays by node index MUST use this.
+   */
+  readonly indexCount: number;
 }
 
 /** A position epoch as delivered by the layout bridge. */

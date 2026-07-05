@@ -63,6 +63,27 @@ function mulberry32(seed: number): () => number {
 
 const JITTER_RADIUS = 12;
 
+/**
+ * OS-5: default ceiling on LIVE node count. `Infinity` = unbounded — the store
+ * never evicts unless a caller opts in with {@link GraphStoreOptions.maxNodes}.
+ * The default is deliberately unbounded so the existing spike-B soak (exactly
+ * 5000 nodes) and every unit fixture keep their exact counts; the graph island
+ * wires a real ceiling ({@link GraphStore} consumer) for the long-lived
+ * cockpit. Enforcing the 5k regime WHERE DATA ENTERS is the finding's ask.
+ */
+export const DEFAULT_MAX_NODES = Number.POSITIVE_INFINITY;
+
+/**
+ * OS-5: the live-cockpit node ceiling the graph island wires by default. The
+ * spike-B pipeline is fps-proven at the 5k regime; this sits a comfortable
+ * margin above it so the graph tolerates a busy but bounded working window
+ * while still capping the superlinear costs (graphology adjacency, per-frame
+ * edge rebuild, scene-graph size) that a monotonically-growing feed would
+ * otherwise blow past over a long-lived session. Beyond it, least-recently-
+ * touched context is elided (an "older context elided" affordance surfaces).
+ */
+export const GRAPH_NODE_CEILING = 6000;
+
 export interface GraphStoreOptions {
   schedule?: CommitScheduler;
   /**
@@ -72,6 +93,16 @@ export interface GraphStoreOptions {
   positionOf?: (index: number) => { x: number; y: number } | undefined;
   /** Jitter seed (tests pin it). */
   seed?: number;
+  /**
+   * OS-5 LRU/recency ceiling on the LIVE node count (graphology order). When a
+   * commit pushes the live count above this, the least-recently-TOUCHED nodes
+   * (+ their incident edges) are dropped back to the ceiling and reported in
+   * {@link GraphMutationBatch.removedNodes}. The dense index axis is NOT
+   * reindexed — a removed slot becomes a tombstone so the layout Float32Array
+   * offsets of surviving nodes never shift. Default {@link DEFAULT_MAX_NODES}
+   * (unbounded). Must be ≥ 1 when finite.
+   */
+  maxNodes?: number;
 }
 
 interface NodeAttrs {
@@ -81,6 +112,17 @@ interface NodeAttrs {
   cluster: string;
   spawnX: number;
   spawnY: number;
+  /**
+   * OS-5 recency key: the max touch `ts` seen for this node (a session node
+   * inherits the newest ts of any touch that names it; an artifact the newest
+   * ts of any touch on its path). The eviction order is ASCENDING by this.
+   */
+  lastTouchTs: number;
+  /**
+   * Insertion sequence — a deterministic tie-break when two nodes share the
+   * same `lastTouchTs`, so eviction order is total and reproducible.
+   */
+  seq: number;
 }
 
 interface EdgeAttrs {
@@ -111,8 +153,16 @@ export class GraphStore {
   private readonly schedule: CommitScheduler;
   private readonly positionOf: (index: number) => { x: number; y: number } | undefined;
   private readonly rng: () => number;
+  private readonly maxNodes: number;
   private readonly listeners = new Set<(batch: GraphMutationBatch) => void>();
-  private readonly indexToId: string[] = [];
+  /**
+   * Dense index → node id. A tombstone (`undefined`) marks an evicted slot —
+   * the axis NEVER shrinks or reindexes so surviving nodes keep their layout
+   * position offsets ({@link GraphMutationBatch.removedNodes}).
+   */
+  private readonly indexToId: (string | undefined)[] = [];
+  /** Monotonic node-insertion counter (eviction tie-break). */
+  private nodeSeq = 0;
   private queue: ContextGraphTouch[] = [];
   private cancel: (() => void) | undefined;
   /**
@@ -128,10 +178,22 @@ export class GraphStore {
     this.schedule = options.schedule ?? defaultCommitScheduler;
     this.positionOf = options.positionOf ?? (() => undefined);
     this.rng = mulberry32(options.seed ?? 1);
+    const ceiling = options.maxNodes ?? DEFAULT_MAX_NODES;
+    if (ceiling < 1) throw new Error(`GraphStore maxNodes must be ≥ 1 (got ${ceiling})`);
+    this.maxNodes = ceiling;
   }
 
+  /** LIVE node count (graphology order) — bounded by {@link maxNodes}. */
   get nodeCount(): number {
     return this.graph.order;
+  }
+
+  /**
+   * The configured live-node ceiling (OS-5). `Infinity` when unbounded. The
+   * store guarantees {@link nodeCount} never exceeds this after a commit.
+   */
+  get maxNodeCount(): number {
+    return this.maxNodes;
   }
 
   get edgeCount(): number {
@@ -171,6 +233,11 @@ export class GraphStore {
     };
   }
 
+  private touchRecency(id: string, ts: number): void {
+    const a = this.graph.getNodeAttributes(id);
+    if (ts > a.lastTouchTs) this.graph.setNodeAttribute(id, 'lastTouchTs', ts);
+  }
+
   onBatch(listener: (batch: GraphMutationBatch) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -204,6 +271,7 @@ export class GraphStore {
     this.queue = [];
     this.graph.clear();
     this.indexToId.length = 0;
+    this.nodeSeq = 0;
   }
 
   dispose(): void {
@@ -237,11 +305,21 @@ export class GraphStore {
     label: string,
     cluster: string,
     spawn: { x: number; y: number },
+    ts: number,
     added: GraphNodeRecord[],
   ): number {
     const index = this.indexToId.length;
     this.indexToId.push(id);
-    this.graph.addNode(id, { index, kind, label, cluster, spawnX: spawn.x, spawnY: spawn.y });
+    this.graph.addNode(id, {
+      index,
+      kind,
+      label,
+      cluster,
+      spawnX: spawn.x,
+      spawnY: spawn.y,
+      lastTouchTs: ts,
+      seq: this.nodeSeq++,
+    });
     added.push({ index, id, kind, label, cluster, spawnX: spawn.x, spawnY: spawn.y });
     return index;
   }
@@ -273,8 +351,13 @@ export class GraphStore {
           touch.sessionId,
           touch.sessionId,
           this.spawnAt(artifactExists ? fid : undefined),
+          touch.ts,
           addedNodes,
         );
+      } else {
+        // OS-5: an existing session that keeps working stays "recent" so it
+        // is not evicted out from under its live artifacts.
+        this.touchRecency(sid, touch.ts);
       }
 
       const touchedKind = classifyArtifact(touch.path, touch.relation);
@@ -288,9 +371,12 @@ export class GraphStore {
           label,
           touch.sessionId,
           this.spawnAt(sid),
+          touch.ts,
           addedNodes,
         );
       } else {
+        // OS-5: re-touch refreshes the artifact's recency key.
+        this.touchRecency(fid, touch.ts);
         const attrs = this.graph.getNodeAttributes(fid);
         const next = upgradeKind(attrs.kind, touchedKind);
         if (next !== attrs.kind) {
@@ -325,15 +411,74 @@ export class GraphStore {
       }
     }
 
+    // OS-5: enforce the live-node ceiling AFTER this window's adds. Drop the
+    // least-recently-touched nodes (+ their incident edges) back to the
+    // ceiling; report their dense indices so the renderer tombstones them.
+    const removedNodes = this.evictToCeiling();
+    // Reconcile: if the ceiling is smaller than this single batch's adds, a
+    // just-added node can itself be evicted. Never report it as both added
+    // and removed — strip it (and any edge naming it) from the add lists so
+    // the batch a listener sees is internally consistent (net: never shown).
+    let netAddedNodes = addedNodes;
+    let netAddedEdges = addedEdges;
+    let netPulses = pulses;
+    if (removedNodes.length > 0) {
+      const removedSet = new Set(removedNodes);
+      netAddedNodes = addedNodes.filter((n) => !removedSet.has(n.index));
+      netAddedEdges = addedEdges.filter(
+        (e) => !removedSet.has(e.sourceIndex) && !removedSet.has(e.targetIndex),
+      );
+      netPulses = pulses.filter((i) => !removedSet.has(i));
+    }
+
     const commit: GraphMutationBatch = {
-      addedNodes,
-      addedEdges,
-      pulses,
+      addedNodes: netAddedNodes,
+      addedEdges: netAddedEdges,
+      pulses: netPulses,
       retagged,
+      removedNodes,
       nodeCount: this.graph.order,
       edgeCount: this.graph.size,
+      indexCount: this.indexToId.length,
     };
     this.commits += 1;
     for (const listener of [...this.listeners]) listener(commit);
+  }
+
+  /**
+   * OS-5 LRU/recency eviction. Removes least-recently-TOUCHED nodes (+ their
+   * incident edges) from the graphology model until the live order is back at
+   * {@link maxNodes}, returning the DENSE INDICES dropped (ascending recency).
+   * The `indexToId` slot for each becomes a tombstone (`undefined`) — the axis
+   * never reindexes, so a surviving node's layout Float32Array offset never
+   * shifts. No-op (empty) when unbounded or already under the ceiling.
+   */
+  private evictToCeiling(): number[] {
+    if (!Number.isFinite(this.maxNodes)) return [];
+    const overflow = this.graph.order - this.maxNodes;
+    if (overflow <= 0) return [];
+
+    // Rank live nodes by (lastTouchTs, seq) ascending — oldest touched first,
+    // insertion order breaking ties. Only the `overflow` oldest are dropped.
+    const ranked = this.graph.mapNodes((id, attrs) => ({
+      id,
+      index: attrs.index,
+      lastTouchTs: attrs.lastTouchTs,
+      seq: attrs.seq,
+    }));
+    ranked.sort((a, b) =>
+      a.lastTouchTs !== b.lastTouchTs ? a.lastTouchTs - b.lastTouchTs : a.seq - b.seq,
+    );
+
+    const removed: number[] = [];
+    for (let k = 0; k < overflow; k++) {
+      const victim = ranked[k];
+      if (victim === undefined) break;
+      // dropNode removes the node AND all its incident edges (graphology).
+      this.graph.dropNode(victim.id);
+      this.indexToId[victim.index] = undefined; // tombstone — never reindex
+      removed.push(victim.index);
+    }
+    return removed;
   }
 }

@@ -30,6 +30,9 @@ interface BatchRow {
   addedEdges: number;
   pulses: number[];
   retagged: Array<{ index: number; kind: GraphNodeKind }>;
+  /** OS-5: dense indices dropped by recency eviction this commit. */
+  removedNodes: number[];
+  indexCount: number;
 }
 
 interface HarnessSnapshot {
@@ -41,6 +44,8 @@ interface HarnessSnapshot {
   reducedMotion: boolean;
   visibleKinds: GraphNodeKind[];
   focusedCluster: string | undefined;
+  maxNodes: number;
+  elidedCount: number;
   canvasCount: number;
   epochRows: EpochRow[];
   batchRows: BatchRow[];
@@ -97,6 +102,8 @@ async function create(options: {
   width?: number;
   height?: number;
   epochIntervalMs?: number;
+  /** OS-5: pin a small live-node ceiling so the pw suite can exercise eviction. */
+  maxNodes?: number;
 } = {}): Promise<void> {
   dispose();
   const host = stage();
@@ -108,6 +115,7 @@ async function create(options: {
     container: host,
     seed: options.seed ?? 7,
     ...(options.reducedMotion !== undefined ? { reducedMotion: options.reducedMotion } : {}),
+    ...(options.maxNodes !== undefined ? { maxNodes: options.maxNodes } : {}),
     bridgeOptions: {
       createWorker: () => {
         liveWorker = createLayoutWorker();
@@ -125,6 +133,8 @@ async function create(options: {
       addedEdges: batch.addedEdges.length,
       pulses: [...batch.pulses],
       retagged: batch.retagged.map((r) => ({ index: r.index, kind: r.kind })),
+      removedNodes: [...batch.removedNodes],
+      indexCount: batch.indexCount,
     });
   });
   await island.ready;
@@ -157,6 +167,8 @@ function snapshot(): HarnessSnapshot {
     reducedMotion: snap.reducedMotion,
     visibleKinds: [...snap.visibleKinds],
     focusedCluster: snap.focusedCluster,
+    maxNodes: snap.maxNodes,
+    elidedCount: snap.elidedCount,
     canvasCount: stage().querySelectorAll('canvas').length,
     epochRows: [...epochRows],
     batchRows: [...batchRows],

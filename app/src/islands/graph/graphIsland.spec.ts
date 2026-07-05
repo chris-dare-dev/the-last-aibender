@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ContextGraphTouch } from '@aibender/protocol';
 import { createGraphIsland, type GraphIslandHandle } from './graphIsland.ts';
-import type { CommitScheduler } from './store.ts';
+import { GRAPH_NODE_CEILING, type CommitScheduler } from './store.ts';
 import type { GraphTokenTheme } from './theme.ts';
 import type {
   CameraPose,
@@ -25,7 +25,8 @@ const touch = (
   sessionId: string,
   path: string,
   relation: ContextGraphTouch['relation'] = 'read',
-): ContextGraphTouch => ({ kind: 'context-touch', sessionId, path, relation, ts: 1 });
+  ts = 1,
+): ContextGraphTouch => ({ kind: 'context-touch', sessionId, path, relation, ts });
 
 function manualScheduler(): { schedule: CommitScheduler; flush: () => void } {
   const queue: Array<() => void> = [];
@@ -147,7 +148,7 @@ const theme: GraphTokenTheme = {
   reducedMotion: false,
 };
 
-function build(options: { reducedMotion?: boolean } = {}) {
+function build(options: { reducedMotion?: boolean; maxNodes?: number } = {}) {
   const renderer = fakeRenderer();
   const bridge = fakeBridge();
   const s = manualScheduler();
@@ -159,6 +160,7 @@ function build(options: { reducedMotion?: boolean } = {}) {
     schedule: s.schedule,
     seed: 5,
     ...(options.reducedMotion !== undefined ? { reducedMotion: options.reducedMotion } : {}),
+    ...(options.maxNodes !== undefined ? { maxNodes: options.maxNodes } : {}),
   });
   return { renderer, bridge, island, flush: s.flush };
 }
@@ -295,5 +297,53 @@ describe('graph island — lifecycle', () => {
     expect(snap.commitCount).toBe(1);
     expect(snap.bridgeState).toBe('running');
     expect(snap.lastEpochSeq).toBe(-1); // fake bridge does not track seq
+    expect(snap.maxNodes).toBe(GRAPH_NODE_CEILING); // island wires the default ceiling
+    expect(snap.elidedCount).toBe(0);
+  });
+});
+
+describe('graph island — OS-5 eviction + elided affordance', () => {
+  it('wires the ceiling into the store and surfaces it in the snapshot', () => {
+    const { island } = build({ maxNodes: 4 });
+    expect(island.snapshot().maxNodes).toBe(4);
+    expect(island.store.maxNodeCount).toBe(4);
+  });
+
+  it('drives the "older context elided" affordance on eviction', () => {
+    const { island, flush } = build({ maxNodes: 4 });
+    const elided: number[] = [];
+    const off = island.onElided((total) => elided.push(total));
+
+    // 3 distinct session+file touches over windows = 6 nodes, ceiling 4.
+    island.applyTouches([touch('ses-0', '/synthetic/f0.md', 'read', 1)]);
+    flush();
+    island.applyTouches([touch('ses-1', '/synthetic/f1.md', 'read', 2)]);
+    flush(); // now at 4 — no eviction yet
+    expect(elided).toEqual([]);
+    expect(island.snapshot().elidedCount).toBe(0);
+
+    island.applyTouches([touch('ses-2', '/synthetic/f2.md', 'read', 3)]);
+    flush(); // 6 → 2 over → 2 evicted
+
+    expect(elided).toEqual([2]); // cumulative total after the first eviction
+    expect(island.snapshot().elidedCount).toBe(2);
+    expect(island.snapshot().nodeCount).toBe(4);
+    off();
+  });
+
+  it('fans the removal batch to the renderer (renderer sees removedNodes)', () => {
+    const { renderer, island, flush } = build({ maxNodes: 4 });
+    island.applyTouches([
+      touch('ses-old', '/synthetic/old.md', 'read', 1),
+      touch('ses-new', '/synthetic/new.md', 'read', 9),
+    ]);
+    flush();
+    island.applyTouches([touch('ses-z', '/synthetic/z.md', 'read', 20)]);
+    flush();
+    const last = renderer.batches.at(-1);
+    expect(last?.removedNodes).toHaveLength(2);
+    // indexCount (dense high-water) outgrows the live nodeCount after eviction.
+    expect(last?.indexCount).toBe(6);
+    expect(last?.nodeCount).toBe(4);
   });
 });

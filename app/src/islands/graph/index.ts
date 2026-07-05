@@ -33,7 +33,9 @@ export {
 export { basenameOf, classifyArtifact, upgradeKind } from './classify.ts';
 
 export {
+  DEFAULT_MAX_NODES,
   FALLBACK_COMMIT_WINDOW_MS,
+  GRAPH_NODE_CEILING,
   GraphStore,
   artifactNodeId,
   defaultCommitScheduler,

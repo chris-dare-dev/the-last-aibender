@@ -18,6 +18,7 @@
 
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
+import { opendir, stat as statAsync } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { AccountLabel } from '@aibender/protocol';
@@ -46,6 +47,13 @@ export interface AccountConfigWatcher {
   readonly configDir: string;
   /** One deterministic pass over every feed. Returns rows inserted this pass. */
   scan(): number;
+  /**
+   * OS-3: the async, off-event-loop, mtime-scoped pass the production pump
+   * uses. `full: true` forces a whole-subtree reconcile (else only mtime-changed
+   * dirs are descended). Returns rows inserted this pass. Tailer correctness is
+   * identical to {@link scan}.
+   */
+  scanAsync(opts?: { readonly full?: boolean }): Promise<number>;
   /** Convenience interval pump (unref'd); tests drive scan() directly. */
   start(pollMs?: number): void;
   stop(): void;
@@ -75,6 +83,100 @@ function listFilesRecursive(root: string, suffix: string): readonly string[] {
   }
 }
 
+/**
+ * OS-3: an mtime-scoped ASYNC recursive walk for the production interval pump.
+ *
+ * The old production path re-walked the WHOLE `projects/**` subtree with a
+ * SYNCHRONOUS `readdirSync({recursive:true})` every 2 s, per account — 12
+ * accounts meant 12 full synchronous subtree walks + per-file stat on the
+ * broker's main event loop every tick, blocking the latency-critical
+ * row-before-spawn path. This walk instead:
+ *   - runs OFF the event loop via async `opendir` (yields between entries);
+ *   - SKIPS descending into a directory whose mtime is unchanged since the last
+ *     walk (a dir's mtime bumps when a child file is added/removed/renamed), so
+ *     a steady tree costs O(top-level dirs) stats, not O(all files);
+ *   - on a `full` reconcile pass (periodic, every ~30-60 s) descends
+ *     everything regardless of mtime, so an in-place APPEND that did not bump a
+ *     dir mtime is still eventually rediscovered (defense against fs quirks).
+ *
+ * The per-directory mtime cache is passed in and mutated in place. Returns the
+ * matching files (absolute paths, sorted) discovered this pass — the caller
+ * tails them; the tailer's own byte offset means an unchanged file it already
+ * knows is a cheap `stat` (size === offset → no read).
+ */
+async function listJsonlFilesAsyncScoped(
+  root: string,
+  suffix: string,
+  dirMtimes: Map<string, number>,
+  options: { readonly full: boolean; readonly known: ReadonlySet<string> },
+): Promise<readonly string[]> {
+  const found: string[] = [];
+  const walk = async (dir: string): Promise<void> => {
+    let dirMtime: number;
+    try {
+      dirMtime = Math.round((await statAsync(dir)).mtimeMs);
+    } catch {
+      dirMtimes.delete(dir);
+      return; // vanished mid-walk — the next reconcile drops any stale tailers
+    }
+    const seenMtime = dirMtimes.get(dir);
+    const dirUnchanged = !options.full && seenMtime === dirMtime;
+    dirMtimes.set(dir, dirMtime);
+
+    // Even when a dir's mtime is unchanged, its KNOWN matching files must still
+    // be re-offered so an in-place append (which does NOT bump the dir mtime)
+    // is tailed. So: unchanged dir → re-yield only its already-known files and
+    // still recurse into subdirs (their own mtime gates them); changed dir (or
+    // full pass) → opendir to discover new entries.
+    if (dirUnchanged) {
+      for (const path of options.known) {
+        if (path.endsWith(suffix) && dirnameOf(path) === dir) found.push(path);
+      }
+      // Still descend known subdirs so a change deeper down is not missed.
+      for (const sub of childDirsFromMtimeCache(dir, dirMtimes)) await walk(sub);
+      return;
+    }
+
+    let handle;
+    try {
+      handle = await opendir(dir);
+    } catch {
+      return;
+    }
+    try {
+      for await (const entry of handle) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(full);
+        } else if (entry.isFile() && entry.name.endsWith(suffix)) {
+          found.push(full);
+        }
+      }
+    } catch {
+      // A mid-iteration error (dir removed) is benign — reconcile recovers.
+    }
+  };
+  if (existsSync(root)) await walk(root);
+  found.sort();
+  return found;
+}
+
+function dirnameOf(path: string): string {
+  const idx = path.lastIndexOf('/');
+  return idx <= 0 ? '/' : path.slice(0, idx);
+}
+
+/** Sub-directories of `dir` currently in the mtime cache (for unchanged-dir descent). */
+function childDirsFromMtimeCache(dir: string, dirMtimes: ReadonlyMap<string, number>): string[] {
+  const prefix = dir.endsWith('/') ? dir : `${dir}/`;
+  const out: string[] = [];
+  for (const cached of dirMtimes.keys()) {
+    if (cached === dir) continue;
+    if (cached.startsWith(prefix) && !cached.slice(prefix.length).includes('/')) out.push(cached);
+  }
+  return out;
+}
+
 function listFilesFlat(dir: string, suffix: string): readonly string[] {
   if (!existsSync(dir)) return [];
   try {
@@ -100,6 +202,10 @@ export function createAccountConfigWatcher(
   const tailers = new Map<string, FileTailer>();
   /** usage-data files ingested at a given mtime (re-ingest only on change). */
   const usageDataSeen = new Map<string, number>();
+  /** OS-3: per-directory mtime cache for the mtime-scoped async walk. */
+  const dirMtimes = new Map<string, number>();
+  /** OS-3: `.jsonl` transcript files discovered so far (for unchanged-dir re-offer). */
+  const knownJsonlFiles = new Set<string>();
   const stats = {
     transcriptLines: 0,
     malformedLines: 0,
@@ -110,6 +216,10 @@ export function createAccountConfigWatcher(
     filesDropped: 0,
   };
   let interval: ReturnType<typeof setInterval> | undefined;
+  /** OS-3: guards against overlapping async ticks (a slow walk never re-enters). */
+  let scanInFlight = false;
+  /** OS-3: tick counter to schedule the periodic FULL reconcile. */
+  let tickCount = 0;
 
   const insertRow = (row: Parameters<EventsTableStore['insert']>[0]): void => {
     const outcome = events.insert(row);
@@ -209,9 +319,16 @@ export function createAccountConfigWatcher(
     return 'ok';
   };
 
+  /**
+   * The DETERMINISTIC synchronous pass (tests call this directly). Full walk —
+   * simple and total. The production interval uses {@link scanAsync} instead
+   * (off the event loop, mtime-scoped). Both share the tailer/dedupe machinery,
+   * so a caller that mixes them is still correct (offsets/dedupe absorb it).
+   */
   const scan = (): number => {
     const before = stats.rowsInserted + stats.outcomesInserted;
     for (const path of listFilesRecursive(join(configDir, 'projects'), '.jsonl')) {
+      knownJsonlFiles.add(path);
       pollTranscript(path);
     }
     const historyPath = join(configDir, 'history.jsonl');
@@ -220,19 +337,63 @@ export function createAccountConfigWatcher(
     return stats.rowsInserted + stats.outcomesInserted - before;
   };
 
+  /**
+   * OS-3: the async, mtime-scoped pass used by the production pump. Off the
+   * event loop (async opendir), descends only mtime-changed dirs unless `full`.
+   * Returns rows inserted this pass. Preserves tailer correctness exactly —
+   * every discovered transcript is polled through the SAME {@link FileTailer}
+   * (byte-offset, rotation/truncation-safe), and history + usage-data are
+   * polled every pass (they are single known paths, cheap to stat).
+   */
+  const scanAsync = async (opts: { readonly full?: boolean } = {}): Promise<number> => {
+    const before = stats.rowsInserted + stats.outcomesInserted;
+    const files = await listJsonlFilesAsyncScoped(join(configDir, 'projects'), '.jsonl', dirMtimes, {
+      full: opts.full ?? false,
+      known: knownJsonlFiles,
+    });
+    for (const path of files) {
+      knownJsonlFiles.add(path);
+      pollTranscript(path);
+    }
+    // A tailer whose file was dropped (rotation) removed itself; prune the
+    // known-file set so an unchanged-dir re-offer does not resurrect it.
+    for (const path of knownJsonlFiles) {
+      if (!tailers.has(path) && !files.includes(path)) knownJsonlFiles.delete(path);
+    }
+    const historyPath = join(configDir, 'history.jsonl');
+    if (existsSync(historyPath)) pollHistory(historyPath);
+    pollUsageData();
+    return stats.rowsInserted + stats.outcomesInserted - before;
+  };
+
+  /** OS-3: full reconcile every ~30 s regardless of poll cadence. */
+  const FULL_RECONCILE_MS = 30_000;
+
   return {
     account,
     configDir,
     scan,
+    scanAsync,
 
     start: (pollMs = 2000) => {
       if (interval !== undefined) return;
+      // Reconcile every Nth tick (>= FULL_RECONCILE_MS), min 1.
+      const reconcileEvery = Math.max(1, Math.round(FULL_RECONCILE_MS / pollMs));
       interval = setInterval(() => {
-        try {
-          scan();
-        } catch {
-          /* a bad pass must never kill the pump; the next tick re-scans */
-        }
+        // OS-3: never let a slow walk re-enter; skip this tick if one is live.
+        if (scanInFlight) return;
+        scanInFlight = true;
+        const full = tickCount % reconcileEvery === 0; // first tick is a full pass
+        tickCount += 1;
+        void scanAsync({ full }).then(
+          () => {
+            scanInFlight = false;
+          },
+          () => {
+            // A bad pass must never kill the pump; the next tick re-scans.
+            scanInFlight = false;
+          },
+        );
       }, pollMs);
       interval.unref?.();
     },

@@ -367,4 +367,64 @@ describe('createAccountConfigWatcher', () => {
     watcher.scan(); // unchanged mtime → skipped, no extra insert attempts
     expect(store.sessionOutcomes.list()).toHaveLength(1);
   });
+
+  // -- OS-3: the async, off-event-loop, mtime-scoped production pass ----------
+
+  describe('scanAsync (OS-3)', () => {
+    const proj = (name: string): string => join(dir, 'projects', 'synth-project', name);
+
+    it('discovers + tails a transcript the same as the sync scan', async () => {
+      writeFileSync(proj('synth-native-1.jsonl'), `${ASSISTANT_LINE}\n${SKILL_LINE}\n`);
+      await watcher.scanAsync({ full: true });
+      joiner.flush(0);
+      const types = store.events.list().map((r) => r.eventType);
+      expect(types).toContain('tool_use'); // the skill line landed
+    });
+
+    it('picks up an in-place APPEND to a known file (mtime-scoped re-offer)', async () => {
+      const p = proj('synth-native-2.jsonl');
+      writeFileSync(p, `${SKILL_LINE}\n`);
+      await watcher.scanAsync({ full: true });
+      const afterFirst = store.events.list().length;
+
+      // Append WITHOUT touching the dir's child set (dir mtime may not bump on
+      // a pure in-file append) — a NON-full incremental pass must still re-tail
+      // the known file and pick up the new line.
+      appendFileSync(p, `${TOOL_RESULT_LINE}\n`);
+      await watcher.scanAsync({ full: false });
+      expect(store.events.list().length).toBeGreaterThan(afterFirst);
+    });
+
+    it('discovers a NEW file added to the tree on a later pass', async () => {
+      await watcher.scanAsync({ full: true });
+      expect(store.events.list()).toHaveLength(0);
+      // A brand-new session file appears; a full reconcile discovers it (a new
+      // file bumps its parent dir's mtime, so an incremental pass would too).
+      writeFileSync(proj('synth-native-3.jsonl'), `${SKILL_LINE}\n`);
+      await watcher.scanAsync({ full: true });
+      expect(store.events.list().map((r) => r.eventType)).toContain('tool_use');
+    });
+
+    it('truncation + rotation still dedupe through scanAsync', async () => {
+      const p = proj('synth-native-4.jsonl');
+      writeFileSync(p, `${SKILL_LINE}\n${TOOL_RESULT_LINE}\n`);
+      await watcher.scanAsync({ full: true });
+      const baseline = store.events.list().length;
+
+      // Truncate-and-reappend: dedupe (backend, raw_ref) absorbs re-reads.
+      writeFileSync(p, `${SKILL_LINE}\n`);
+      await watcher.scanAsync({ full: true });
+      appendFileSync(p, `${TOOL_RESULT_LINE}\n`);
+      await watcher.scanAsync({ full: true });
+      expect(watcher.stats().truncationsSeen).toBeGreaterThanOrEqual(1);
+      expect(store.events.list().length).toBe(baseline); // no duplicate rows
+
+      // Rotation: rename to a successor; the old tailer drops, the successor is
+      // tailed from byte 0, dedupe absorbs the overlap.
+      renameSync(p, proj('synth-native-4a.jsonl'));
+      await watcher.scanAsync({ full: true });
+      await watcher.scanAsync({ full: true });
+      expect(store.events.list().length).toBe(baseline);
+    });
+  });
 });

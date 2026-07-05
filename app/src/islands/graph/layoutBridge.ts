@@ -207,19 +207,23 @@ export function createLayoutBridge(options: LayoutBridgeOptions = {}): LayoutBri
       }
       if (state === 'degraded' || worker === undefined) {
         // Settled-layout degrade: new nodes rest at their spawn coordinates.
-        if (batch.nodeCount > knownNodes) {
-          const grown = new Float32Array(2 * batch.nodeCount);
-          grown.set(lastPositions.subarray(0, Math.min(lastPositions.length, 2 * batch.nodeCount)));
+        // Size by the DENSE index high-water (indexCount), not the live count:
+        // OS-5 eviction tombstones a slot without reindexing, so the array
+        // must still cover the largest index ever assigned (a dropped slot's
+        // stale position is harmless — its visual is destroyed renderer-side).
+        if (batch.indexCount > knownNodes) {
+          const grown = new Float32Array(2 * batch.indexCount);
+          grown.set(lastPositions.subarray(0, Math.min(lastPositions.length, 2 * batch.indexCount)));
           for (const node of batch.addedNodes) {
             grown[2 * node.index] = node.spawnX;
             grown[2 * node.index + 1] = node.spawnY;
           }
           lastPositions = grown;
-          knownNodes = batch.nodeCount;
+          knownNodes = batch.indexCount;
           syntheticSeq += 1;
           emit({
             positions: grown,
-            nodeCount: batch.nodeCount,
+            nodeCount: batch.indexCount,
             seq: lastEpochSeq + syntheticSeq,
             alpha: 0,
           });

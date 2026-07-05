@@ -85,14 +85,16 @@ const node = (index: number, x: number, y: number): GraphNodeRecord => ({
 const batchOf = (
   nodes: GraphNodeRecord[],
   edges: Array<[number, number]> = [],
-  totals?: { nodes: number; edges: number },
+  totals?: { nodes: number; edges: number; index?: number; removed?: number[] },
 ): GraphMutationBatch => ({
   addedNodes: nodes,
   addedEdges: edges.map(([s, t], i) => ({ index: i, sourceIndex: s, targetIndex: t })),
   pulses: [],
   retagged: [],
+  removedNodes: totals?.removed ?? [],
   nodeCount: totals?.nodes ?? nodes.length,
   edgeCount: totals?.edges ?? edges.length,
+  indexCount: totals?.index ?? totals?.nodes ?? nodes.length,
 });
 
 function boot(options: { epochIntervalMs?: number } = {}) {

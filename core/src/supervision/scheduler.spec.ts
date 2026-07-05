@@ -151,6 +151,63 @@ describe('BE-9 [X1] account spawns honored after shedding (edge)', () => {
   });
 });
 
+describe('OS-4 [X1] resident-account soft ceiling (N-account back-pressure)', () => {
+  it('admits an account spawn UNDER the ceiling with no advisory', () => {
+    expect(
+      admitSpawn({
+        pressure: 'normal',
+        isAccountSpawn: true,
+        residentAccountCount: 5,
+        residentAccountSoftCeiling: 8,
+      }),
+    ).toEqual({ admit: true });
+  });
+
+  it('admits an account spawn AT/OVER the ceiling but flags the amber advisory (never refused)', () => {
+    const atCeiling = admitSpawn({
+      pressure: 'red', // even at RED, an account is never refused
+      isAccountSpawn: true,
+      residentAccountCount: 8,
+      residentAccountSoftCeiling: 8,
+    });
+    expect(atCeiling).toEqual({ admit: true, advisory: 'resident-account-soft-ceiling' });
+
+    const overCeiling = admitSpawn({
+      pressure: 'normal',
+      isAccountSpawn: true,
+      residentAccountCount: 12,
+      residentAccountSoftCeiling: 8,
+    });
+    expect(overCeiling).toEqual({ admit: true, advisory: 'resident-account-soft-ceiling' });
+  });
+
+  it('the soft ceiling NEVER applies to a non-account spawn (that still follows the red rule)', () => {
+    // A non-account over any account count is unaffected by the account ceiling.
+    expect(
+      admitSpawn({
+        pressure: 'red',
+        isAccountSpawn: false,
+        residentAccountCount: 99,
+        residentAccountSoftCeiling: 3,
+      }),
+    ).toEqual({ admit: false, reason: 'red-pressure-non-account' });
+  });
+
+  it('an absent or non-positive ceiling is the M6 behavior (no advisory)', () => {
+    expect(admitSpawn({ pressure: 'normal', isAccountSpawn: true, residentAccountCount: 20 })).toEqual({
+      admit: true,
+    });
+    expect(
+      admitSpawn({
+        pressure: 'normal',
+        isAccountSpawn: true,
+        residentAccountCount: 20,
+        residentAccountSoftCeiling: 0,
+      }),
+    ).toEqual({ admit: true });
+  });
+});
+
 /** Deterministic PRNG for the property test (no external dep). */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;

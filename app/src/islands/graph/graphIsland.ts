@@ -27,7 +27,7 @@
 import type { ContextGraphTouch } from '@aibender/protocol';
 import { createCameraController, type CameraController } from './camera.ts';
 import { createLayoutBridge, type LayoutBridgeOptions } from './layoutBridge.ts';
-import { GraphStore, type CommitScheduler } from './store.ts';
+import { GRAPH_NODE_CEILING, GraphStore, type CommitScheduler } from './store.ts';
 import { createPixiGraphRenderer } from './pixiRenderer.ts';
 import { readGraphTokenTheme, type GraphTokenTheme } from './theme.ts';
 import { GRAPH_NODE_KINDS } from './types.ts';
@@ -52,6 +52,14 @@ export interface GraphIslandOptions {
   reducedMotion?: boolean;
   /** Spawn-jitter seed (tests pin it). */
   seed?: number;
+  /**
+   * OS-5 live-node ceiling handed to the {@link GraphStore}. Defaults to
+   * {@link GRAPH_NODE_CEILING} so the long-lived cockpit evicts
+   * least-recently-touched context past the proven regime instead of growing
+   * unbounded. Tests pin a small value to exercise eviction cheaply; pass
+   * `Infinity` to opt out.
+   */
+  maxNodes?: number;
 }
 
 export interface GraphIslandSnapshot {
@@ -63,6 +71,14 @@ export interface GraphIslandSnapshot {
   readonly reducedMotion: boolean;
   readonly visibleKinds: readonly GraphNodeKind[];
   readonly focusedCluster: string | undefined;
+  /** OS-5 live-node ceiling in force (`Infinity` when unbounded). */
+  readonly maxNodes: number;
+  /**
+   * OS-5: cumulative count of nodes ELIDED by recency eviction since the last
+   * reset — drives the "older context elided" affordance. Zero until the
+   * ceiling is first crossed.
+   */
+  readonly elidedCount: number;
 }
 
 export interface GraphIslandHandle {
@@ -77,6 +93,13 @@ export interface GraphIslandHandle {
   /** Camera fly-to a node (Motion-eased; jump cut under reduced motion). */
   focusNode(nodeId: string, scale?: number): void;
   setReducedMotion(reduced: boolean): void;
+  /**
+   * OS-5: subscribe to recency-eviction events. The listener fires with the
+   * cumulative elided-node total whenever a commit drops nodes past the
+   * ceiling — the seam the chrome uses for the "older context elided"
+   * affordance. Returns an unsubscribe.
+   */
+  onElided(listener: (total: number) => void): () => void;
   snapshot(): GraphIslandSnapshot;
   beginStats(): void;
   readStats(): GraphRenderStats;
@@ -98,9 +121,14 @@ export function createGraphIsland(options: GraphIslandOptions): GraphIslandHandl
   const bridge = options.bridge ?? createLayoutBridge(options.bridgeOptions ?? {});
   let lastEpoch: PositionEpoch | undefined;
 
+  const maxNodes = options.maxNodes ?? GRAPH_NODE_CEILING;
+  let elidedCount = 0;
+  const elidedListeners = new Set<(total: number) => void>();
+
   const store = new GraphStore({
     ...(options.schedule !== undefined ? { schedule: options.schedule } : {}),
     ...(options.seed !== undefined ? { seed: options.seed } : {}),
+    maxNodes,
     positionOf: (index) => {
       const live = renderer.positionOf(index);
       if (live !== undefined) return live;
@@ -132,6 +160,13 @@ export function createGraphIsland(options: GraphIslandOptions): GraphIslandHandl
   const offBatch = store.onBatch((batch) => {
     renderer.applyBatch(batch);
     bridge.applyBatch(batch);
+    // OS-5: surface the "older context elided" affordance. A commit that
+    // evicts least-recently-touched nodes bumps the running total; the
+    // register/chrome seam subscribes to render the indicator.
+    if (batch.removedNodes.length > 0) {
+      elidedCount += batch.removedNodes.length;
+      for (const listener of [...elidedListeners]) listener(elidedCount);
+    }
     // Reduced motion = settled layout: converge off-screen, one epoch,
     // no live jiggle (blueprint §8 / DESIGN.md §3.5).
     if (reducedMotion) bridge.settle();
@@ -188,6 +223,11 @@ export function createGraphIsland(options: GraphIslandOptions): GraphIslandHandl
       if (reduced) bridge.settle();
     },
 
+    onElided(listener: (total: number) => void): () => void {
+      elidedListeners.add(listener);
+      return () => elidedListeners.delete(listener);
+    },
+
     snapshot(): GraphIslandSnapshot {
       return {
         nodeCount: store.nodeCount,
@@ -198,6 +238,8 @@ export function createGraphIsland(options: GraphIslandOptions): GraphIslandHandl
         reducedMotion,
         visibleKinds: [...visibleKinds],
         focusedCluster,
+        maxNodes,
+        elidedCount,
       };
     },
 
@@ -219,6 +261,7 @@ export function createGraphIsland(options: GraphIslandOptions): GraphIslandHandl
       camera.stop();
       offBatch();
       offEpoch();
+      elidedListeners.clear();
       store.dispose();
       bridge.dispose();
       renderer.dispose();

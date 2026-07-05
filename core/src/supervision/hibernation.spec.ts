@@ -92,4 +92,58 @@ describe('BE-9 idle hibernation', () => {
     });
     expect(plan).toEqual([]);
   });
+
+  it('default candidates carry isAccount:false (non-account idle hibernation)', () => {
+    const plan = planIdleHibernation({
+      sessions: [opencode],
+      lastActivityMs: new Map([['ses_oc', NOW - IDLE - 1]]),
+      nowMs: NOW,
+    });
+    expect(plan[0]?.isAccount).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OS-4: sustained-RED account CHECKPOINT hibernation (opt-in, reversible)
+// ---------------------------------------------------------------------------
+
+describe('OS-4 account checkpoint hibernation under sustained RED', () => {
+  const acctB: SupervisedSession = { ...account, sessionId: 'ses_acct_b', account: 'MAX_B', slot: 1 };
+
+  it('allowAccountUnderRed includes an idle account session, tagged isAccount:true', () => {
+    const plan = planIdleHibernation({
+      sessions: [account],
+      lastActivityMs: new Map([['ses_acct', NOW - IDLE - 1]]),
+      nowMs: NOW,
+      allowAccountUnderRed: true,
+    });
+    expect(plan.map((c) => c.sessionId)).toEqual(['ses_acct']);
+    expect(plan[0]?.isAccount).toBe(true);
+  });
+
+  it('drains NON-account sessions FIRST, then account sessions (relief order)', () => {
+    const plan = planIdleHibernation({
+      sessions: [account, opencode, acctB],
+      lastActivityMs: new Map([
+        ['ses_acct', NOW - IDLE * 3],
+        ['ses_acct_b', NOW - IDLE * 3],
+        ['ses_oc', NOW - IDLE * 3],
+      ]),
+      nowMs: NOW,
+      allowAccountUnderRed: true,
+    });
+    // Non-account (ses_oc) precedes the account sessions; accounts in slot order.
+    expect(plan.map((c) => c.sessionId)).toEqual(['ses_oc', 'ses_acct', 'ses_acct_b']);
+    expect(plan.map((c) => c.isAccount)).toEqual([false, true, true]);
+  });
+
+  it('a NON-idle account session is still not a candidate even under the RED opt-in', () => {
+    const plan = planIdleHibernation({
+      sessions: [account],
+      lastActivityMs: new Map([['ses_acct', NOW - 5000]]), // recently active
+      nowMs: NOW,
+      allowAccountUnderRed: true,
+    });
+    expect(plan).toEqual([]);
+  });
 });

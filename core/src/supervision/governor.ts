@@ -121,6 +121,21 @@ export interface GovernorOptions {
   readonly hysteresisMb?: number;
   /** Idle-hibernation window ms. Default 30 min. */
   readonly idleWindowMs?: number;
+  /**
+   * OS-4: the resident-account SOFT ceiling (generalizes the blueprint §11
+   * "3 account sessions" budget to N). At/above it, {@link Governor.admitSpawnNow}
+   * still admits an account spawn ([X1] absolute) but flags an amber advisory.
+   * Absent → no ceiling evaluated (the M6 3-account behavior exactly).
+   */
+  readonly residentAccountSoftCeiling?: number;
+  /**
+   * OS-4: consecutive RED ticks after which IDLE account sessions become
+   * eligible for reversible CHECKPOINT hibernation (never a shed). Requires a
+   * `hibernate` port. Default 0 = DISABLED (account sessions never
+   * auto-hibernate — the M6 rule). A positive value enables the sustained-RED
+   * relief; e.g. 3 ticks at a ~30 s cadence ≈ 90 s of sustained red.
+   */
+  readonly sustainedRedTicksForAccountHibernation?: number;
   /** Freshness of the supervision feed for the snapshot's `sources` array. */
   readonly sources?: readonly SourceFreshness[];
   readonly logger?: Logger;
@@ -171,6 +186,9 @@ export function createGovernor(options: GovernorOptions): Governor {
   const lastActivityMs = new Map<string, number>();
   const hibernated = new Set<string>();
   let lastPressure: PressureState = 'normal';
+  /** OS-4: consecutive RED ticks (for the sustained-RED account-hibernation gate). */
+  let consecutiveRedTicks = 0;
+  const accountHibernationRedTicks = options.sustainedRedTicksForAccountHibernation ?? 0;
 
   /** Resolve a session's wire target fields (account/backend) for a notice. */
   const targetOf = (sessionId: string): { account?: AccountLabel; backend?: Backend } => {
@@ -214,6 +232,8 @@ export function createGovernor(options: GovernorOptions): Governor {
     // 3. pressure band.
     const pressureVerdict = pressure.evaluate();
     lastPressure = pressureVerdict.state;
+    // OS-4: track sustained RED for the account-checkpoint-hibernation gate.
+    consecutiveRedTicks = lastPressure === 'red' ? consecutiveRedTicks + 1 : 0;
 
     // 4. sacrifice order under amber/red.
     const localModelResident = (options.localModel?.residentBytes() ?? 0) > 0;
@@ -279,24 +299,44 @@ export function createGovernor(options: GovernorOptions): Governor {
       }
     }
 
-    // 5. idle hibernation (never account sessions).
+    // 5. idle hibernation (never account sessions — UNLESS OS-4 sustained-RED
+    //    account CHECKPOINT hibernation is enabled and we are past the RED-tick
+    //    threshold; even then it is a reversible checkpoint, never a shed, and
+    //    it needs a hibernate port to be actionable).
+    const allowAccountUnderRed =
+      accountHibernationRedTicks > 0 &&
+      lastPressure === 'red' &&
+      consecutiveRedTicks >= accountHibernationRedTicks &&
+      options.hibernate !== undefined;
     const idleCandidates = planIdleHibernation({
       sessions: live,
       lastActivityMs,
       nowMs,
       alreadyHibernated: hibernated,
       idleWindowMs,
+      allowAccountUnderRed,
     });
     for (const candidate of idleCandidates) {
       try {
         await options.hibernate?.hibernate(candidate.sessionId);
         hibernated.add(candidate.sessionId);
         hibernatedNow.push(candidate.sessionId);
-        notices.push({
-          action: 'hibernate-non-account',
-          at: nowMs,
-          ...targetOf(candidate.sessionId),
-        });
+        // OS-4: a NON-account idle hibernation is a shed-vocabulary notice; an
+        // account CHECKPOINT hibernation is NOT a shed (the SHED_ACTIONS wire
+        // vocab is frozen and account sessions are never sheds), so it is
+        // recorded in the return set + logged, with no shed notice on the wire.
+        if (candidate.isAccount) {
+          options.logger?.info('account session checkpoint-hibernated under sustained RED [X1]', {
+            slot: sessions.get(candidate.sessionId)?.slot,
+            consecutiveRedTicks,
+          });
+        } else {
+          notices.push({
+            action: 'hibernate-non-account',
+            at: nowMs,
+            ...targetOf(candidate.sessionId),
+          });
+        }
       } catch (cause) {
         options.logger?.error('idle hibernate failed', {
           slot: sessions.get(candidate.sessionId)?.slot,
@@ -359,7 +399,18 @@ export function createGovernor(options: GovernorOptions): Governor {
       hibernated.delete(sessionId);
     },
     tick,
-    admitSpawnNow: (isAccountSpawn) => admitSpawn({ pressure: lastPressure, isAccountSpawn }),
+    admitSpawnNow: (isAccountSpawn) =>
+      admitSpawn({
+        pressure: lastPressure,
+        isAccountSpawn,
+        // OS-4: resident (live, non-hibernated) account count vs the soft ceiling.
+        residentAccountCount: [...sessions.values()].filter(
+          (s) => s.isAccountSession && !hibernated.has(s.sessionId),
+        ).length,
+        ...(options.residentAccountSoftCeiling !== undefined
+          ? { residentAccountSoftCeiling: options.residentAccountSoftCeiling }
+          : {}),
+      }),
     pressureState: () => lastPressure,
     hibernatedIds: () => [...hibernated],
   };

@@ -456,8 +456,34 @@ export function createPixiGraphRenderer(options: PixiGraphRendererOptions): Pixi
 
     applyBatch(batch: GraphMutationBatch): void {
       runOrQueue(() => {
-        if (2 * batch.nodeCount > shown.length) {
-          const grown = new Float32Array(2 * Math.max(batch.nodeCount, 16));
+        // OS-5: tombstone evicted nodes FIRST. Destroy the sprite + halo (frees
+        // the heavy Pixi objects), null the slot (frame loops skip undefined
+        // visuals), drop any phosphor entry, and cull incident edges from the
+        // per-frame edge set — the render cost that grows superlinearly. The
+        // dense index axis is NOT compacted: `shown` keeps the slot, so every
+        // surviving node's position offset stays put.
+        if (batch.removedNodes.length > 0) {
+          const dead = new Set(batch.removedNodes);
+          for (const index of batch.removedNodes) {
+            const v = visuals[index];
+            if (v === undefined) continue;
+            v.sprite.destroy();
+            v.halo.destroy();
+            delete visuals[index];
+          }
+          for (let k = phosphor.length - 1; k >= 0; k--) {
+            if (dead.has((phosphor[k] as PhosphorEntry).index)) phosphor.splice(k, 1);
+          }
+          for (let k = edges.length - 1; k >= 0; k--) {
+            const e = edges[k] as EdgeEntry;
+            if (dead.has(e.sourceIndex) || dead.has(e.targetIndex)) edges.splice(k, 1);
+          }
+        }
+        // Size by the DENSE index high-water (indexCount), not the live count:
+        // a tombstoned slot keeps its position, so the array must still cover
+        // the largest index ever assigned (OS-5).
+        if (2 * batch.indexCount > shown.length) {
+          const grown = new Float32Array(2 * Math.max(batch.indexCount, 16));
           grown.set(shown);
           shown = grown;
         }

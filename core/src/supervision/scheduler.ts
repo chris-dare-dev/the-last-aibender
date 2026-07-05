@@ -153,10 +153,32 @@ export interface SpawnAdmissionInput {
    * spawns are ALWAYS admitted, at any pressure, even mid-shed [X1].
    */
   readonly isAccountSpawn: boolean;
+  /**
+   * OS-4: how many account sessions are currently RESIDENT (live, not
+   * hibernated). Optional — absent means "not tracked" and the soft ceiling is
+   * not evaluated (the M6 3-account behavior exactly). The governor supplies
+   * the live count.
+   */
+  readonly residentAccountCount?: number;
+  /**
+   * OS-4: the resident-account SOFT ceiling (config-derived, generalizes the
+   * blueprint §11 "3 account sessions" budget to N). At/above it, an account
+   * spawn is STILL admitted (the [X1] priority is absolute — an account is
+   * never refused) but carries an AMBER ADVISORY so the operator sees the
+   * back-pressure (blueprint §11 N-account math). Absent → no ceiling
+   * evaluated. A non-positive value disables it.
+   */
+  readonly residentAccountSoftCeiling?: number;
 }
 
+/**
+ * OS-4: an admission decision. `advisory` (present only on an admitted account
+ * spawn) surfaces resident-account back-pressure WITHOUT ever refusing the
+ * account — the [X1] "account spawns always honored" invariant is absolute; the
+ * soft ceiling is advisory back-pressure, never a hard gate.
+ */
 export type SpawnAdmission =
-  | { readonly admit: true }
+  | { readonly admit: true; readonly advisory?: 'resident-account-soft-ceiling' }
   | { readonly admit: false; readonly reason: 'red-pressure-non-account' };
 
 /**
@@ -164,9 +186,30 @@ export type SpawnAdmission =
  * spawns ... account spawns are still honored after shedding". An account
  * spawn is admitted unconditionally; a non-account spawn is refused ONLY at
  * red.
+ *
+ * OS-4 generalizes the "3 accounts" budget to N: when a resident-account SOFT
+ * ceiling is configured and the live account count is at/over it, an account
+ * spawn is STILL admitted but flagged with an amber `advisory` — surfacing
+ * back-pressure so the operator can hibernate an idle account before the
+ * footprint envelope is exhausted. The account is NEVER refused (that would
+ * break [X1]); the advisory is the only new signal.
  */
 export function admitSpawn(input: SpawnAdmissionInput): SpawnAdmission {
-  if (input.isAccountSpawn) return { admit: true }; // NEVER refused [X1]
+  if (input.isAccountSpawn) {
+    // NEVER refused [X1]. Surface the soft-ceiling advisory when configured
+    // and the resident account count is at/over it.
+    const ceiling = input.residentAccountSoftCeiling;
+    const resident = input.residentAccountCount;
+    if (
+      ceiling !== undefined &&
+      ceiling > 0 &&
+      resident !== undefined &&
+      resident >= ceiling
+    ) {
+      return { admit: true, advisory: 'resident-account-soft-ceiling' };
+    }
+    return { admit: true };
+  }
   if (input.pressure === 'red') return { admit: false, reason: 'red-pressure-non-account' };
   return { admit: true };
 }

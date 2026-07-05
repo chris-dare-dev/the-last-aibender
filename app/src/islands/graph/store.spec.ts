@@ -278,6 +278,173 @@ describe('GraphStore — fixture invariants', () => {
   });
 });
 
+describe('GraphStore — OS-5 recency eviction', () => {
+  // Each touch names a unique session + a unique file → 2 nodes, 1 edge per
+  // touch, so `n` distinct touches build 2n nodes deterministically.
+  const distinct = (n: number, startTs = 1): ContextGraphTouch[] =>
+    Array.from({ length: n }, (_, i) => touch(`ses-${i}`, `/synthetic/f-${i}.md`, 'read', startTs + i));
+
+  it('is UNBOUNDED by default — the 5k soak keeps its exact count', () => {
+    const store = new GraphStore({ schedule: manualScheduler().schedule });
+    expect(store.maxNodeCount).toBe(Infinity);
+  });
+
+  it('never exceeds the ceiling after a commit, and reports removedNodes', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 6 });
+    const batches: GraphMutationBatch[] = [];
+    store.onBatch((b) => batches.push(b));
+
+    // 5 distinct touches = 10 nodes → 4 over the ceiling of 6.
+    store.applyTouches(distinct(5));
+    s.flush();
+
+    expect(store.nodeCount).toBe(6);
+    expect(store.nodeCount).toBeLessThanOrEqual(store.maxNodeCount);
+    expect(batches[0]?.removedNodes).toHaveLength(4);
+    // The commit reported at most `ceiling` live nodes as net-added.
+    expect(batches[0]?.nodeCount).toBe(6);
+  });
+
+  it('evicts the LEAST-recently-touched nodes first (ascending ts)', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 4 });
+
+    // Window 1: two sessions each touching one file at ascending ts.
+    //   ses-old @1 → f-old   (oldest)
+    //   ses-new @9 → f-new   (newest)
+    store.applyTouches([
+      touch('ses-old', '/synthetic/old.md', 'read', 1),
+      touch('ses-new', '/synthetic/new.md', 'read', 9),
+    ]);
+    s.flush();
+    expect(store.nodeCount).toBe(4); // exactly the ceiling, no eviction yet
+
+    // Window 2: one more session+file at the NEWEST ts → 6 nodes, 2 over.
+    // The two OLDEST-touched (ses-old @1, old.md @1) must be the victims.
+    const batches: GraphMutationBatch[] = [];
+    store.onBatch((b) => batches.push(b));
+    store.applyTouches([touch('ses-z', '/synthetic/z.md', 'read', 20)]);
+    s.flush();
+
+    expect(store.nodeCount).toBe(4);
+    expect(store.nodeById(sessionNodeId('ses-old'))).toBeUndefined();
+    expect(store.nodeById(artifactNodeId('/synthetic/old.md'))).toBeUndefined();
+    // The newer set survives.
+    expect(store.nodeById(sessionNodeId('ses-new'))).toBeDefined();
+    expect(store.nodeById(artifactNodeId('/synthetic/new.md'))).toBeDefined();
+    expect(store.nodeById(sessionNodeId('ses-z'))).toBeDefined();
+    expect(batches[0]?.removedNodes).toHaveLength(2);
+  });
+
+  it('a re-touched node is protected from eviction (recency refresh)', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 4 });
+    // Build the oldest artifact first.
+    store.applyTouches([touch('ses-a', '/synthetic/keep.md', 'read', 1)]);
+    s.flush();
+    // A second, newer session+file.
+    store.applyTouches([touch('ses-b', '/synthetic/other.md', 'read', 5)]);
+    s.flush();
+    expect(store.nodeCount).toBe(4);
+
+    // Re-touch the OLDEST artifact at the newest ts — it must now outrank the
+    // ses-a session (ts 1) as the eviction candidate.
+    store.applyTouches([
+      touch('ses-c', '/synthetic/keep.md', 'read', 30), // re-touch keep.md (+ new session ses-c)
+    ]);
+    s.flush();
+
+    expect(store.nodeCount).toBe(4);
+    // keep.md was re-touched at ts 30 → survives.
+    expect(store.nodeById(artifactNodeId('/synthetic/keep.md'))).toBeDefined();
+    // ses-a (ts 1) was the least-recent → evicted.
+    expect(store.nodeById(sessionNodeId('ses-a'))).toBeUndefined();
+  });
+
+  it('drops incident edges of an evicted node (live edgeCount shrinks)', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 4 });
+    // Two independent session↔file pairs = 4 nodes / 2 edges.
+    store.applyTouches([
+      touch('ses-old', '/synthetic/old.md', 'read', 1),
+      touch('ses-new', '/synthetic/new.md', 'read', 9),
+    ]);
+    s.flush();
+    expect(store.edgeCount).toBe(2);
+
+    // Push over: the ses-old pair (+ its 1 edge) is evicted.
+    store.applyTouches([touch('ses-z', '/synthetic/z.md', 'read', 20)]);
+    s.flush();
+    expect(store.nodeCount).toBe(4);
+    expect(store.edgeCount).toBe(2); // old edge gone, z edge added
+  });
+
+  it('keeps the dense index axis stable (indexCount grows, nodeCount bounded)', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 4 });
+    const batches: GraphMutationBatch[] = [];
+    store.onBatch((b) => batches.push(b));
+
+    // 6 distinct touches over several windows = 12 nodes total assigned.
+    for (let i = 0; i < 6; i++) {
+      store.applyTouches([touch(`ses-${i}`, `/synthetic/f-${i}.md`, 'read', i + 1)]);
+      s.flush();
+    }
+    // Live count is pinned at the ceiling…
+    expect(store.nodeCount).toBe(4);
+    // …but the dense high-water keeps climbing (12 total indices assigned):
+    // a survivor's layout offset never shifts.
+    const last = batches[batches.length - 1];
+    expect(last?.indexCount).toBe(12);
+    expect(last?.indexCount).toBeGreaterThan(last?.nodeCount ?? 0);
+    // nodeByIndex tolerates tombstoned slots (returns undefined, never throws).
+    expect(store.nodeByIndex(0)).toBeUndefined(); // ses-0 was evicted long ago
+  });
+
+  it('reconciles a single over-ceiling batch: never adds AND removes a node', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 3 });
+    const batches: GraphMutationBatch[] = [];
+    store.onBatch((b) => batches.push(b));
+
+    // One window with 5 distinct touches = 10 nodes, ceiling 3.
+    store.applyTouches(distinct(5));
+    s.flush();
+
+    expect(store.nodeCount).toBe(3);
+    const b = batches[0];
+    expect(b).toBeDefined();
+    // No index appears in both addedNodes and removedNodes.
+    const added = new Set(b?.addedNodes.map((n) => n.index));
+    for (const idx of b?.removedNodes ?? []) expect(added.has(idx)).toBe(false);
+    // Every reported added edge references only surviving (net-added or extant) indices.
+    const removed = new Set(b?.removedNodes ?? []);
+    for (const e of b?.addedEdges ?? []) {
+      expect(removed.has(e.sourceIndex)).toBe(false);
+      expect(removed.has(e.targetIndex)).toBe(false);
+    }
+  });
+
+  it('rejects a ceiling below 1', () => {
+    expect(() => new GraphStore({ maxNodes: 0 })).toThrow(/maxNodes/);
+  });
+
+  it('reset restores an unevicted dense axis from 0', () => {
+    const s = manualScheduler();
+    const store = new GraphStore({ schedule: s.schedule, maxNodes: 4 });
+    store.applyTouches(distinct(5));
+    s.flush();
+    expect(store.nodeCount).toBe(4);
+    store.reset();
+    store.applyTouches([touch('ses-fresh', '/synthetic/fresh.md', 'read', 1)]);
+    s.flush();
+    // Index restarts dense from 0 after reset.
+    expect(store.nodeById(sessionNodeId('ses-fresh'))?.index).toBe(0);
+    expect(store.nodeCount).toBe(2);
+  });
+});
+
 describe('GraphStore — default scheduler shape', () => {
   it('falls back to the 150 ms window where rAF is absent', async () => {
     vi.useFakeTimers();

@@ -18,6 +18,7 @@ import { InstrumentStack } from './InstrumentStack.tsx';
 import { ObservabilityDock } from './ObservabilityDock.tsx';
 import { SettingsView } from './SettingsView.tsx';
 import { StatusBar } from './StatusBar.tsx';
+import { WorkstreamsDock } from './WorkstreamsDock.tsx';
 import { WorkSurface } from './WorkSurface.tsx';
 
 export interface ChromeProps {
@@ -34,6 +35,8 @@ export function Chrome({ client }: ChromeProps): ReactNode {
         <div className="ig-cockpit">
           <aside className="ig-zone ig-zone-left" aria-label="fleet zone">
             <FleetPanel />
+            {/* workstream tree below the session list (DESIGN.md §4.1 left zone) */}
+            <WorkstreamsDock />
           </aside>
           <main className="ig-zone ig-zone-center" aria-label="work zone">
             <WorkSurface />

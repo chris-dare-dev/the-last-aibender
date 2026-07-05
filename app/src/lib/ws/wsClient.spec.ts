@@ -12,7 +12,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { encodePtyFrame } from '@aibender/protocol';
+import { encodePtyFrame, type WorkstreamMergeRequest } from '@aibender/protocol';
 import { nullLogger } from '../log.ts';
 import {
   FAKE_GATEWAY_TOKEN,
@@ -233,6 +233,23 @@ describe('reconnect-replay watermarks (edge)', () => {
     expect(sent).toContain(
       encodeEnvelope('events', 0, { kind: 'replay-request', channel: 'events', fromSeq: 0 }),
     );
+    // WORKSTREAM + CONTEXT_GRAPH joined at M4: retained §16.5 list/detail
+    // snapshots hydrate the lineage view, and the retained touch window
+    // warm-starts the graph island's activity read model.
+    expect(sent).toContain(
+      encodeEnvelope('workstream', 0, {
+        kind: 'replay-request',
+        channel: 'workstream',
+        fromSeq: 0,
+      }),
+    );
+    expect(sent).toContain(
+      encodeEnvelope('context-graph', 0, {
+        kind: 'replay-request',
+        channel: 'context-graph',
+        fromSeq: 0,
+      }),
+    );
   });
 
   it('resumes from lastSeq+1 and drops replayed duplicates exactly-once', async () => {
@@ -293,6 +310,44 @@ describe('reconnect-replay watermarks (edge)', () => {
     expect(
       socket.sentTexts.some((f) => f.includes('transcript.ses_fake_1') && f.includes('replay-request')),
     ).toBe(false);
+  });
+});
+
+describe('workstream merge sender (ws-protocol.md §16.2)', () => {
+  const mergeRequest: WorkstreamMergeRequest = {
+    kind: 'workstream-merge-request',
+    mergeId: 'mrg_fe_spec_1',
+    params: {
+      parents: ['ses_fake_1', 'ses_fake_2'],
+      accountLabel: 'MAX_A',
+      backend: 'claude_code',
+      cwd: '/synth/dir',
+      purpose: 'merge sender spec',
+      briefBody: '## synthesized merge brief\n\npaths + session ids only.',
+    },
+  };
+
+  it('rides the workstream channel with the sendApprovalDecision mirror (positive)', async () => {
+    const h = harness();
+    await connect(h);
+    expect(h.client.sendWorkstreamMergeRequest(mergeRequest)).toBe(true);
+    // seq 1: the first-connect replay-request took seq 0 on this channel.
+    expect(h.hub.latest.sentTexts).toContain(encodeEnvelope('workstream', 1, mergeRequest));
+  });
+
+  it('returns false while not connected — the unsendable posture, never a throw (negative)', () => {
+    const h = harness(undefined);
+    h.client.start();
+    expect(h.client.sendWorkstreamMergeRequest(mergeRequest)).toBe(false);
+  });
+
+  it('satisfies the FE-6 sender port structurally (compile-enforced pin)', () => {
+    const h = harness();
+    // The features/workstreams/ports.ts WorkstreamMergeSender shape, inlined
+    // (lib never imports features): registerWorkstreams detects this method
+    // structurally, so the deck wires merge dispatch with no FE-6 change.
+    const sender: { sendWorkstreamMergeRequest(r: WorkstreamMergeRequest): boolean } = h.client;
+    expect(typeof sender.sendWorkstreamMergeRequest).toBe('function');
   });
 });
 

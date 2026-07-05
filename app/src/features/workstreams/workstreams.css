@@ -1,0 +1,217 @@
+/*
+ * Workstream lineage view (FE-6, M4). Token-locked: every value is a
+ * var(--ig-*) custom property or a plain layout primitive — no literals
+ * (DESIGN.md §8.5). The graph lives on the character grid (§4.3): rows on
+ * the --ig-grid-row rhythm, the rail gutter in fixed px that matches the
+ * SVG coordinate space (RAIL_* constants in WorkstreamsDeck.tsx).
+ */
+
+.ig-ws-deck {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- rail (workstream list) ---------------------------------------------- */
+
+.ig-ws-rail-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+  cursor: pointer;
+}
+
+.ig-ws-rail-row[data-selected='true'] {
+  background: var(--ig-status-ok-tint);
+}
+
+.ig-ws-rail-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- lineage graph --------------------------------------------------------- */
+
+.ig-ws-graph {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* the rail gutter: SVG px space aligned to the 20px row rhythm */
+.ig-ws-rails {
+  flex: none;
+}
+
+.ig-ws-rails path {
+  fill: none;
+  stroke: var(--ig-line-emphasis);
+  stroke-width: var(--ig-line-width);
+}
+
+.ig-ws-rails path[data-confidence='inferred'] {
+  stroke: var(--ig-ink-faint);
+  stroke-dasharray: 0.04, 0.02; /* normalized: paths carry pathLength=1 */
+}
+
+/* THE ceremony, phase 1 (DESIGN.md §3.3): the committed edge draws itself
+ * along the rail — stroke-dashoffset sweep, 480ms, mechanical ease. Under
+ * prefers-reduced-motion the duration token is 0ms: the edge renders settled
+ * in one step (§3.5 discrete mapping). */
+.ig-ws-rails path.ig-ws-ceremony-edge {
+  stroke: var(--ig-accent);
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: ig-ws-edge-draw var(--ig-motion-ceremony-lineage-duration) var(--ig-ease-mechanical)
+    forwards;
+}
+
+@keyframes ig-ws-edge-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.ig-ws-rows {
+  flex: 1;
+  min-width: 0;
+}
+
+.ig-ws-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ig-ws-row[data-selected='true'] {
+  background: var(--ig-status-ok-tint);
+}
+
+/* recorded vs inferred (detached-HEAD orphans reconciled from outside):
+ * inferred nodes are DIMMED and their ring is dashed — a distinct visual
+ * register from recorded lineage, never color-only (the INF text marker
+ * rides every row, DESIGN.md §9). */
+.ig-ws-row[data-confidence='inferred'] {
+  color: var(--ig-ink-muted);
+}
+
+.ig-ws-row[data-confidence='inferred'] .ig-ws-node-ring {
+  border-style: dashed;
+  color: var(--ig-ink-faint);
+}
+
+/* the node ring: channel index hue at rest (identity tick — hairline scale).
+ * --ig-ws-hue is set per row from the frozen account→channel token map. */
+.ig-ws-node-ring {
+  flex: none;
+  width: var(--ig-space-8);
+  height: var(--ig-space-8);
+  border: var(--ig-line-width) solid currentColor;
+  border-radius: var(--ig-radius-1);
+  color: var(--ig-ws-hue, var(--ig-ink-muted));
+}
+
+/* THE ceremony, phase 2 (§3.3): on draw completion the terminal node ring
+ * lights amber instantly and phosphor-decays (§3.2) to the channel hue at
+ * rest. Color-only animation; delay = draw duration + 80ms hold. Under
+ * reduced motion both duration tokens are 0ms — the ring lands settled; the
+ * discrete static-ring variant is applied by the component (§3.5). */
+.ig-ws-ceremony-ring {
+  animation: ig-ws-ring-decay var(--ig-motion-phosphor-decay-duration) var(--ig-ease-decay)
+    calc(var(--ig-motion-ceremony-lineage-duration) + 80ms) both;
+}
+
+@keyframes ig-ws-ring-decay {
+  from {
+    color: var(--ig-accent);
+  }
+  to {
+    color: var(--ig-ws-hue, var(--ig-ink-muted));
+  }
+}
+
+/* §3.5 discrete variant: static amber ring, removed in one step (no tween). */
+.ig-ws-row[data-ceremony-static='true'] .ig-ws-node-ring {
+  color: var(--ig-accent);
+}
+
+.ig-ws-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- brief viewer ----------------------------------------------------------- */
+
+.ig-ws-brief-body {
+  margin: 0;
+  padding: var(--ig-space-8) 0;
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ig-ink-secondary);
+}
+
+/* ---- merge panel ------------------------------------------------------------ */
+
+.ig-ws-merge-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+}
+
+.ig-ws-merge-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.ig-ws-brief-editor {
+  width: 100%;
+  min-height: calc(var(--ig-grid-row) * 4);
+  resize: vertical;
+}
+
+/* instrument form fields — hairline wells, never cards (DESIGN.md §2.6) */
+.ig-ws-input {
+  background: var(--ig-surface-well);
+  color: var(--ig-ink-primary);
+  border: var(--ig-line-width) solid var(--ig-line-hairline);
+  border-radius: var(--ig-radius-1);
+  font-family: var(--ig-font-mono);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  padding: 0 var(--ig-space-4);
+}
+
+.ig-ws-input:focus {
+  outline: var(--ig-focus-outline);
+  outline-offset: var(--ig-focus-offset);
+}
+
+/* ---- advisory strip (an instrument state, never a toast) --------------------- */
+
+.ig-ws-advisory {
+  display: flex;
+  align-items: center;
+  gap: var(--ig-space-8);
+  min-height: var(--ig-grid-row);
+  padding: 0 var(--ig-space-8);
+  background: var(--ig-status-degraded-tint);
+  font-size: var(--ig-type-data);
+  line-height: var(--ig-type-data-lh);
+  font-variant-numeric: var(--ig-numeric);
+}

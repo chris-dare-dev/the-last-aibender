@@ -150,6 +150,14 @@ export function builtinCommands(): readonly CommandSpec[] {
       keywords: 'right zone channels panels',
       run: () => ui().toggleInstrumentsOverlay(),
     },
+    {
+      // DESIGN.md §6 kill-switch rule: the work-surface GRAPH toggle
+      // (WorkSurface.tsx header) must be reachable in two keystrokes.
+      id: 'chrome.work.graph.toggle',
+      title: 'toggle graph view',
+      keywords: 'context graph island center work surface lineage',
+      run: () => ui().toggleGraphView(),
+    },
     ...channelOrder.map((channel) => ({
       id: `chrome.channel.focus.${channel}`,
       title: `focus channel ${channel}`,

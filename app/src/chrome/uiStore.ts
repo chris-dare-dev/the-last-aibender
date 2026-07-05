@@ -7,6 +7,13 @@
 import { createStore } from 'zustand/vanilla';
 import type { ChannelId } from './theme/tokens.ts';
 
+/**
+ * Center-zone work-surface views (DESIGN.md §4.1: "Center — work: active
+ * session (terminal/transcript), graph, builder"). `session` = the selected
+ * session's substrate island; `graph` = the FE-4 context-graph island.
+ */
+export type WorkSurfaceView = 'session' | 'graph';
+
 export interface UiState {
   readonly paletteOpen: boolean;
   readonly settingsOpen: boolean;
@@ -14,6 +21,8 @@ export interface UiState {
   readonly focusedChannel: ChannelId | undefined;
   /** Compact-breakpoint overlay toggle for the instruments zone. */
   readonly instrumentsOverlayOpen: boolean;
+  /** Which view occupies the center work surface. */
+  readonly workSurfaceView: WorkSurfaceView;
   openPalette(): void;
   closePalette(): void;
   togglePalette(): void;
@@ -22,6 +31,8 @@ export interface UiState {
   selectSession(sessionId: string | undefined): void;
   focusChannel(channel: ChannelId | undefined): void;
   toggleInstrumentsOverlay(): void;
+  setWorkSurfaceView(view: WorkSurfaceView): void;
+  toggleGraphView(): void;
 }
 
 export const uiStore = createStore<UiState>()((set) => ({
@@ -30,6 +41,7 @@ export const uiStore = createStore<UiState>()((set) => ({
   selectedSessionId: undefined,
   focusedChannel: undefined,
   instrumentsOverlayOpen: false,
+  workSurfaceView: 'session',
   openPalette: () => set({ paletteOpen: true }),
   closePalette: () => set({ paletteOpen: false }),
   togglePalette: () => set((s) => ({ paletteOpen: !s.paletteOpen })),
@@ -39,6 +51,9 @@ export const uiStore = createStore<UiState>()((set) => ({
   focusChannel: (focusedChannel) => set({ focusedChannel }),
   toggleInstrumentsOverlay: () =>
     set((s) => ({ instrumentsOverlayOpen: !s.instrumentsOverlayOpen })),
+  setWorkSurfaceView: (workSurfaceView) => set({ workSurfaceView }),
+  toggleGraphView: () =>
+    set((s) => ({ workSurfaceView: s.workSurfaceView === 'graph' ? 'session' : 'graph' })),
 }));
 
 export type UiStore = typeof uiStore;

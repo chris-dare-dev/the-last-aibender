@@ -32,6 +32,7 @@ import {
   type LaunchRequest,
   type ResumeRequest,
   type StatusRequest,
+  type WorkstreamMergeRequest,
 } from '@aibender/protocol';
 import {
   bootIdentityOf,
@@ -170,8 +171,19 @@ export class GatewayClient {
     // EVENTS joined the default set at M3 (BE-ORCH stewarding, FE-5 request):
     // the retained read-model snapshots replay on the first connect of a
     // broker boot so the observability instruments hydrate immediately.
-    this.replayFromZero =
-      options.replayFromZeroOnFirstConnect ?? [CHANNEL.APPROVALS, CHANNEL.QUOTA, CHANNEL.EVENTS];
+    // WORKSTREAM + CONTEXT_GRAPH joined at M4 (BE-ORCH stewarding, FE-6/FE-4
+    // requests — the exact events-channel precedent): the retained §16.5
+    // list/detail snapshots hydrate the lineage view on the first connect of
+    // a broker boot, and the retained context-graph touch window warm-starts
+    // the graph island's activity read model (bounded + honest — below-floor
+    // history answers `watermark-out-of-range`, logged and harmless, §8).
+    this.replayFromZero = options.replayFromZeroOnFirstConnect ?? [
+      CHANNEL.APPROVALS,
+      CHANNEL.QUOTA,
+      CHANNEL.EVENTS,
+      CHANNEL.WORKSTREAM,
+      CHANNEL.CONTEXT_GRAPH,
+    ];
   }
 
   // -- observability ---------------------------------------------------------
@@ -429,6 +441,16 @@ export class GatewayClient {
   /** Approval decisions ride the approvals channel (ws-protocol.md §10.2). */
   sendApprovalDecision(decision: ApprovalDecision): boolean {
     return this.sendOn(CHANNEL.APPROVALS, decision);
+  }
+
+  /**
+   * Merge requests ride the workstream channel (ws-protocol.md §16.2 — THE
+   * one lineage verb the FE sends; the sendApprovalDecision mirror). Returns
+   * false when not connected: the caller renders the unsendable instrument
+   * state (FE-6 ports.ts WorkstreamMergeSender) — nothing throws.
+   */
+  sendWorkstreamMergeRequest(request: WorkstreamMergeRequest): boolean {
+    return this.sendOn(CHANNEL.WORKSTREAM, request);
   }
 
   /** Open (or fetch) the PTY byte conduit for a session. */

@@ -20,6 +20,8 @@ import './chrome/chrome.css';
 import { Chrome } from './chrome/Chrome.tsx';
 import { registerAppIslands } from './composition/registerIslands.tsx';
 import { registerObservability } from './features/observability/index.ts';
+import { registerWorkstreams } from './features/workstreams/index.ts';
+import { registerGraphIsland } from './islands/graph/index.ts';
 import { bindClientToStores } from './lib/stores/bind.ts';
 import { nativeBootstrapProvider, notifyNative } from './lib/native/tauriBridge.ts';
 import { GatewayClient } from './lib/ws/wsClient.ts';
@@ -27,10 +29,19 @@ import { GatewayClient } from './lib/ws/wsClient.ts';
 const client = new GatewayClient({ bootstrapProvider: nativeBootstrapProvider });
 bindClientToStores(client);
 registerAppIslands(client);
+// FE-4 graph island (M4): registers the 'graph' slot (reachable through the
+// work-surface GRAPH view toggle), binds the context-graph channel per
+// mount, warm-starts from contextGraphStore.recent, rebuilds the scene on
+// broker restart, and registers the 'focus context graph' palette verb.
+registerGraphIsland(client);
 // FE-5 observability feature (M3): binds the events channel, occupies the
 // chrome's 'observability' island slot, registers the palette verb. The app
 // never disposes it — the returned teardown is for tests.
 registerObservability(client);
+// FE-6 workstream lineage (M4): binds the workstream channel, occupies the
+// chrome's 'workstreams' island slot (left zone dock), registers the palette
+// verb; the merge sender is detected structurally on the client.
+registerWorkstreams(client);
 
 // Native affordance glue: approval arrivals raise a system notification
 // (tray/notification only — never a streaming path, blueprint §2).

@@ -186,20 +186,6 @@ export interface EventsAggregatesStore {
 // ---------------------------------------------------------------------------
 
 export function createEventsAggregatesStore(driver: SqliteDriver): EventsAggregatesStore {
-  // A COUNT-only grouped query that preserves the JS Map's first-appearance
-  // order — tags each row with its (ts_ms, id) scan position and orders groups
-  // by the MIN. Safe from the 2^53 marshaling throw because it only COUNTs
-  // (a count cannot approach 2^53). Token SUMS are NEVER done this way — see the
-  // module doc, point 2.
-  const groupedCount = (select: string, groupCol: string): string =>
-    `SELECT ${select}
-       FROM (
-         SELECT *, ROW_NUMBER() OVER (ORDER BY ts_ms, id) AS __rn
-         FROM events WHERE ts_ms >= ?
-       )
-      GROUP BY ${groupCol}
-      ORDER BY MIN(__rn)`;
-
   const decodeAccount = (value: SqlValue | undefined): AccountLabel => {
     if (!isAccountLabel(value)) throw new Error('events aggregate: bad account decode');
     return value;
@@ -244,18 +230,26 @@ export function createEventsAggregatesStore(driver: SqliteDriver): EventsAggrega
       }));
     },
 
+    // COUNT-only aggregation (each count is bounded by the row count → can never
+    // approach 2^53, so it's safe from the marshaling throw; token SUMS are never
+    // done in SQL — module doc, point 2). First-appearance source order is
+    // preserved via ROW_NUMBER() OVER (ORDER BY ts_ms, id) + MIN(__rn). The inner
+    // subquery selects ONLY the columns the CASE-counts need (not `SELECT *`) —
+    // the window ORDER BY still references ts_ms/id directly.
     healthCountsBySource: (sinceTsMs) =>
       driver
         .prepare(
-          groupedCount(
-            'source, ' +
-              // errorKind 'error' OR (no kind AND ok=0) — the projection's default arm.
-              "SUM(CASE WHEN error_kind='error' OR (error_kind IS NULL AND ok=0) THEN 1 ELSE 0 END) AS errs, " +
-              "SUM(CASE WHEN error_kind='retry' THEN 1 ELSE 0 END) AS retries, " +
-              "SUM(CASE WHEN error_kind='throttle' THEN 1 ELSE 0 END) AS throttles, " +
-              "SUM(CASE WHEN error_kind='timeout' THEN 1 ELSE 0 END) AS timeouts",
-            'source',
-          ),
+          `SELECT source,
+                  SUM(CASE WHEN error_kind='error' OR (error_kind IS NULL AND ok=0) THEN 1 ELSE 0 END) AS errs,
+                  SUM(CASE WHEN error_kind='retry' THEN 1 ELSE 0 END) AS retries,
+                  SUM(CASE WHEN error_kind='throttle' THEN 1 ELSE 0 END) AS throttles,
+                  SUM(CASE WHEN error_kind='timeout' THEN 1 ELSE 0 END) AS timeouts
+             FROM (
+               SELECT source, error_kind, ok, ROW_NUMBER() OVER (ORDER BY ts_ms, id) AS __rn
+               FROM events WHERE ts_ms >= ?
+             )
+            GROUP BY source
+            ORDER BY MIN(__rn)`,
         )
         .all(sinceTsMs)
         .map(

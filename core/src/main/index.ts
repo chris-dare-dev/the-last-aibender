@@ -1178,8 +1178,19 @@ export function main(out: (line: string) => void = console.log): number {
   return 0;
 }
 
-// Executed directly (`pnpm --filter aibender-core start`)? Run and exit.
+// Executed directly (`pnpm --filter aibender-core start`)? The `boot` subcommand
+// runs the live daemon (the operator/launchd path — boot.ts); anything else keeps
+// the side-effect-free stub (no implicit machine-local writes).
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  process.exitCode = main();
+  if (process.argv[2] === 'boot') {
+    // Dynamic import so index.ts carries no static dependency on the boot slice
+    // (boot.ts imports composeBroker from here — one direction only).
+    void (async (): Promise<void> => {
+      const { resolveBootConfig, runDaemon } = await import('./boot.js');
+      await runDaemon(resolveBootConfig());
+    })();
+  } else {
+    process.exitCode = main();
+  }
 }

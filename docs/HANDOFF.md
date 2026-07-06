@@ -25,6 +25,14 @@
 > write-amplification not justified yet; cadence + dirty-set recompute documented as timer-coupled
 > follow-ons). OS-6 — the `ApiRequestJoiner` pending map is now hard-capped with oldest-first eviction, an
 > opt-in independent flush timer + `close()`, and a copy-free flush. **No known code findings remain open.**
+> **LIVE-BOOT daemon landed (2026-07-05, `core/src/main/boot.ts` + the `boot` subcommand):** `main()`'s
+> stub is replaced by a real daemon (`pnpm -F aibender-core boot`) — opens the on-disk kernel+events stores,
+> discovers the account registry, composes the broker, writes the discovery bootstrap, ticks the read-model
+> publisher on a timer, clean SIGINT/SIGTERM shutdown. SAFE BY DEFAULT: `AIBENDER_LIVE_SPAWN`/`AIBENDER_LIVE_PTY`
+> gate the real spawn/PTY (off → composed runner refuses, no quota), fully fake-tested (`boot.spec.ts`, incl. a
+> WS round-trip). Runbook: `docs/runbooks/live-boot.md`. **v2 wire (needs live-system ports, each opt-in-gated):**
+> the full BE-5 collector fleet (dashboards render NO-SIGNAL until it feeds the store), supervision governor
+> (real macOS sampler → resource-health NO SIGNAL), pipeline executor fan-out. First live bring-up is owner-driven.
 > Adding a Claude account OR a backend is a pure data change (`add-an-account.md` / `add-a-backend.md`).
 > **Machine:** the owner's MacBook Pro (Apple M4 Max, 14 cores, 36 GB RAM, macOS 26.6).
 > **Repo (local):** `~/Personal/SourceCode/the-last-aibender` — public GitHub repo

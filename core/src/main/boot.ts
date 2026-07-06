@@ -37,6 +37,7 @@
 
 import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { EventSummary, ReadModelSnapshot } from '@aibender/protocol';
 import { openEventsStore, type EventsStore } from '@aibender/schema';
@@ -66,6 +67,14 @@ import {
 export interface BootConfig {
   /** Machine-local home ($AIBENDER_HOME, else ~/.aibender). Bootstrap + db + hook-token live under it. */
   readonly aibenderHome: string;
+  /**
+   * The `infra/profiles/*.profile.json` manifest dir the account registry
+   * discovers Claude accounts from. MUST be resolved CWD-independently — the
+   * daemon runs from wherever launchd / `pnpm -F` sets CWD, not the repo root,
+   * and the registry yields an EMPTY set (→ no accounts) if it can't find this.
+   * Default: repo-anchored (relative to this module); `AIBENDER_PROFILES_DIR` overrides.
+   */
+  readonly profilesDir: string;
   /** Opt in to the REAL Claude SDK spawn path. Default false → composed runner refuses spawns. */
   readonly liveSpawn: boolean;
   /** Opt in to the REAL node-pty attended-PTY backend. Default false → no PTY sessions. */
@@ -82,6 +91,15 @@ export interface BootConfig {
 
 const DEFAULT_PUBLISH_INTERVAL_MS = 5_000;
 
+/**
+ * Repo-anchored `infra/profiles/` — resolved from THIS module's location, not
+ * the process CWD (the daemon runs from `core/` under `pnpm -F`, or an
+ * arbitrary dir under launchd). `core/src/main/boot.ts` → three levels up is the
+ * repo root. `AIBENDER_PROFILES_DIR` overrides for installs where the manifests
+ * live elsewhere.
+ */
+const REPO_PROFILES_DIR = fileURLToPath(new URL('../../../infra/profiles', import.meta.url));
+
 /** Resolve boot config from the environment (the launchd plist / shell exports it). */
 export function resolveBootConfig(
   env: Readonly<Record<string, string | undefined>> = process.env,
@@ -90,8 +108,13 @@ export function resolveBootConfig(
     v === '1' || v === 'true' || v === 'TRUE' || v === 'yes';
   const parsedInterval = Number.parseInt(env['AIBENDER_PUBLISH_INTERVAL_MS'] ?? '', 10);
   const parsedPort = Number.parseInt(env['AIBENDER_HOOKS_PORT'] ?? '', 10);
+  const profilesOverride = env['AIBENDER_PROFILES_DIR'];
   return {
     aibenderHome: aibenderHomePath({ env }),
+    profilesDir:
+      typeof profilesOverride === 'string' && profilesOverride.length > 0
+        ? profilesOverride
+        : REPO_PROFILES_DIR,
     liveSpawn: truthy(env['AIBENDER_LIVE_SPAWN']),
     livePty: truthy(env['AIBENDER_LIVE_PTY']),
     publishIntervalMs:
@@ -200,7 +223,12 @@ export async function bootBroker(config: BootConfig, deps: BootDeps = {}): Promi
     storePath: kernelStorePath,
     profiles: {
       aibenderHome: config.aibenderHome,
-      ...(deps.accountRegistry !== undefined ? { accountRegistry: deps.accountRegistry } : {}),
+      // Injected registry wins (tests); else discover from the resolved profiles
+      // dir (the account registry is EMPTY without an explicit dir — its default
+      // is undefined unless AIBENDER_PROFILES_DIR is set).
+      ...(deps.accountRegistry !== undefined
+        ? { accountRegistry: deps.accountRegistry }
+        : { accountRegistryOptions: { profilesDir: config.profilesDir } }),
     },
     // Injected runner wins (tests); else the SDK spawn path gated by liveSpawn.
     ...(deps.runner !== undefined

@@ -72,6 +72,7 @@ async function bootWithFakes(config: Partial<BootConfig> = {}, opts: { pty?: boo
       publishIntervalMs: 5_000,
       hooks: false,
       writeBootstrap: true,
+      profilesDir: '/synthetic/profiles', // unused: bootWithFakes injects accountRegistry
       ...config,
     },
     {
@@ -154,6 +155,8 @@ describe('resolveBootConfig', () => {
     expect(c.hooks).toBe(true);
     expect(c.writeBootstrap).toBe(true);
     expect(c.aibenderHome).toContain('.aibender');
+    // Repo-anchored profiles dir (CWD-independent), not undefined.
+    expect(c.profilesDir).toMatch(/infra\/profiles$/);
   });
 
   it('env overrides: AIBENDER_HOME, live gates, cadence, hooks-off, port', () => {
@@ -164,6 +167,7 @@ describe('resolveBootConfig', () => {
       AIBENDER_PUBLISH_INTERVAL_MS: '2500',
       AIBENDER_HOOKS: '0',
       AIBENDER_HOOKS_PORT: '4321',
+      AIBENDER_PROFILES_DIR: '/tmp/custom-profiles',
     });
     expect(c.aibenderHome).toBe('/tmp/synthetic-aibender');
     expect(c.liveSpawn).toBe(true);
@@ -171,6 +175,7 @@ describe('resolveBootConfig', () => {
     expect(c.publishIntervalMs).toBe(2500);
     expect(c.hooks).toBe(false);
     expect(c.hooksPort).toBe(4321);
+    expect(c.profilesDir).toBe('/tmp/custom-profiles');
   });
 
   it('ignores a non-positive / garbage publish interval (falls back to 5s)', () => {

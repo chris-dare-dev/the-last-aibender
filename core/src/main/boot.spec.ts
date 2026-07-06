@@ -8,7 +8,7 @@
  * client); and idempotent clean shutdown. [X2]: synthesized labels/paths only.
  */
 
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -53,9 +53,35 @@ interface Booted {
   intervalClosed: () => number;
 }
 
-async function bootWithFakes(config: Partial<BootConfig> = {}, opts: { pty?: boolean } = {}): Promise<Booted> {
+/** A disabled-by-default collector config so the standard fake boot starts no fleet / binds no port. */
+function collectorCfg(home: string, enabled: boolean): BootConfig['collectors'] {
+  return {
+    enabled,
+    jsonl: true,
+    quota: true,
+    otlp: false, // never bind :4318 under tests
+    pollMs: 2_000,
+    joinWindowMs: 15_000,
+    fullReconcileMs: 30_000,
+    otlpPort: 4318,
+    quotaDir: join(home, 'quota'),
+  };
+}
+
+async function bootWithFakes(
+  config: Partial<BootConfig> = {},
+  opts: { pty?: boolean; collectors?: boolean; seedQuota?: boolean } = {},
+): Promise<Booted> {
   const home = mkdtempSync(join(tmpdir(), 'aibender-boot-'));
   cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+  // Seed a teed statusline payload so the fleet's initial tick has real input.
+  if (opts.seedQuota === true) {
+    mkdirSync(join(home, 'quota'), { recursive: true });
+    writeFileSync(
+      join(home, 'quota', 'MAX_A.json'),
+      JSON.stringify({ rate_limits: { five_hour: { used_percentage: 55, resets_at: '2026-07-05T18:00:00.000Z' } } }),
+    );
+  }
   let capturedTick: (() => void) | undefined;
   let capturedMs = 0;
   let closed = 0;
@@ -73,6 +99,7 @@ async function bootWithFakes(config: Partial<BootConfig> = {}, opts: { pty?: boo
       hooks: false,
       writeBootstrap: true,
       profilesDir: '/synthetic/profiles', // unused: bootWithFakes injects accountRegistry
+      collectors: collectorCfg(home, opts.collectors === true),
       ...config,
     },
     {
@@ -83,6 +110,8 @@ async function bootWithFakes(config: Partial<BootConfig> = {}, opts: { pty?: boo
       eventsStorePath: ':memory:',
       logger: QUIET,
       setPublisherInterval,
+      // Collector fleet (when enabled): a no-op capturing timer so no real timer fires.
+      setCollectorInterval: (_tick: () => void, _ms: number): BootIntervalHandle => ({ close: () => {} }),
     },
   );
   cleanups.push(() => handle.stop());
@@ -157,6 +186,14 @@ describe('resolveBootConfig', () => {
     expect(c.aibenderHome).toContain('.aibender');
     // Repo-anchored profiles dir (CWD-independent), not undefined.
     expect(c.profilesDir).toMatch(/infra\/profiles$/);
+    // v2 collector fleet on by default; quota tee dir under home.
+    expect(c.collectors.enabled).toBe(true);
+    expect(c.collectors.otlpPort).toBe(4318);
+    expect(c.collectors.quotaDir).toMatch(/\/quota$/);
+  });
+
+  it('AIBENDER_COLLECTORS=0 disables the whole fleet', () => {
+    expect(resolveBootConfig({ AIBENDER_COLLECTORS: '0' }).collectors.enabled).toBe(false);
   });
 
   it('env overrides: AIBENDER_HOME, live gates, cadence, hooks-off, port', () => {
@@ -206,6 +243,22 @@ describe('bootBroker (fakes)', () => {
     expect(intervalMs).toBe(3210);
     // The [X4] workstream slice is composed.
     expect(handle.broker.workstreams).toBeDefined();
+  });
+
+  it('collectors off by default → no fleet on the handle', async () => {
+    const { handle } = await bootWithFakes();
+    expect(handle.collectors).toBeUndefined();
+  });
+
+  it('collectors on: the fleet feeds the events store during boot (teed quota → quota_snapshots)', async () => {
+    const { handle } = await bootWithFakes({}, { collectors: true, seedQuota: true });
+    expect(handle.collectors).toBeDefined();
+    // Both synthetic claude accounts (MAX_A/MAX_B) get a JSONL watcher.
+    expect(handle.collectors?.stats().watchers).toBe(2);
+    // The fleet's initial tick ran during boot and ingested the seeded tee payload.
+    const rows = handle.eventsStore.quotaSnapshots.list({ account: 'MAX_A' });
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows[0]?.usedPct).toBe(55);
   });
 
   it('gates the PTY: no backend → no ptyHost; injected backend → ptyHost present', async () => {

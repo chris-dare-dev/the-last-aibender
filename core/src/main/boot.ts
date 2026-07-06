@@ -21,18 +21,20 @@
  *     boot with fakes (FakeQueryRunner / FakePtyBackend / `:memory:` stores /
  *     a controllable publisher interval) — no live system is ever touched.
  *
- * SCOPE (v1). Composes: kernel + approvals + gated PTY + gateway(bootstrap) +
+ * SCOPE. Composes: kernel + approvals + gated PTY + gateway(bootstrap) +
  * [X4] workstream lineage + the hooks accepting endpoint (presence of
  * `$AIBENDER_HOME/hook-token` is the SEC-3 opt-in) + the read-model publisher
- * lane on a cadence timer. DEFERRED to a v2 wire (each needs a live-system port
- * the codebase marks "bound at the operator-config slice", guarded like
- * liveSpawn): the full BE-5 collector fleet (JSONL tailers / OTLP receiver /
- * statusline / SSE / AWS pollers — the publisher renders NO-SIGNAL/estimate-only
- * until they feed the events store), the supervision governor (real macOS
- * phys_footprint sampler + pressure probe → resource-health stays NO SIGNAL),
- * and the pipeline engine (real per-step executor fan-out → the gateway's
- * documented `pipeline-not-found` degrade). These are additive when their real
- * adapters land; the boot surface already exposes injection points for them.
+ * lane on a cadence timer + (v2) the BE-5 COLLECTOR FLEET that feeds the events
+ * store the publisher reads (JSONL watchers / statusline quota tee / loopback
+ * OTLP receiver — see collectors.ts; `AIBENDER_COLLECTORS=0` disables it). Until
+ * a source has input the leads it feeds render honest NO-SIGNAL, never fabricated.
+ * STILL DEFERRED (each needs a live external system, not just a wire): the
+ * supervision governor (real macOS phys_footprint sampler + pressure probe →
+ * resource-health stays NO SIGNAL), the pipeline executor fan-out (→ the
+ * gateway's documented `pipeline-not-found` degrade), and the collector sources
+ * that require a running external process (OpenCode SSE, LM Studio, AWS pollers).
+ * These are additive when their adapters land; the boot surface exposes injection
+ * points for them.
  */
 
 import { mkdir } from 'node:fs/promises';
@@ -52,6 +54,13 @@ import {
 } from '../kernel/index.js';
 import { createFreshnessTracker, createReadModelPublisher } from '../readmodels/index.js';
 
+import {
+  resolveCollectorConfig,
+  startCollectorFleet,
+  type CollectorFleet,
+  type CollectorFleetConfig,
+  type CollectorFleetDeps,
+} from './collectors.js';
 import {
   DAEMON_NAME,
   composeBroker,
@@ -87,6 +96,8 @@ export interface BootConfig {
   readonly hooksPort?: number;
   /** Write the discovery bootstrap file. Default true (a daemon must advertise itself). */
   readonly writeBootstrap: boolean;
+  /** The v2 collector fleet (BE-5 sources → events store). `AIBENDER_COLLECTORS=0` disables it. */
+  readonly collectors: CollectorFleetConfig;
 }
 
 const DEFAULT_PUBLISH_INTERVAL_MS = 5_000;
@@ -109,8 +120,9 @@ export function resolveBootConfig(
   const parsedInterval = Number.parseInt(env['AIBENDER_PUBLISH_INTERVAL_MS'] ?? '', 10);
   const parsedPort = Number.parseInt(env['AIBENDER_HOOKS_PORT'] ?? '', 10);
   const profilesOverride = env['AIBENDER_PROFILES_DIR'];
+  const aibenderHome = aibenderHomePath({ env });
   return {
-    aibenderHome: aibenderHomePath({ env }),
+    aibenderHome,
     profilesDir:
       typeof profilesOverride === 'string' && profilesOverride.length > 0
         ? profilesOverride
@@ -125,6 +137,7 @@ export function resolveBootConfig(
     hooks: env['AIBENDER_HOOKS'] !== '0',
     ...(Number.isSafeInteger(parsedPort) ? { hooksPort: parsedPort } : {}),
     writeBootstrap: true,
+    collectors: resolveCollectorConfig(env, aibenderHome),
   };
 }
 
@@ -149,10 +162,14 @@ export interface BootDeps {
   /** Events store path override (tests: `:memory:`). Else `$AIBENDER_HOME/db/events.db`. */
   readonly eventsStorePath?: string;
   readonly logger?: Logger;
-  /** Publisher clock (tests). */
+  /** Publisher + collector clock (tests). */
   readonly clock?: () => number;
-  /** Periodic-timer factory (tests capture the tick / avoid real timers). */
+  /** Publisher periodic-timer factory (tests capture the tick / avoid real timers). */
   readonly setPublisherInterval?: (tick: () => void, ms: number) => BootIntervalHandle;
+  /** Collector-fleet periodic-timer factory (tests capture the tick / avoid real timers). */
+  readonly setCollectorInterval?: (tick: () => void, ms: number) => BootIntervalHandle;
+  /** OTLP receiver starter (tests inject a fake to avoid binding :4318). */
+  readonly startOtlpReceiver?: CollectorFleetDeps['startOtlpReceiver'];
 }
 
 // ---------------------------------------------------------------------------
@@ -163,7 +180,9 @@ export interface BootHandle {
   readonly broker: ComposedBroker;
   /** The collector-owned events store this boot opened (the publisher/hooks read it). */
   readonly eventsStore: EventsStore;
-  /** Idempotent: stop the publisher timer, close the broker, then the events store. */
+  /** The v2 collector fleet, when enabled (`config.collectors.enabled`); else undefined. */
+  readonly collectors?: CollectorFleet;
+  /** Idempotent: stop the collectors + publisher timer, close the broker, then the events store. */
   stop(): Promise<void>;
 }
 
@@ -255,17 +274,35 @@ export async function bootBroker(config: BootConfig, deps: BootDeps = {}): Promi
     publishers: [publisherLane],
   });
 
+  // v2 collector fleet: the BE-5 sources that FEED the events store the publisher
+  // reads. Started AFTER compose so it watches the SAME registry the broker
+  // discovered (broker.accountRegistry). Reads machine-local files / loopback
+  // only — never spends quota. Disabled by `AIBENDER_COLLECTORS=0`.
+  let collectors: CollectorFleet | undefined;
+  if (config.collectors.enabled) {
+    collectors = await startCollectorFleet(config.collectors, {
+      eventsStore,
+      accountRegistry: broker.accountRegistry,
+      logger,
+      ...(deps.clock ? { clock: deps.clock } : {}),
+      ...(deps.setCollectorInterval ? { setInterval: deps.setCollectorInterval } : {}),
+      ...(deps.startOtlpReceiver ? { startOtlpReceiver: deps.startOtlpReceiver } : {}),
+    });
+  }
+
   let stopped = false;
   const stop = async (): Promise<void> => {
     if (stopped) return;
     stopped = true;
-    // composeBroker.close() stops publisher lanes (clears our timer) → gateway →
-    // ptyHost → kernel → store; then we close the events store we own.
+    // Stop the collectors FIRST (halt writes into the store), then close the
+    // broker — composeBroker.close() stops publisher lanes (clears our timer) →
+    // gateway → ptyHost → kernel → store; then we close the events store we own.
+    await collectors?.stop().catch(() => undefined);
     await broker.close().catch(() => undefined);
     eventsStore.close();
   };
 
-  return { broker, eventsStore, stop };
+  return { broker, eventsStore, ...(collectors !== undefined ? { collectors } : {}), stop };
 }
 
 // ---------------------------------------------------------------------------
@@ -286,10 +323,15 @@ export async function runDaemon(
 ): Promise<BootHandle> {
   const handle = await bootBroker(config);
   const g = handle.broker.gateway;
+  const c = handle.collectors?.stats();
+  const collectorsLine =
+    c !== undefined
+      ? `collectors=on (${String(c.watchers)} jsonl watchers, quota tee, otlp ${c.otlp ?? 'off'})`
+      : 'collectors=off';
   out(
     `${DAEMON_NAME}: broker up — gateway ${g.url}, bootstrap ${g.bootstrapPath}; ` +
       `read-models every ${String(config.publishIntervalMs)}ms; liveSpawn=${String(config.liveSpawn)} ` +
-      `livePty=${String(config.livePty)} hooks=${String(config.hooks)}. Signal to stop.`,
+      `livePty=${String(config.livePty)} hooks=${String(config.hooks)}; ${collectorsLine}. Signal to stop.`,
   );
   let closing = false;
   const shutdown = (signal: string): void => {

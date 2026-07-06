@@ -243,6 +243,20 @@ export {
   type SessionOutcomesStore,
 } from './events.js';
 
+export {
+  createEventsAggregatesStore,
+  type AccountCacheTokens,
+  type BackendTokenSum,
+  type BurnRow,
+  type CostRow,
+  type EstimateRow,
+  type EventsAggregatesStore,
+  type LatencySample,
+  type OutcomeCount,
+  type SkillAggregate,
+  type SourceHealthCounts,
+} from './eventsAggregates.js';
+
 import { openNodeSqliteDatabase } from './driver.js';
 import {
   createEventsTableStore,
@@ -255,6 +269,10 @@ import {
   type QuotaSnapshotsStore,
   type SessionOutcomesStore,
 } from './events.js';
+import {
+  createEventsAggregatesStore,
+  type EventsAggregatesStore,
+} from './eventsAggregates.js';
 import {
   createAccountProfilesStore,
   createResumeLedgerStore,
@@ -319,6 +337,13 @@ export interface EventsStore {
   /** `wal` for file-backed stores; `memory` for `:memory:` test stores. */
   readonly journalMode: string;
   readonly events: EventsTableStore;
+  /**
+   * SQL-side aggregation accessors (finding OS-2) over the SAME events table —
+   * the BE-6 read-model projections group/sum/count in SQLite through this,
+   * instead of materializing the whole window as `EventRow`s. Read-only,
+   * additive (ICR-0017); the frozen write path (events.ts) is untouched.
+   */
+  readonly eventsAggregates: EventsAggregatesStore;
   readonly quotaSnapshots: QuotaSnapshotsStore;
   readonly sessionOutcomes: SessionOutcomesStore;
   readonly prices: PricesStore;
@@ -347,6 +372,7 @@ export async function openEventsStore(options: OpenEventsStoreOptions): Promise<
     driver,
     journalMode,
     events: createEventsTableStore(driver, storeOptions),
+    eventsAggregates: createEventsAggregatesStore(driver),
     quotaSnapshots: createQuotaSnapshotsStore(driver, storeOptions),
     sessionOutcomes: createSessionOutcomesStore(driver, storeOptions),
     prices: createPricesStore(driver, storeOptions),

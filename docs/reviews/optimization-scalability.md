@@ -45,7 +45,8 @@ no branch edit. See the finding below and
 > illegal built-in row). The remaining `=== 'claude_code'` sites are Claude-only
 > ingest paths (`ingest.ts` OTel/JSONL joiner, `sessionKernel.ts`/`ptyHost.ts` pty)
 > and registry-mediated semantic guards, not extension-blocking dispatch.
-> **OS-2 and OS-6 remain OPEN.**
+> **OS-2 and OS-6 are now RESOLVED (2026-07-05)** — see the ✅ resolution notes
+> on each finding below. (OS-1, OS-3, OS-4, OS-5 were resolved earlier.)
 - **Anchor:** `packages/protocol/src/vocab.ts:100` (`BACKENDS` frozen 3-tuple), `:194` (`backendForLabel` hardcoded if-chain), `:69` (`FIXED_BACKEND_LABELS` closed, "a new one would be a new backend, an ICR of its own").
 - **Failure scenario:** to run Ollama directly, a 2nd OpenAI-compatible server, or LM Studio on a 2nd port as a *distinct* backend, one must edit a FROZEN protocol enum, ~42 non-spec files that branch on the `'claude_code'|'opencode'|'lmstudio'` literals (e.g. `lineageCost.ts` `sourceForBackend`, `projections.ts` `localTokens`, `ingest.ts`, `reconciler.ts`, `sessionKernel.ts`, `ptyHost.ts`), **and** add a schema migration to rebuild every account-pinned table — because every migration hardcodes `CHECK (backend IN ('claude_code','opencode','lmstudio'))` (verified in `0001-kernel.ts:48,74`, `0002-events.ts:63`, `0006-account-registry-events.ts:36`). This is exactly the extension cliff this dimension exists to catch — the *backend* twin of the account-label problem M7 just solved.
 - **Gate verification:** CONFIRMED. `grep` counts **42** non-spec files referencing the backend literals; the migration CHECKs are present as cited.
@@ -56,6 +57,49 @@ no branch edit. See the finding below and
 - **Failure scenario:** each of the 10 read-model projections calls `stores.events.list({ sinceTsMs })` over a 7–30 day window with **no SQL aggregation**, then does every group-by / sum / percentile / sort in JS. At 5→12 accounts each emitting `api_request` + tool/hook/otel rows, that materializes tens-of-thousands to millions of rows into JS objects and re-aggregates on **every** `publishAll()`. The `(account,ts_ms)`/`(ts_ms)` indexes can't cover a `SELECT *`. This is **design-latent**: `publishAll` is a pull seam not yet on a timer (`main/index.ts` config slice pending), so whatever cadence is chosen multiplies the cost.
 - **Gate verification:** CONFIRMED (query shapes as cited; severity noted design-latent pending the publish-cadence decision).
 - **Recommendation:** push aggregation into SQL (`GROUP BY`/`SUM`/percentile, or an incrementally-refreshed rollup table) + a covering index for the hot (account, ts_ms, token) path; bound each recompute to the dirty-account set so a tick is O(new rows), not O(window). Decide + document the publish cadence before a timer multiplies it.
+- **✅ Resolution (2026-07-05, ICR-0017):** aggregation pushed into SQLite via a
+  NEW additive read-only accessor `createEventsAggregatesStore(driver)` (the
+  frozen `events.ts` write path untouched), threaded through the `EventsStore`
+  bundle into `ReadModelStores`. The eight window-scanning leads no longer
+  materialize the window as `EventRow`s (`SELECT *` → `eventFromSql` → 30-field
+  objects + `JSON.parse`):
+  - **COUNTs in SQL (O(groups))** — health (`CASE`-counts) and session-outcomes
+    (`COUNT`) aggregate in SQLite; counts are bounded by the row count so they
+    can never trip the marshaling limit below.
+  - **Narrow scan + JS fold** — every other lead (cache-hit, local-offload,
+    skill-leaderboard, burn-rate token sums; bedrock, api-equivalent, latency)
+    takes a minimal-column scan (no `SELECT *`, no `eventFromSql`, no JSON parse)
+    and folds token/USD/percentile arithmetic in JS. Token sums are deliberately
+    NOT summed in SQL: the adversarial review's regression hunter proved a
+    SQL-side `SUM(tokens)` (or a per-row 4-class sum) can cross 2^53, at which
+    point node:sqlite (default non-BigInt) throws `ERR_OUT_OF_RANGE` — while the
+    old JS path `Number()`d each safe (< 2^53) column and float-folded without
+    throwing. Folding in JS over safe per-column values is byte-identical to the
+    old fold (same order, same float semantics incl. past 2^53) and never throws.
+    Float money likewise stays in JS (SQLite `SUM` is Kahan-compensated →
+    last-ULP divergence).
+  - **Byte-identical, proven** — grouped queries preserve the old first-appearance
+    entry order via `ROW_NUMBER() OVER (ORDER BY ts_ms, id)` + `MIN(rn)`; a
+    400-row seeded-corpus equivalence test (`packages/schema/src/eventsAggregates.spec.ts`,
+    rows inserted OUT of ts order) checks every accessor field-for-field against a
+    JS-over-`events.list()` reference. No wire change, no protocol bump, no
+    golden-corpus change; the hand-checked `projections.spec.ts` is unchanged.
+  - **Index / cadence decisions (documented, as the finding asked):** (1) *No new
+    covering index* — the existing `events_ts_idx (ts_ms)` (rowid-appended, so it
+    satisfies `ORDER BY ts_ms, id`) and `events_account_ts_idx (account, ts_ms)`
+    serve the range scans; a covering `(account, ts_ms, <token cols>)` index was
+    deferred because it adds write amplification on the high-volume collector DB
+    for an index-only-scan win not yet shown necessary by N-account profiling.
+    (2) *Publish cadence* — `publishAll()` remains a pull seam (not yet on a
+    timer; the `main/index.ts` config slice is still pending). The recommended
+    cadence when it is wired: a debounced coalescing tick (~a few seconds) plus
+    on-demand, NOT per-event. With aggregation now O(groups)+narrow-O(rows) per
+    tick rather than O(window)-materialized-in-JS, cadence no longer multiplies a
+    heavy cost. (3) *Dirty-account incremental recompute* — the further "O(new
+    rows) not O(window)" step is intentionally left for when the timer lands: it
+    turns the pure projection functions stateful (a per-account rollup + watermark),
+    which is premature before the cadence exists. The SQL push already removes the
+    JS-materialization blow-up that was the finding's core.
 
 ### OS-3 (HIGH — confirmed, gate-verified) — Per-account JSONL watcher does a synchronous recursive dir walk every 2 s
 - **Anchor:** `core/src/collector/jsonl/accountWatcher.ts:66` (`listFilesRecursive` = `readdirSync(root, { recursive: true })`), `:214` (called from `scan()`), `:228-236` (`start(pollMs=2000)` → `setInterval`).
@@ -77,6 +121,24 @@ no branch edit. See the finding below and
 - **Anchor:** `core/src/collector/ingest.ts:138` (pending `Map` keyed on request_id, 120 s window at `:136`), `:250` (`flush()` snapshots the whole map with `[...pending.entries()]`).
 - **Failure scenario:** if one join half stops arriving (OTLP receiver down / port-in-use, or a JSONL-only burst), unmatched halves accumulate until flush; with 12 accounts feeding one joiner and an imbalanced source, `pending.size` and the per-flush array copy grow with the imbalance, not a fixed bound.
 - **Recommendation:** hard-cap the pending map with oldest-half eviction (flush the evicted half as single-source, counted in stats); drive flush on a timer independent of ingest; avoid the full-array spread copy.
+- **✅ Resolution (2026-07-05, `core/src/collector/ingest.ts`):** all three, landed
+  together:
+  - **Hard cap** — new `maxPending` option (default 50 000). Before buffering a
+    NEW `request_id`, the OLDEST pending half is evicted (Map insertion order → the
+    first key is the oldest-buffered), flushed as an honest single-source row and
+    counted in a new `evicted` stat (also in `jsonlOnly`/`otelOnly`, since it lands
+    as a single-source row). A late twin still dedupes onto the canonical
+    `api_request:<id>` raw_ref, so eviction can never double-count tokens.
+  - **Independent timer** — new opt-in `flushIntervalMs` runs the joiner's own
+    `flush()` off an `unref`'d interval, independent of ingest arrival; a new
+    idempotent `close()` clears it. Off by default (byte-identical to the prior
+    caller-driven cadence).
+  - **No full-array copy** — `flush()` no longer does `[...pending.entries()]`; it
+    collects only the expired keys in one pass, then deletes — O(expired), not a
+    whole-map snapshot per flush.
+  - Proven by four new `ingest.spec.ts` cases (cap eviction bounds `pendingCount`;
+    cap-evicted half dedupes a late twin; the timer flushes with no ingest and
+    `close()` stops it; `close()` is a safe no-op without a timer).
 
 ---
 

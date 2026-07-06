@@ -80,6 +80,14 @@ export interface ApiJoinerStats {
   readonly lateTwinsDropped: number;
   /** Halves whose account label disagreed (JSONL/watch-root label wins). */
   readonly labelMismatches: number;
+  /**
+   * Pending halves flushed EARLY as single-source rows because the map hit its
+   * `maxPending` cap (finding OS-6). These are ALSO counted in jsonlOnly/otelOnly
+   * (they land as single-source rows); `evicted` records how many of those were
+   * cap-driven rather than window-driven. A late twin can still arrive and dedupe
+   * onto the row (lateTwinsDropped), so eviction never double-counts tokens.
+   */
+  readonly evicted: number;
 }
 
 export interface ApiRequestJoiner {
@@ -90,6 +98,12 @@ export interface ApiRequestJoiner {
   /** Buffered, not-yet-inserted halves (either side). */
   pendingCount(): number;
   stats(): ApiJoinerStats;
+  /**
+   * Stop the internal flush timer if one was started (`flushIntervalMs`). Safe to
+   * call when no timer is running (a no-op). Idempotent. The composition root
+   * calls this on broker teardown; ingest-driven joiners without a timer need not.
+   */
+  close(): void;
 }
 
 export interface ApiRequestJoinerOptions {
@@ -97,6 +111,22 @@ export interface ApiRequestJoinerOptions {
   readonly nowMs?: () => number;
   /** Join window before an unmatched half flushes alone. Default 120 000. */
   readonly windowMs?: number;
+  /**
+   * Hard cap on buffered pending halves (finding OS-6). When a NEW request_id
+   * would push `pending` past this, the OLDEST pending half is evicted first —
+   * flushed as a single-source row (counted in {@link ApiJoinerStats.evicted}) —
+   * so an imbalanced source (OTLP down / a JSONL-only burst) cannot grow the map
+   * without bound. Default 50 000. Must be a positive integer.
+   */
+  readonly maxPending?: number;
+  /**
+   * When set, the joiner runs its OWN flush on this interval (ms), independent of
+   * ingest arrival (finding OS-6 "drive flush on a timer independent of ingest").
+   * The timer is `unref`'d so it never keeps the process alive; {@link
+   * ApiRequestJoiner.close} clears it. Omit to keep the caller-driven flush the
+   * only cadence (the default, byte-identical to the pre-OS-6 behavior).
+   */
+  readonly flushIntervalMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +164,13 @@ export function createApiRequestJoiner(
 ): ApiRequestJoiner {
   const nowMs = options.nowMs ?? Date.now;
   const windowMs = options.windowMs ?? 120_000;
+  const maxPending =
+    options.maxPending !== undefined && Number.isInteger(options.maxPending) && options.maxPending > 0
+      ? options.maxPending
+      : 50_000;
 
   const pending = new Map<string, PendingHalves>();
-  const stats = { merged: 0, jsonlOnly: 0, otelOnly: 0, lateTwinsDropped: 0, labelMismatches: 0 };
+  const stats = { merged: 0, jsonlOnly: 0, otelOnly: 0, lateTwinsDropped: 0, labelMismatches: 0, evicted: 0 };
 
   const assertClaudeLabel = (half: ApiRequestHalfBase): void => {
     if (!isAccountLabel(half.account) || backendForLabel(half.account) !== 'claude_code') {
@@ -215,6 +249,60 @@ export function createApiRequestJoiner(
     ...(half.ok !== undefined ? { ok: half.ok } : {}),
   });
 
+  // Insert a pending entry's ONE buffered half as a single-source row. A pending
+  // entry always holds exactly one side (a matched pair merges + deletes on the
+  // spot), so this is unambiguous.
+  const flushSingle = (entry: PendingHalves): void => {
+    if (entry.jsonl !== undefined) insertCounted(jsonlOnlyRow(entry.jsonl), 'jsonlOnly');
+    else if (entry.otel !== undefined) insertCounted(otelOnlyRow(entry.otel), 'otelOnly');
+  };
+
+  // OS-6: before buffering a NEW request_id, evict the OLDEST pending half if the
+  // map is at its cap. Map iteration is insertion-ordered and `bufferedAtMs` is
+  // stamped on first insert (preserved across the same-side re-set), so the first
+  // key is the oldest-buffered entry. Evicting it early — as an honest
+  // single-source row, counted — bounds memory under source imbalance (OTLP down,
+  // a JSONL-only burst). A late twin still dedupes onto the row, so no double count.
+  const evictIfFull = (): void => {
+    while (pending.size >= maxPending) {
+      const oldest = pending.keys().next();
+      if (oldest.done === true) break;
+      const requestId = oldest.value;
+      const entry = pending.get(requestId);
+      pending.delete(requestId);
+      if (entry !== undefined) {
+        flushSingle(entry);
+        stats.evicted += 1;
+      }
+    }
+  };
+
+  const flush = (maxAgeMs = windowMs): number => {
+    const cutoff = nowMs() - maxAgeMs;
+    // OS-6: collect expired keys in a single pass (bounded by the expired count),
+    // then delete — no `[...pending.entries()]` snapshot of the WHOLE map per flush.
+    const expired: string[] = [];
+    for (const [requestId, entry] of pending) {
+      if (entry.bufferedAtMs <= cutoff) expired.push(requestId);
+    }
+    for (const requestId of expired) {
+      const entry = pending.get(requestId);
+      pending.delete(requestId);
+      if (entry !== undefined) flushSingle(entry);
+    }
+    return expired.length;
+  };
+
+  // OS-6: an OPTIONAL flush cadence independent of ingest arrival. `unref` keeps
+  // it from pinning the event loop / holding the process open; `close` clears it.
+  let timer: ReturnType<typeof setInterval> | undefined;
+  if (options.flushIntervalMs !== undefined && options.flushIntervalMs > 0) {
+    timer = setInterval(() => {
+      flush();
+    }, options.flushIntervalMs);
+    timer.unref?.();
+  }
+
   return {
     offerJsonl: (half) => {
       assertClaudeLabel(half);
@@ -224,6 +312,7 @@ export function createApiRequestJoiner(
         insertCounted(mergedRow(half, entry.otel), 'merged');
         return;
       }
+      if (entry === undefined) evictIfFull();
       pending.set(half.requestId, {
         ...(entry ?? { bufferedAtMs: nowMs() }),
         jsonl: half,
@@ -238,26 +327,23 @@ export function createApiRequestJoiner(
         insertCounted(mergedRow(entry.jsonl, half), 'merged');
         return;
       }
+      if (entry === undefined) evictIfFull();
       pending.set(half.requestId, {
         ...(entry ?? { bufferedAtMs: nowMs() }),
         otel: half,
       });
     },
 
-    flush: (maxAgeMs = windowMs) => {
-      const cutoff = nowMs() - maxAgeMs;
-      let flushed = 0;
-      for (const [requestId, entry] of [...pending.entries()]) {
-        if (entry.bufferedAtMs > cutoff) continue;
-        pending.delete(requestId);
-        if (entry.jsonl !== undefined) insertCounted(jsonlOnlyRow(entry.jsonl), 'jsonlOnly');
-        else if (entry.otel !== undefined) insertCounted(otelOnlyRow(entry.otel), 'otelOnly');
-        flushed += 1;
-      }
-      return flushed;
-    },
+    flush,
 
     pendingCount: () => pending.size,
     stats: () => ({ ...stats }),
+
+    close: () => {
+      if (timer !== undefined) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+    },
   };
 }

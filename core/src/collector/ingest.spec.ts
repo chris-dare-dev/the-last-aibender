@@ -4,7 +4,7 @@
  * canonical-raw_ref dedupe safety net (plan §9.2 BE-5 edge rows).
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { openEventsStore, type EventsStore } from '@aibender/schema';
 
@@ -168,6 +168,87 @@ describe('createApiRequestJoiner', () => {
     rejoiner.offerOtel(OTEL_HALF);
     expect(store.events.list()).toHaveLength(1);
     expect(rejoiner.stats().lateTwinsDropped).toBe(1);
+    store.close();
+  });
+
+  // -- OS-6: bounded pending map + independent flush timer --------------------
+
+  it('caps the pending map, evicting the OLDEST half as a single-source row', async () => {
+    const store = await memStore();
+    let now = 0;
+    const joiner = createApiRequestJoiner(store.events, { nowMs: () => now, maxPending: 2 });
+
+    // Three distinct request_ids, JSONL-only (their OTel twins never arrive).
+    joiner.offerJsonl({ ...JSONL_HALF, requestId: 'req_a' });
+    now = 10;
+    joiner.offerJsonl({ ...JSONL_HALF, requestId: 'req_b' });
+    now = 20;
+    joiner.offerJsonl({ ...JSONL_HALF, requestId: 'req_c' }); // evicts req_a (oldest)
+
+    expect(joiner.pendingCount()).toBe(2); // bounded, NOT 3
+    expect(joiner.stats().evicted).toBe(1);
+    expect(joiner.stats().jsonlOnly).toBe(1); // the evicted half landed as single-source
+    const rows = store.events.list();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.rawRef).toBe(apiRequestRawRef('req_a'));
+    store.close();
+  });
+
+  it('a cap-evicted half still dedupes a late twin (canonical raw_ref, no double-count)', async () => {
+    const store = await memStore();
+    let now = 0;
+    const joiner = createApiRequestJoiner(store.events, { nowMs: () => now, maxPending: 1, windowMs: 100 });
+
+    joiner.offerJsonl({ ...JSONL_HALF, requestId: 'req_a' });
+    now = 10;
+    joiner.offerJsonl({ ...JSONL_HALF, requestId: 'req_b' }); // evicts req_a as jsonl-only
+    expect(joiner.stats().evicted).toBe(1);
+
+    // req_a's OTel twin arrives late; it buffers then flushes, deduping onto the row.
+    joiner.offerOtel({ ...OTEL_HALF, requestId: 'req_a' });
+    now = 1_000;
+    joiner.flush();
+
+    const aRows = store.events.list().filter((r) => r.rawRef === apiRequestRawRef('req_a'));
+    expect(aRows).toHaveLength(1); // ONE row for req_a — tokens never doubled
+    expect(joiner.stats().lateTwinsDropped).toBe(1);
+    store.close();
+  });
+
+  it('an independent flush timer flushes without ingest, and close() stops it', async () => {
+    vi.useFakeTimers();
+    try {
+      const store = await memStore();
+      let now = 0;
+      const joiner = createApiRequestJoiner(store.events, {
+        nowMs: () => now,
+        windowMs: 100,
+        flushIntervalMs: 50,
+      });
+      joiner.offerJsonl(JSONL_HALF); // buffered at t=0
+      now = 500; // past the window
+      vi.advanceTimersByTime(50); // the timer fires flush() with NO further ingest
+      expect(store.events.list()).toHaveLength(1);
+      expect(joiner.stats().jsonlOnly).toBe(1);
+
+      joiner.close();
+      joiner.offerJsonl({ ...JSONL_HALF, requestId: 'req_after_close' });
+      now = 2_000;
+      vi.advanceTimersByTime(500); // timer is cleared → no auto-flush
+      expect(joiner.pendingCount()).toBe(1); // still buffered; close() stopped the timer
+      store.close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('close() is a safe no-op when no flush timer was started', async () => {
+    const store = await memStore();
+    const joiner = createApiRequestJoiner(store.events, { nowMs: () => 0 });
+    expect(() => {
+      joiner.close();
+      joiner.close();
+    }).not.toThrow();
     store.close();
   });
 });

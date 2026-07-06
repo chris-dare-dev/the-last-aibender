@@ -200,7 +200,9 @@ describe('OS-1: a registered 4th backend routes through core dispatch with no br
     const events = await openEventsStore({ path: ':memory:' });
     const stores = {
       events: events.events,
-      // localOffloadData only touches `events`; the other stores are unused here.
+      // localOffloadData now aggregates in SQL (finding OS-2) — it reads
+      // eventsAggregates, not events.list; the other stores are unused here.
+      eventsAggregates: events.eventsAggregates,
       quotaSnapshots: undefined as never,
       sessionOutcomes: undefined as never,
       prices: undefined as never,
@@ -242,6 +244,7 @@ describe('OS-1: a registered 4th backend routes through core dispatch with no br
     const events = await openEventsStore({ path: ':memory:' });
     const stores = {
       events: events.events,
+      eventsAggregates: events.eventsAggregates,
       quotaSnapshots: undefined as never,
       sessionOutcomes: undefined as never,
       prices: undefined as never,

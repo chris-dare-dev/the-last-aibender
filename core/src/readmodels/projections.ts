@@ -25,6 +25,7 @@ import {
 } from '@aibender/protocol';
 import type {
   EventRow,
+  EventsAggregatesStore,
   EventsTableStore,
   PricesStore,
   QuotaSnapshotsStore,
@@ -44,6 +45,12 @@ import {
 
 export interface ReadModelStores {
   readonly events: EventsTableStore;
+  /**
+   * SQL-side aggregation (finding OS-2). The window-scanning leads group/sum/
+   * count through this instead of materializing the whole window as `EventRow`s.
+   * See the per-lead notes below for the byte-identical-output argument.
+   */
+  readonly eventsAggregates: EventsAggregatesStore;
   readonly quotaSnapshots: QuotaSnapshotsStore;
   readonly sessionOutcomes: SessionOutcomesStore;
   readonly prices: PricesStore;
@@ -79,12 +86,29 @@ export function percentile(sortedAscending: readonly number[], pct: number): num
 }
 
 /**
+ * The columns {@link estimateUsdForRow} reads — a structural subset of
+ * {@link EventRow} that the OS-2 narrow-column cost scans (schema
+ * `EstimateRow`/`CostRow`) also satisfy, so the exact per-row USD arithmetic is
+ * shared between the full-row path (tests) and the narrow-scan path (publisher).
+ */
+export type EstimatableRow = Pick<
+  EventRow,
+  | 'costEstimatedUsd'
+  | 'provider'
+  | 'model'
+  | 'inputTokens'
+  | 'outputTokens'
+  | 'cacheReadTokens'
+  | 'cacheCreationTokens'
+>;
+
+/**
  * Client-side USD estimate for one row: the ingest-time estimate when the
  * collector landed one, else token counts × the pinned prices table
  * (blueprint §6.2 `prices`: LiteLLM-seeded, pinned, overridable). Rows with
  * no price row contribute 0 — an unknown model is never guessed at.
  */
-export function estimateUsdForRow(row: EventRow, prices: PricesStore): number {
+export function estimateUsdForRow(row: EstimatableRow, prices: PricesStore): number {
   if (row.costEstimatedUsd !== undefined) return row.costEstimatedUsd;
   if (row.provider === undefined || row.model === undefined) return 0;
   const price = prices.get(row.provider, row.model);
@@ -167,11 +191,15 @@ export interface BurnRateInputs {
 
 export function burnRateData(stores: ReadModelStores, inputs: BurnRateInputs): Data<'burn-rate'> {
   const scanWindowMs = inputs.scanWindowMs ?? 7 * DAY_MS;
-  const rows = stores.events.list({ sinceTsMs: Math.max(0, inputs.nowMs - scanWindowMs) });
+  // OS-2: narrow (account, tsMs, tokens) scan — tokens summed in SQL (the exact
+  // integer twin of tokensOfRow), same (ts_ms, id) order, so groupBy yields the
+  // identical first-appearance account order and block reconstruction the full
+  // events.list() scan produced, without materializing every EventRow.
+  const rows = stores.eventsAggregates.burnRows(Math.max(0, inputs.nowMs - scanWindowMs));
   const entries: Data<'burn-rate'>['entries'][number][] = [];
   for (const [account, accountRows] of groupBy(rows, (row) => row.account)) {
     const blocks = assembleBlocks(
-      accountRows.map((row) => ({ tsMs: row.tsMs, tokens: tokensOfRow(row) })),
+      accountRows.map((row) => ({ tsMs: row.tsMs, tokens: row.tokens })),
     );
     const block = activeBlock(blocks, inputs.nowMs);
     if (block === undefined) continue; // no active block → no entry, never a zero
@@ -216,7 +244,10 @@ export function bedrockCostData(stores: ReadModelStores, nowMs: number): Bedrock
   const yesterdayStartMs = dayStartMs - DAY_MS;
 
   // AWS_DEV rides OpenCode→Bedrock (vocab.ts backendForLabel).
-  const rows = stores.events.list({ backend: 'opencode', sinceTsMs: mtdStartMs });
+  // OS-2: narrow cost-column scan (same backend filter, same (ts_ms, id) order)
+  // — float USD is NEVER summed in SQL (Kahan-vs-fold divergence); the exact
+  // per-row `estimateUsdForRow` fold is preserved bit-for-bit over narrow rows.
+  const rows = stores.eventsAggregates.costRows(mtdStartMs, 'opencode');
   let estimateMtdUsd = 0;
   let actualMtdUsd: number | undefined;
   let actualYesterdayUsd: number | undefined;
@@ -251,7 +282,10 @@ export function apiEquivalentUsdData(
   nowMs: number,
   windowDays: number,
 ): Data<'api-equivalent-usd'> {
-  const rows = stores.events.list({ sinceTsMs: Math.max(0, nowMs - windowDays * DAY_MS) });
+  // OS-2: narrow (account + cost columns) scan, same (ts_ms, id) order, so the
+  // Map's first-appearance account order and the exact per-row USD fold are
+  // preserved (float USD never summed in SQL).
+  const rows = stores.eventsAggregates.estimateRows(Math.max(0, nowMs - windowDays * DAY_MS));
   const byAccount = new Map<AccountLabel, number>();
   for (const row of rows) {
     byAccount.set(row.account, (byAccount.get(row.account) ?? 0) + estimateUsdForRow(row, stores.prices));
@@ -277,27 +311,19 @@ export function cacheHitRateData(
   nowMs: number,
   windowDays: number,
 ): Data<'cache-hit-rate'> {
-  const rows = stores.events.list({ sinceTsMs: Math.max(0, nowMs - windowDays * DAY_MS) });
+  // OS-2: per-account integer token sums computed in SQL (exact; the single
+  // hit-rate division uses the identical integer operands), rows in the same
+  // first-appearance account order the JS groupBy produced.
   const entries: Data<'cache-hit-rate'>['entries'][number][] = [];
-  for (const [account, accountRows] of groupBy(rows, (row) => row.account)) {
-    let input = 0;
-    let read = 0;
-    let creation5m = 0;
-    let creation1h = 0;
-    for (const row of accountRows) {
-      input += row.inputTokens ?? 0;
-      read += row.cacheReadTokens ?? 0;
-      creation5m += row.cacheCreation5mTokens ?? 0;
-      creation1h += row.cacheCreation1hTokens ?? 0;
-    }
-    const denominator = input + read;
+  for (const sums of stores.eventsAggregates.cacheTokensByAccount(Math.max(0, nowMs - windowDays * DAY_MS))) {
+    const denominator = sums.inputTokens + sums.readTokens;
     if (denominator === 0) continue; // no cache-bearing traffic → no entry
     entries.push({
-      account,
-      hitRatePct: clampPct((read / denominator) * 100),
-      readTokens: read,
-      creation5mTokens: creation5m,
-      creation1hTokens: creation1h,
+      account: sums.account,
+      hitRatePct: clampPct((sums.readTokens / denominator) * 100),
+      readTokens: sums.readTokens,
+      creation5mTokens: sums.creation5mTokens,
+      creation1hTokens: sums.creation1hTokens,
     });
   }
   return { entries };
@@ -312,7 +338,10 @@ export function latencyData(
   nowMs: number,
   windowDays: number,
 ): Data<'latency'> {
-  const rows = stores.events.list({ sinceTsMs: Math.max(0, nowMs - windowDays * DAY_MS) });
+  // OS-2: narrow (backend, latency, ttft) scan, same (ts_ms, id) order, so the
+  // backend first-appearance order and the exact nearest-rank percentiles over
+  // the sorted integer samples are preserved.
+  const rows = stores.eventsAggregates.latencySamples(Math.max(0, nowMs - windowDays * DAY_MS));
   const entries: Data<'latency'>['entries'][number][] = [];
   for (const [backend, backendRows] of groupBy(rows, (row) => row.backend)) {
     const latencies = backendRows
@@ -346,33 +375,22 @@ export function healthData(
   nowMs: number,
   windowMinutes: number,
 ): Data<'health'> {
-  const rows = stores.events.list({ sinceTsMs: Math.max(0, nowMs - windowMinutes * 60_000) });
+  // OS-2: per-source integer counts computed in SQL, first-appearance source
+  // order preserved. The SQL CASE reproduces the switch exactly: a row counts as
+  // an error when error_kind='error' OR (error_kind IS NULL AND ok=0) — the
+  // "explicit failure with no classified kind" default arm; retry/throttle/
+  // timeout are counted by their kind. (error_kind is validated to the enum at
+  // insert, so the JS `default` arm only ever fired for an undefined kind.)
   const entries: Data<'health'>['entries'][number][] = [];
-  for (const [source, sourceRows] of groupBy(rows, (row) => row.source)) {
-    let errorCount = 0;
-    let retryCount = 0;
-    let throttleCount = 0;
-    let timeoutCount = 0;
-    for (const row of sourceRows) {
-      switch (row.errorKind) {
-        case 'error':
-          errorCount += 1;
-          break;
-        case 'retry':
-          retryCount += 1;
-          break;
-        case 'throttle':
-          throttleCount += 1;
-          break;
-        case 'timeout':
-          timeoutCount += 1;
-          break;
-        default:
-          // An explicit failure with no classified kind still counts as error.
-          if (row.ok === false) errorCount += 1;
-      }
-    }
-    entries.push({ source, errorCount, retryCount, throttleCount, timeoutCount, windowMinutes });
+  for (const c of stores.eventsAggregates.healthCountsBySource(Math.max(0, nowMs - windowMinutes * 60_000))) {
+    entries.push({
+      source: c.source,
+      errorCount: c.errorCount,
+      retryCount: c.retryCount,
+      throttleCount: c.throttleCount,
+      timeoutCount: c.timeoutCount,
+      windowMinutes,
+    });
   }
   return { entries };
 }
@@ -403,12 +421,11 @@ export function skillLeaderboardData(
   stores: ReadModelStores,
   inputs: SkillLeaderboardInputs,
 ): Data<'skill-leaderboard'> {
-  const rows = stores.events.list({
-    sinceTsMs: Math.max(0, inputs.nowMs - inputs.windowDays * DAY_MS),
-  });
-  const bySkill = groupBy(
-    rows.filter((row) => row.skillName !== undefined),
-    (row) => row.skillName as string,
+  // OS-2: per-skill invocations / ok-count / outcome-cohort / token-sum computed
+  // in SQL (integer-exact; the rate + tokens-per-outcome divisions use identical
+  // operands), skills in the same first-appearance order the JS groupBy produced.
+  const aggregates = stores.eventsAggregates.skillAggregates(
+    Math.max(0, inputs.nowMs - inputs.windowDays * DAY_MS),
   );
 
   interface Draft {
@@ -419,19 +436,16 @@ export function skillLeaderboardData(
     tokensPerOutcome?: number;
   }
   const drafts: Draft[] = [];
-  for (const [skillName, skillRows] of bySkill) {
-    const outcomes = skillRows.filter((row) => row.ok !== undefined);
-    const okCount = outcomes.filter((row) => row.ok === true).length;
+  for (const agg of aggregates) {
     const successRatePct =
-      outcomes.length >= MIN_OUTCOMES_FOR_RATE
-        ? clampPct((okCount / outcomes.length) * 100)
+      agg.outcomeCount >= MIN_OUTCOMES_FOR_RATE
+        ? clampPct((agg.okCount / agg.outcomeCount) * 100)
         : undefined;
-    const totalTokens = skillRows.reduce((sum, row) => sum + tokensOfRow(row), 0);
-    const tokensPerOutcome = outcomes.length > 0 ? totalTokens / outcomes.length : undefined;
-    const correctionRatePct = inputs.correctionRatePctBySkill?.get(skillName);
+    const tokensPerOutcome = agg.outcomeCount > 0 ? agg.totalTokens / agg.outcomeCount : undefined;
+    const correctionRatePct = inputs.correctionRatePctBySkill?.get(agg.skillName);
     drafts.push({
-      skillName,
-      invocations: skillRows.length,
+      skillName: agg.skillName,
+      invocations: agg.invocations,
       ...(successRatePct !== undefined ? { successRatePct } : {}),
       ...(correctionRatePct !== undefined ? { correctionRatePct: clampPct(correctionRatePct) } : {}),
       ...(tokensPerOutcome !== undefined ? { tokensPerOutcome } : {}),
@@ -472,14 +486,15 @@ export function sessionOutcomesData(
   nowMs: number,
   windowDays: number,
 ): Data<'session-outcomes'> {
+  // OS-2: per-outcome counts computed in SQL over captured_at_ms >= since, in
+  // the same first-appearance order the JS Map produced (session_outcomes.list()
+  // is ordered by captured_at_ms, id; the counts are exact integers).
   const since = Math.max(0, nowMs - windowDays * DAY_MS);
-  const counts = new Map<string, number>();
-  for (const row of stores.sessionOutcomes.list()) {
-    if (row.capturedAtMs < since) continue;
-    counts.set(row.outcome, (counts.get(row.outcome) ?? 0) + 1);
-  }
   return {
-    entries: [...counts.entries()].map(([outcome, count]) => ({ outcome, count })),
+    entries: stores.eventsAggregates.outcomeCounts(since).map((row) => ({
+      outcome: row.outcome,
+      count: row.count,
+    })),
     windowDays,
   };
 }
@@ -493,13 +508,15 @@ export function localOffloadData(
   nowMs: number,
   windowDays: number,
 ): Data<'local-offload'> {
-  const rows = stores.events.list({ sinceTsMs: Math.max(0, nowMs - windowDays * DAY_MS) });
+  // OS-2: per-backend integer token sums computed in SQL; the local/total fold
+  // stays in JS so the registry-resolved `isLocalBackend` (ICR-0016 / OS-1)
+  // still decides locality with no hardcoded literal. Integer addition is exact
+  // and associative, so the order-independent fold matches the old per-row sum.
   let localTokens = 0;
   let totalTokens = 0;
-  for (const row of rows) {
-    const tokens = tokensOfRow(row);
-    totalTokens += tokens;
-    if (isLocalBackend(row.backend)) localTokens += tokens;
+  for (const bucket of stores.eventsAggregates.tokenSumsByBackend(Math.max(0, nowMs - windowDays * DAY_MS))) {
+    totalTokens += bucket.tokens;
+    if (isLocalBackend(bucket.backend)) localTokens += bucket.tokens;
   }
   return {
     // 0/0 renders honestly as 0 WITH a no-signal freshness entry explaining

@@ -1,0 +1,342 @@
+# =============================================================================
+# PROPOSAL — NOT YET SANCTIONED. Owner must confirm revival intent + direction
+# before ANY GitHub structure (issues / milestones / project / labels) is created.
+#
+# Fleet config labels the-last-aibender "dormant/archived". That label is
+# FACTUALLY WRONG about the code: the repo is NOT archived and NOT abandoned.
+# It is a ~90%-complete build (Stage 1 research + Stage 2 M0-M6 + M7
+# account-registry + the full Stage-3 code-review/fix + OS-1/OS-2/OS-6 + a
+# live-boot daemon), 2272+ tests green, fully PUSHED to origin/main, last
+# active 2026-07-06. What is genuinely absent is any GitHub *planning surface*
+# (0 issues, 0 milestones, no custom labels, no per-repo Project) AND the
+# owner-gated, human-in-the-loop "last mile": real logins, live bring-up, the
+# rendered-frontend review, and a signed v0 ship. This roadmap therefore
+# proposes a RESUME-AND-SHIP track, not an audit-a-rotted-codebase track.
+# status: draft + phase: decomposed == "structured proposal, not committed".
+# See design-lastbender.md for the full evidence + decision gate.
+# =============================================================================
+schema: roadmap/1
+slug: aibender-revival
+project: the-last-aibender
+title: "the-last-aibender — resume & ship v0"
+status: active
+phase: decomposed
+brief: |
+  the-last-aibender is a personal multi-account Claude Code harness for macOS:
+  one host-native broker daemon (aibender-core) drives parallel Claude sessions
+  across many subscription accounts (Claude Max + Enterprise) plus AWS Bedrock
+  (via OpenCode) and local models (LM Studio), fronted by a Tauri v2 "Instrument
+  Grade" cockpit. The synthetic build is essentially done and green; it paused
+  at the boundary of what a coding agent may do without the owner physically at
+  the MacBook. This roadmap sequences the resume-and-ship work: re-baseline the
+  paused build, complete the owner-gated live bring-up + the mandatory
+  rendered-frontend review, and cut a hardened, signed v0 release.
+  V0 SCOPE (owner-decided 2026-07-17): ship one-off prompt, observability, and
+  the live context-graph; DEFER skill launch, multi-agent workflows, and the
+  pipeline builder to a later release.
+horizon: { start: 2026-07-16, end: 2026-09-30 }
+goal:
+  hmw: "How might we resume the paused, near-complete aibender build and carry it across the owner-gated line to a shipped v0?"
+  objective: "Re-baseline the paused build, lock a v0 scope, complete the owner-gated live bring-up + rendered-frontend review, and ship a hardened, signed v0 of the multi-account Claude harness."
+  key_results:
+    - "Full suite re-confirmed green on the Mac (>= 2272 tests / typecheck clean) after the ~10-day pause"
+    - "v0 scope locked to a written subset of the six product features, with owner sign-off"
+    - "Cockpit boots live against >= 1 real account and passes the rendered-frontend review"
+    - "Signed + notarized v0 build tagged and released; the owner-gated punch-list is empty"
+  assumptions:
+    - tier: must
+      text: "The M0-M7 build still typechecks and passes its suite unchanged after the ~10-day pause"
+      validation: "m1 re-runs `pnpm -r typecheck` + `pnpm -r test` on the Mac and records the count against the 2272 baseline in a fresh DoD note"
+    - tier: must
+      text: "The [X1] per-account keychain isolation (service name suffixed with a hash of CLAUDE_CONFIG_DIR) still holds on the currently-installed Claude Code CLI; it was verified against binary v2.1.193 / agent-SDK 0.3.201"
+      validation: "spike-1 re-inspects the shipping binary's per-CONFIG_DIR keychain scoping (read-only `strings`) BEFORE any live login, and records the observed CLI/SDK versions"
+    - tier: should
+      text: "The owner is willing and able to perform the human-in-the-loop steps (real logins, terraform apply, sign/notarize) on the physical MacBook Pro"
+      validation: "m2 captures an explicit owner go/no-go on the owner-gated punch-list"
+  wont:
+    - "NOT in v0 (deferred to a later release): skill launch, multi-agent workflows, pipeline builder"
+    - "No new product features beyond the six already specified in the blueprint"
+    - "No re-architecture of the broker / collector / graph — this is a resume, not a rewrite"
+    - "No cloud- or CI-hosted execution — the harness is host-native to the owner's Mac"
+    - "No cross-platform (Windows/Linux) port — the Windows clone is read-only inspection only"
+generated_by: { agent: claude-opus-4-8, at: "2026-07-16" }
+generations:
+  - { rev: 1, at: "2026-07-16" }
+retired: []
+items:
+  # ── EPICS ────────────────────────────────────────────────────────────────
+  - id: aibender-revival-e1
+    kind: epic
+    title: "Re-baseline the paused build"
+    summary: "Prove the ~90%-done synthetic build is still green and the frontier docs are true, so resume decisions rest on verified state, not stale handoff claims."
+    priority: must
+    size: S
+    rice: { r: 5, i: 3, c: 0.9, e: 0.5, score: 27.0, rank: 1 }
+    tags: [rebaseline, verification]
+
+  - id: aibender-revival-e2
+    kind: epic
+    title: "Confirm revival intent & lock v0 scope"
+    summary: "The decision gate. Owner confirms the project should ship (vs. archive/park) and cuts the v0 feature scope from the six specified product features."
+    priority: must
+    size: S
+    rice: { r: 5, i: 3, c: 0.8, e: 0.5, score: 24.0, rank: 2 }
+    depends_on: [aibender-revival-e1]
+    tags: [decision, scope, owner-gate]
+
+  - id: aibender-revival-e3
+    kind: epic
+    title: "Owner-gated live bring-up"
+    summary: "The human-in-the-loop last mile the agents were forbidden to do: real per-account logins, first live boot, and the mandatory rendered-frontend review of the actually-running cockpit."
+    priority: should
+    size: L
+    rice: { r: 4, i: 3, c: 0.6, e: 3, score: 2.4, rank: 3 }
+    depends_on: [aibender-revival-e2]
+    tags: [live, owner-gate, macos]
+
+  - id: aibender-revival-e4
+    kind: epic
+    title: "Ship hardened v0 release"
+    summary: "Close the owner-gated punch-list (X2 history posture, terraform/colima, sign+notarize, 24h soak) and cut a tagged, notarized v0 release."
+    priority: should
+    size: M
+    rice: { r: 4, i: 2, c: 0.6, e: 2.5, score: 1.92, rank: 4 }
+    depends_on: [aibender-revival-e3]
+    tags: [release, ship, owner-gate]
+
+  # ── EPIC 1 · re-baseline ────────────────────────────────────────────────
+  - id: aibender-revival-spike-1
+    kind: spike
+    title: "Re-verify the [X1] keychain-isolation assumption on the current Claude Code CLI"
+    parent: aibender-revival-e1
+    lane: now
+    estimate_days: 1
+    target_start: 2026-07-16
+    target_end: 2026-07-20
+    acceptance:
+      - "Given the currently-installed Claude Code binary, when its keychain service-name scheme is inspected read-only, then per-CONFIG_DIR credential scoping is confirmed still in force (or a regression is recorded)"
+      - "Observed CLI + agent-SDK versions are recorded and compared to the verified 2.1.193 / 0.3.201 baseline"
+    links:
+      doc: ["docs/research/findings/x1-parallel-multi-account.md"]
+      note: ["Read-only inspection only; NO login, NO keychain write (HANDOFF §6.4)"]
+    proclivity: { scope: today }
+
+  - id: aibender-revival-m1
+    kind: milestone
+    title: "Paused build re-verified green"
+    parent: aibender-revival-e1
+    lane: now
+    target_start: 2026-07-16
+    target_end: 2026-07-23
+    acceptance:
+      - "Given a fresh Mac checkout, when `pnpm -r typecheck` + `pnpm -r test` run, then the suite is green and the count is recorded against the 2272 baseline"
+      - "Given the soak + integration + infra suites, when run, then `soak:m2`/`soak:m6`, `pnpm test:integration`, and the infra bats all pass"
+      - "A corrected frontier note supersedes the stale 'nothing pushed / local-only' claim in docs/HANDOFF.md"
+    links:
+      doc: ["docs/runbooks/stage2-complete.md", "docs/HANDOFF.md"]
+
+  - id: aibender-revival-t-green-baseline
+    kind: task
+    title: "Run the full verification matrix on the Mac and record a resume DoD note"
+    parent: aibender-revival-m1
+    lane: now
+    estimate_days: 1
+    target_end: 2026-07-20
+    priority: must
+    acceptance:
+      - "Given the resume run, when all suites finish, then pass/skip counts + toolchain versions are captured in a new docs/runbooks/ resume note"
+    links:
+      doc: ["docs/runbooks/m6-dod.md"]
+    proclivity: { scope: sprint }
+
+  - id: aibender-revival-t-frontier-triage
+    kind: task
+    title: "Reconcile HANDOFF vs. actual git state; correct the stale push/local-only claims"
+    parent: aibender-revival-m1
+    lane: now
+    estimate_days: 1
+    target_end: 2026-07-22
+    priority: should
+    acceptance:
+      - "Given origin/main == HEAD (already pushed), when HANDOFF §is reviewed, then the 'nothing pushed / do not push' guidance and the 'Status: M0 scaffold' README line are corrected or flagged for the owner"
+    links:
+      doc: ["docs/HANDOFF.md", "README.md", "SECURITY.md"]
+    proclivity: { scope: sprint }
+
+  # ── EPIC 2 · decide direction / v0 scope ────────────────────────────────
+  - id: aibender-revival-m2
+    kind: milestone
+    title: "Revival intent + v0 scope locked"
+    parent: aibender-revival-e2
+    lane: now
+    target_start: 2026-07-23
+    target_end: 2026-07-30
+    depends_on: [aibender-revival-m1]
+    acceptance:
+      - "Given the verified baseline, when the owner reviews it, then an explicit go/park/archive decision is recorded"
+      - "Given a go decision, when v0 scope is cut, then the in-scope subset of the six product features is written down with rationale"
+      - "The owner-gated punch-list (logins, X2 history posture, terraform, colima, notarize, 24h soak) is enumerated with an owner go/no-go per item"
+    links:
+      doc: ["docs/research/summaries/01-architecture-blueprint.md", "docs/runbooks/stage2-complete.md"]
+
+  - id: aibender-revival-t-v0-feature-cut
+    kind: task
+    title: "v0 feature cut DECIDED: ship one-off prompt + observability + live context-graph"
+    parent: aibender-revival-m2
+    lane: now
+    estimate_days: 1
+    target_end: 2026-07-28
+    priority: must
+    summary: "Owner-decided v0 scope (2026-07-17). IN: one-off prompt, observability, live context-graph. OUT (deferred to a later release): skill launch, multi-agent workflows, pipeline builder. This issue records the cut — close on acknowledgement."
+    acceptance:
+      - "Given the six features, when the v0 cut is recorded, then v0-IN = {one-off prompt, observability, live context-graph} and v0-OUT (deferred) = {skill launch, multi-agent workflows, pipeline builder}"
+    proclivity: { scope: sprint }
+
+  - id: aibender-revival-t-x2-history-decision
+    kind: task
+    title: "Owner decision on the [X2] git-history identity posture (note: history is already pushed)"
+    parent: aibender-revival-m2
+    lane: now
+    estimate_days: 1
+    target_end: 2026-07-29
+    priority: must
+    tags: [owner-gate]
+    acceptance:
+      - "Given that SECURITY.md §5.1 cites root commit 62d11d0 which NO LONGER RESOLVES (history was rewritten; the real root is 369e30f, verified live), when the owner re-derives the actual identity exposure (root-commit author + reflog work-domain email at 369e30f) and reviews SECURITY.md §5.1, then a remediation decision (rewrite+force-push, accept, or public-repo scrub) AND a correction of the stale SHA in SECURITY.md §5.1 are recorded"
+    links:
+      doc: ["SECURITY.md", "docs/HANDOFF.md"]
+    proclivity: { scope: sprint }
+
+  # ── EPIC 3 · owner-gated live bring-up ──────────────────────────────────
+  - id: aibender-revival-spike-2
+    kind: spike
+    title: "Dry-run the rendered-frontend capture path (vite dev + injected accounts) headless"
+    parent: aibender-revival-e3
+    lane: next
+    estimate_days: 1
+    target_start: 2026-08-01
+    target_end: 2026-08-05
+    acceptance:
+      - "Given the synthetic-broker dev build on :5173 with window.AIBENDER_CLAUDE_ACCOUNTS injected, when captured, then the cockpit chrome renders in NO-SIGNAL state and a screenshot is produced without a real login"
+    links:
+      doc: ["docs/runbooks/local-dev-start.md", "docs/reviews/rendered-frontend.md"]
+    proclivity: { scope: sprint }
+
+  - id: aibender-revival-m3
+    kind: milestone
+    title: "First live cockpit bring-up"
+    parent: aibender-revival-e3
+    lane: next
+    target_start: 2026-08-01
+    target_end: 2026-08-20
+    depends_on: [aibender-revival-m2]
+    acceptance:
+      - "Given >= 1 owner-completed real login, when `pnpm -F aibender-core boot` runs with AIBENDER_LIVE_SPAWN enabled, then the broker spawns a real session and the cockpit shows live data"
+      - "Given the live boot, when observed, then no identity leaks appear in the rendered UI (placeholders only) and quota gauges populate from the statusline hook"
+    links:
+      doc: ["docs/runbooks/live-boot.md", "docs/runbooks/login-bootstrap.md"]
+      code: ["core/src/main/boot.ts"]
+
+  - id: aibender-revival-t-logins
+    kind: task
+    title: "Owner completes the one-time real per-account `claude /login`s"
+    parent: aibender-revival-m3
+    lane: next
+    estimate_days: 1
+    target_end: 2026-08-08
+    priority: must
+    tags: [owner-gate]
+    acceptance:
+      - "Given docs/runbooks/login-bootstrap.md, when the owner logs into each in-scope account, then each per-account CLAUDE_CONFIG_DIR holds a working credential and a probe confirms it"
+    links:
+      doc: ["docs/runbooks/login-bootstrap.md"]
+    proclivity: { scope: sprint }
+
+  - id: aibender-revival-t-live-boot
+    kind: task
+    title: "First live broker boot + smoke of a real one-off prompt"
+    parent: aibender-revival-m3
+    lane: next
+    estimate_days: 2
+    target_end: 2026-08-15
+    depends_on: [aibender-revival-t-logins]
+    tags: [owner-gate]
+    acceptance:
+      - "Given a logged-in account, when the live broker boots and a one-off prompt is launched against a specified account, then it completes and is recorded in the events store"
+    links:
+      doc: ["docs/runbooks/live-boot.md"]
+      code: ["core/src/main/boot.ts"]
+    proclivity: { scope: sprint }
+
+  - id: aibender-revival-m4
+    kind: milestone
+    title: "Rendered-frontend review complete"
+    parent: aibender-revival-e3
+    lane: next
+    target_start: 2026-08-20
+    target_end: 2026-09-05
+    depends_on: [aibender-revival-m3]
+    acceptance:
+      - "Given the live (or synthetic-fallback) running cockpit, when captured and critiqued as a rendered image, then a findings doc grades layout, depth/motion, navigation, and the anti-AI-slop bar"
+      - "Given any material findings, when triaged, then each is either fixed with a regression test or logged as an owner-accepted follow-on"
+    links:
+      doc: ["docs/reviews/rendered-frontend.md", "DESIGN.md"]
+
+  - id: aibender-revival-t-rendered-review
+    kind: task
+    title: "Screen-capture the running cockpit and critique the rendered image (not source)"
+    parent: aibender-revival-m4
+    lane: next
+    estimate_days: 2
+    target_end: 2026-09-03
+    depends_on: [aibender-revival-spike-2]
+    priority: should
+    acceptance:
+      - "Given the rendered cockpit, when reviewed, then the critique is written against the image and explicitly does NOT fall back to reading source"
+    links:
+      doc: ["docs/reviews/rendered-frontend.md"]
+    proclivity: { scope: sprint }
+
+  # ── EPIC 4 · ship v0 ────────────────────────────────────────────────────
+  - id: aibender-revival-m5
+    kind: milestone
+    title: "Hardened v0 released"
+    parent: aibender-revival-e4
+    lane: later
+    target_start: 2026-09-05
+    target_end: 2026-09-30
+    depends_on: [aibender-revival-m4]
+    acceptance:
+      - "Given the closed punch-list, when a signed + notarized Tauri v0 is built, then `--smoke-test` exits 0 and the artifact installs cleanly"
+      - "Given a v0 tag, when released, then the release notes link the DoD records and the owner-gated items list is empty"
+      - "Given the real 24h soak, when run, then accountSessionsShed == 0 and identityLeaks == 0 within the memory envelope"
+    links:
+      doc: ["docs/runbooks/release-packaging.md", "docs/runbooks/quota-exhaustion.md"]
+
+  - id: aibender-revival-t-notarize
+    kind: task
+    title: "Sign + notarize the Tauri v0 bundle (owner-gated)"
+    parent: aibender-revival-m5
+    lane: later
+    estimate_days: 2
+    target_end: 2026-09-20
+    priority: should
+    tags: [owner-gate]
+    acceptance:
+      - "Given Apple credentials the owner supplies at build time, when the v0 bundle is signed + notarized, then Gatekeeper accepts the installed app"
+    links:
+      doc: ["docs/runbooks/release-packaging.md"]
+    proclivity: { scope: backlog }
+
+  - id: aibender-revival-t-release
+    kind: task
+    title: "Tag + publish the v0 release with DoD-linked notes"
+    parent: aibender-revival-m5
+    lane: later
+    estimate_days: 1
+    target_end: 2026-09-28
+    depends_on: [aibender-revival-t-notarize]
+    priority: should
+    acceptance:
+      - "Given a green, notarized build, when v0 is tagged, then the GitHub release links every mN-dod record and states the empty owner-gated list"
+    proclivity: { scope: backlog }
